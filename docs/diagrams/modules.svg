@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 480" role="img">
+  <style>
+    .t { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  </style>
+  <rect width="920" height="480" fill="#F6F3EC"/>
+  <text class="t" x="40" y="36" font-size="16" font-weight="600" fill="#1B1914">!Ws�</text>
+  <text class="t" x="40" y="58" font-size="13" fill="#6E675C">Feature ��O��b � �u�0 Capture v& documentID</text>
+
+  <rect x="360" y="80" width="200" height="56" rx="14" fill="#1B1914"/>
+  <text class="t" x="400" y="114" font-size="16" fill="#F6F3EC">Library �u�</text>
+
+  <rect x="80" y="200" width="170" height="56" rx="14" fill="#C24A32"/>
+  <text class="t" x="118" y="234" font-size="16" fill="#FFFDF8">Capture �o</text>
+
+  <rect x="300" y="200" width="170" height="56" rx="14" fill="#3D5A4C"/>
+  <text class="t" x="340" y="234" font-size="16" fill="#FFFDF8">Edit t</text>
+
+  <rect x="520" y="200" width="170" height="56" rx="14" fill="#2A2420"/>
+  <text class="t" x="548" y="234" font-size="16" fill="#F6F3EC">Document ��</text>
+
+  <rect x="740" y="200" width="140" height="56" rx="14" fill="#6E675C"/>
+  <text class="t" x="768" y="234" font-size="16" fill="#F6F3EC">Settings</text>
+
+  <rect x="300" y="320" width="170" height="56" rx="14" fill="#24302C"/>
+  <text class="t" x="350" y="354" font-size="16" fill="#F6F3EC">OCR �,</text>
+
+  <rect x="520" y="320" width="170" height="56" rx="14" fill="#24302C"/>
+  <text class="t" x="558" y="354" font-size="16" fill="#F6F3EC">Export �</text>
+
+  <rect x="80" y="400" width="800" height="48" rx="12" fill="#E7DFD4"/>
+  <text class="t" x="100" y="430" font-size="14" fill="#3A3530">DocumentStore � PageFileStore � Camera � Vision � Image � OCR � PDF</text>
+
+  <path d="M400 136 V170 H165 V200" stroke="#1B1914" stroke-width="1.6" fill="none"/>
+  <path d="M460 136 V170 H385 V200" stroke="#1B1914" stroke-width="1.6" fill="none"/>
+  <path d="M520 136 V170 H605 V200" stroke="#1B1914" stroke-width="1.6" fill="none"/>
+  <path d="M540 136 H810 V200" stroke="#1B1914" stroke-width="1.6" fill="none"/>
+  <path d="M250 228 H300" stroke="#1B1914" stroke-width="1.6"/>
+  <path d="M470 228 H520" stroke="#1B1914" stroke-width="1.6"/>
+  <path d="M605 256 V320" stroke="#1B1914" stroke-width="1.6"/>
+  <path d="M605 256 H385 V320" stroke="#1B1914" stroke-width="1.6" fill="none"/>
+  <path d="M165 256 V380 H480" stroke="#C24A32" stroke-width="1.4" fill="none" stroke-dasharray="5 4"/>
+  <text class="t" x="180" y="300" font-size="12" fill="#C24A32">�u</text>
+</svg>

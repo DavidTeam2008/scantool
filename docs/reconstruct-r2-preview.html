@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-page-node-id="tmWkVnrVZgEC5ErHUlJEp8">
+<head data-page-node-id="jmDa6ighbBpEJOZ3tr8LXG">
+<meta charset="utf-8" data-page-node-id="6NSHhmmvtTWKcWNI1aTdyy" />
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="dNLWm2g08aKHF1N7AXmZwY" />
+<title>纸匣 Zhixia · 还原页 R2 原型</title>
+<style>
+  :root {
+    --paper: #f6f3ec;
+    --ink: #1b1914;
+    --muted: #6e675C;
+    --line: #e4ddd2;
+    --card: #fffdf8;
+    --seal: #c24a32;
+    --forest: #3d5a4c;
+    --wheat: #c4A46A;
+    --danger: #b42318;
+    --preview: #16140f;
+    --dim: rgba(246, 243, 236, 0.58);
+    --phoneW: 320px;
+    --phoneH: 660px;
+    --radius: 36px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; line-height: 1.5; }
+  header.top {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 14px 28px;
+    background: rgba(246, 243, 236, 0.92);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand strong { font-size: 18px; letter-spacing: 0.06em; }
+  .brand span { color: var(--muted); font-size: 13px; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 999px; }
+  nav a:hover { background: #ece6dc; color: var(--ink); }
+  nav a.now { background: var(--ink); color: var(--paper); }
+  main { max-width: 1280px; margin: 0 auto; padding: 28px 24px 100px; }
+  h1 { font-size: 40px; letter-spacing: -0.03em; margin: 0 0 6px; font-weight: 640; }
+  .lede { font-size: 17px; color: var(--muted); max-width: 760px; margin: 0 0 24px; }
+  h2 { font-size: 22px; margin: 28px 0 10px; letter-spacing: -0.02em; }
+  h3 { font-size: 15px; margin: 16px 0 6px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+  p.note { color: var(--muted); margin: 0 0 18px; max-width: 720px; }
+  .grid { display: grid; gap: 32px; align-items: start; }
+  .grid.cols2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.cols3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 1100px) {
+    .grid.cols2, .grid.cols3, .grid.cols4 { grid-template-columns: 1fr; }
+  }
+  .scene { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  .scene p { margin: 6px 0; }
+  .scene code { background: rgba(0,0,0,0.04); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+  /* Phone frame */
+  .phone {
+    width: var(--phoneW);
+    height: var(--phoneH);
+    margin: 0 auto;
+    background: var(--preview);
+    border-radius: var(--radius);
+    padding: 14px 12px 18px;
+    box-shadow: 0 18px 50px rgba(28, 25, 21, 0.18);
+    color: #f6f3ec;
+    display: flex; flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+  .phone .status { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); padding: 2px 8px 8px; }
+  .phone .nav {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 14px; color: var(--paper); padding: 0 6px 10px;
+  }
+  .phone .nav .back { color: var(--paper); font-size: 22px; }
+  .phone .nav .title { font-size: 15px; font-weight: 600; }
+  .phone .nav .more { color: var(--dim); font-size: 20px; }
+  .phone .body { background: var(--paper); color: var(--ink); flex: 1; border-radius: 22px; padding: 14px 16px 18px; overflow-y: auto; }
+  .phone .body::-webkit-scrollbar { display: none; }
+  .phone .footer {
+    background: var(--paper);
+    padding: 12px 14px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .phone .body, .phone .footer { border-bottom-left-radius: 22px; border-bottom-right-radius: 22px; }
+  .phone .stageLabel {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    background: rgba(255,255,255,0.10);
+    color: var(--paper);
+    border-radius: 999px;
+    padding: 2px 10px; font-size: 11px; letter-spacing: 0.08em;
+  }
+
+  .pill {
+    display: inline-block; background: rgba(194,74,50,0.10); color: var(--seal);
+    border-radius: 999px; padding: 2px 10px; font-size: 11px; margin-right: 6px;
+  }
+  .pill.ok { background: rgba(61,90,76,0.12); color: var(--forest); }
+  .pill.warn { background: rgba(196,164,106,0.18); color: #876526; }
+  .pill.dark { background: rgba(27,25,20,0.85); color: var(--paper); }
+
+  .bar { height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06); overflow: hidden; margin: 6px 0; }
+  .bar i { display: block; height: 100%; background: var(--seal); border-radius: 3px; }
+
+  .scene-illu { background: repeating-linear-gradient(45deg, #f7f1e4 0 8px, #f0e8d6 8px 16px); border: 1px dashed var(--line); border-radius: 10px; padding: 14px; color: var(--muted); font-size: 13px; min-height: 60px; }
+  .scene-illu.ink { background: var(--preview); color: var(--paper); border-color: transparent; }
+
+  /* Reconstruct preview elements */
+  .preview { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .preview h4 { margin: 0 0 6px; font-size: 14px; }
+  .preview .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 0; font-size: 12px; color: var(--muted); }
+  .preview .pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .preview .grid-block {
+    display: grid; gap: 4px; margin-top: 8px;
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .preview .grid-block div { background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 6px; font-size: 12px; }
+  .preview .grid-block .head { background: rgba(196,164,106,0.25); font-weight: 600; }
+
+  /* buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 10px 12px; border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    border: none; cursor: pointer;
+  }
+  .btn.primary { background: var(--seal); color: white; width: 100%; }
+  .btn.secondary { background: #efe8dc; color: var(--ink); width: 100%; }
+
+  .seg {
+    display: flex; gap: 4px; padding: 4px;
+    background: rgba(0,0,0,0.06); border-radius: 999px;
+    margin-bottom: 10px;
+  }
+  .seg span {
+    flex: 1; text-align: center; padding: 6px 4px; border-radius: 999px;
+    font-size: 12px; color: var(--ink);
+  }
+  .seg span.on { background: var(--ink); color: var(--paper); font-weight: 600; }
+
+  .issue {
+    background: rgba(180,35,24,0.06); border-left: 3px solid var(--danger);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px;
+  }
+  .issue .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .issue .actions a { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,0.06); color: var(--ink); text-decoration: none; }
+
+  /* TOC */
+  ul.toc { columns: 2; column-gap: 24px; font-size: 13px; color: var(--muted); padding-left: 18px; }
+  ul.toc li { margin-bottom: 4px; break-inside: avoid; }
+  ul.toc a { color: var(--ink); text-decoration: none; }
+
+  footer { padding: 24px 28px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); margin-top: 48px; }
+</style>
+</head>
+<body data-page-node-id="8daqFEcr5EVxiZopG0pmhZ">
+<header class="top" data-page-node-id="E8rzs8HVfWvtVz1uNMzSAD">
+  <div class="brand" data-page-node-id="RtRK3HxWoLpKSEWaOVWt4c"><strong data-page-node-id="4EQKQJOKaRqvTBmrKYjxki">纸匣 Zhixia</strong><span data-page-node-id="G7bRZipJuCyTWWj1rt9iJ4">还原页 R2 原型</span></div>
+  <nav data-page-node-id="NRnbNzhqVUxMRnU2HyGF8x">
+    <a href="#problem" data-page-node-id="7mP6mmebi7rCWm5rIZiCWJ">问题</a>
+    <a href="#ux" data-page-node-id="IiNCg2xk5KO7zXU3YZGfO4">新流程</a>
+    <a href="#screens" data-page-node-id="9QR6jopd3W1TgKo5Udk76k">界面</a>
+    <a href="07-reconstruct-r2-optimization.md" data-page-node-id="71RN2x81nrNZJ5uhOLiYkC">方案文档 ↗</a>
+  </nav>
+</header>
+
+<main data-page-node-id="OBO0CqgVJ6Yxh3sZG0V1Iv">
+
+<h1 data-page-node-id="07cl2DyuROL9X4nf1ls7wi">还原 → 导出 Word · R2 原型</h1>
+<p class="lede" data-page-node-id="ihLF6hGrvR30tY2IJy9zBL">R2 把「还原」从「靠 Vision 一把梭」重构为「版面分析 → 块映射 → 锚点式导出」的三段流程；UI 上对应三档产物可切换，并把失败空态、场景选择、修复提示分开。本页是 UI 改版与流程的可视化方案。</p>
+
+<ul class="toc" data-page-node-id="J9AWKTDvIaE1Y8kfZoqYmN">
+  <li data-page-node-id="bAAMbmltAqApYdMWoCUMh3"><a href="#problem" data-page-node-id="iKMLPagxdnHrehpHFWzATH">1. 现有问题（来自两张样张）</a></li>
+  <li data-page-node-id="YIU8zYwIbi99ORFMQeJV6d"><a href="#ux" data-page-node-id="IwlnziVf7peMvw2FNFDHEQ">2. 新用户流程</a></li>
+  <li data-page-node-id="GHDXDSLFVWzwLDGKtU9fry"><a href="#screens" data-page-node-id="vKGRcEiVdofs99BHeDMpW3">3. 关键界面（8 张）</a></li>
+  <li data-page-node-id="wuTqNf13scSPqMzYrVZucj"><a href="#compare" data-page-node-id="ySnR1UIyWn0SfIIMAZ7CKC">4. 现 vs 新差异</a></li>
+  <li data-page-node-id="AOwdx141KoKANrKkDGEPCU"><a href="#anatomy" data-page-node-id="H4HGOAUmxZe06HyaC8BSxF">5. 档位与 DOCX 内部示意</a></li>
+  <li data-page-node-id="ME3JamOvllnFnzaYhVUGcU"><a href="#rationale" data-page-node-id="dNk4b8H5DVxQTdu2M8SYXR">6. 设计原则</a></li>
+</ul>
+
+<!-- 1. 问题 -->
+<section id="problem" data-page-node-id="HbBWCDoFD9UTr06eRfH8Go">
+<h2 data-page-node-id="lrHbkUscAs5uMt0Ke39rw6">1. 现有问题（来自两张样张）</h2>
+<div class="grid cols2" data-page-node-id="Tjn5uA5hQsrTO6h8YoMT6E">
+  <div class="scene" data-page-node-id="ljdS1mWZ8GjxWovbABmQFp">
+    <h3 data-page-node-id="qS0xnUXkXiRNyNqC2g4FqN">练习册</h3>
+    <p data-page-node-id="3T9rB4CdV3SlZsxFxY1DL5"><span class="pill" data-page-node-id="CwYnnyXTOVjgNDpPc8wftK">A1</span>行序乱，出现「20:14C」「`<1t or you 更多`」</p>
+    <p data-page-node-id="xEi47rQBdBZ0D7Wty7QWMa"><span class="pill" data-page-node-id="KIwrhPZy4b61nyvDqNrHA7">A2</span>OCR 错字混入段落</p>
+    <p data-page-node-id="pKNbeTC8WLtEfX7q2p1Dwp"><span class="pill" data-page-node-id="L2o8aIgQHSXOxApxAEIMhb">A3</span>选项 A/B/C 字母被替换为「口」</p>
+    <p data-page-node-id="kLfhMmVD7BoHtAwuewWow6"><span class="pill" data-page-node-id="mAJ4BCtgq1FEVXXO3GEjGF">A4</span>QR 码的 URL 被当文本流读出</p>
+    <p data-page-node-id="Jqs176BRPsmGCbr3ji8HGC"><span class="pill warn" data-page-node-id="NytROeHmGLgCgoexgPXZ8S">A5</span>配图几乎没有，只剩 QR</p>
+    <p data-page-node-id="WsLA1bPmvz1PgfFF3iwHt4"><span class="pill warn" data-page-node-id="RuB1CONYQepjP86rHurtPR">A6</span>题与题之间顺序被打散</p>
+  </div>
+  <div class="scene" data-page-node-id="mDqyv4KjXyI1zcm4SZ7j4l">
+    <h3 data-page-node-id="zKDzxL3KBH9Cxq65BrABe1">营养成分表</h3>
+    <p data-page-node-id="oKJwSOuUlQGHAUvdsMfEA2"><span class="pill" data-page-node-id="AEWK8lkkGslnDioqOfDD7c">B1</span>表头「项目 / 每 100g / NRV%」散在独立段落</p>
+    <p data-page-node-id="su3PgkX41BOoDj6iFNHyD3"><span class="pill warn" data-page-node-id="qNWjH2lT7r5CWMoZG3E7l2">B2</span>单元格被独立成段，无 `w:tbl`</p>
+    <p data-page-node-id="c2ERYkhmvtEQCgpg2AOmrf"><span class="pill" data-page-node-id="RfrBJMGcexnNBdDFNPwvTO">B3</span>数字与单位在不同行</p>
+    <p data-page-node-id="wIni6QnRVMs5aXeNhPQnBu"><span class="pill" data-page-node-id="T16dFZSD8MUQbLNPJd0JX4">B4</span>OCR 把「碳水化合物:」读成「碳水化合物 O」</p>
+    <p data-page-node-id="DxLFscwL1hSkQ8Y1VWR4RZ"><span class="pill warn" data-page-node-id="pfBPwoWonhcjbSFkmK0pvl">B5</span>条码只出 payload 数字，无图</p>
+    <p data-page-node-id="fFfNAck5dPKwprgxtiudVn"><span class="pill" data-page-node-id="lirQTnq9Q7gqJe6bQWPnXP">B6</span>「营养成分表」标题被排进段落</p>
+  </div>
+</div>
+</section>
+
+<!-- 2. UX -->
+<section id="ux" data-page-node-id="s4QSwolCzKsBugcq5rApbi">
+<h2 data-page-node-id="QcrUNjFsX5A3udTsabQEdC">2. 新用户流程</h2>
+<div class="scene" data-page-node-id="26Ds7HQ8uxyetV5JHUqQXH">
+  <p style="margin-top:0" data-page-node-id="ser5LDsyXMCUqf1LW2eudB">详情底栏「还原」点进，进入 R2 还原页：</p>
+  <p class="scene-illu" data-page-node-id="ijx1Hw16m5xyafkylcp7GU">
+    <strong data-page-node-id="ofVTkonPxMExpNxrrsdKpw">① 本机解析</strong>（默认）→ 成功：进入预览；失败：失败空态<br data-page-node-id="UHoGnk2YiflJ0OdFEqVjId">
+    <strong data-page-node-id="OYjVMH81ryjaGNOeO4Norg">② 预览</strong>：上半原图 / 下半 block 流；右上可切换档位<br data-page-node-id="Z5J8eq7GmHekNH0pGY06Cb">
+    <strong data-page-node-id="LFDPcCHmeXbgMRUkJnNvMu">③ 场景选择</strong>：自动识别不对时手动指定<br data-page-node-id="hxgEcGMilN5Vb28D1QBs4w">
+    <strong data-page-node-id="UUQ5lexa2RRTqXp923HI79">④ 修复</strong>：面板列出本次解析出问题的小项（题图缺失、表头被拆等）<br data-page-node-id="9YoIE0fo1k4ZP4ZQY7Q8dy">
+    <strong data-page-node-id="oQbnBv3JQ4p3B1z92xYCGX">⑤ 导出</strong>：档位 A / B / C 三选一 → 出 Word / 可检索 PDF
+  </p>
+</div>
+</section>
+
+<!-- 3. 关键界面 -->
+<section id="screens" data-page-node-id="AjaYz8RhyWXYKdZUVT4MUv">
+<h2 data-page-node-id="ZxQeArBtJzQRAGMTO3NtgN">3. 关键界面（8 张）</h2>
+<div class="grid cols2" data-page-node-id="AH4reNtGWVsPXE8lGQgslR">
+
+  <!-- 1. 还原页 成功 -->
+  <div data-page-node-id="PIDUfm2DhykkM9oubLLX2m">
+    <h3 data-page-node-id="G43XSSaTsf9zrSRDOe9pAN">① 还原页（成功 · A 档 · 营养表）</h3>
+    <div class="phone" data-page-node-id="OfhlvoN4IqOXN7XJoz6oya">
+      <span class="stageLabel" data-page-node-id="cnASPebsVo0IcURHYhsbXP">页 1 / 4</span>
+      <div class="status" data-page-node-id="eF4UvGyIbql45tOSGYijZx"><span data-page-node-id="3Fvv9iMORrnVqcZdA4xNSq">14:23</span><span data-page-node-id="6itBr3ZpaIc5MVc3yFPP69">●●●●</span></div>
+      <div class="nav" data-page-node-id="Xs1rJCmBmrRo6TR3PzOJFp"><span class="back" data-page-node-id="H3c8Ok6r2PYYrcHcTXjyuA">‹</span><span class="title" data-page-node-id="zPBBHzjFQsp1pFaokz2R6x">还原版</span><span class="more" data-page-node-id="ZVZVaiyMebn30VRt5oikEj">⋯</span></div>
+      <div class="body" data-page-node-id="WAhqTpZQh4A17YsObyZ8uC">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" data-page-node-id="7er3B9aKWy80bKZexIGmde">本机解析完成 · 未上传 · <span class="pill ok" data-page-node-id="qvaRg6miHKAZvdKwixLPhn">已识别为表格</span></div>
+
+        <div class="preview" data-page-node-id="wo6hyF4InNPBcB3qOG8Kai">
+          <h4 data-page-node-id="UWKQSFBJCtQNMHr2lqYlWd">营养成分表（preview）</h4>
+          <div class="row" data-page-node-id="hAkR3kdGDGzOYY6gD69m0A"><span data-page-node-id="CCtm2FL19Ba4F1aZLyKyLv">档位</span><span class="pill dark" data-page-node-id="smrUrgR7Hc4YhAY6x34gH8">A 结构化</span><span data-page-node-id="w5GVHkiZvhtCBTZD1u8voV">行 6 · 列 3</span></div>
+          <div class="grid-block" data-page-node-id="Dbi0GCaBQf1du02pmZUFtn">
+            <div class="head" data-page-node-id="8ZoB0JJfKwn03VA4FzhKCi">项目</div><div class="head" data-page-node-id="BMmBwpShGrv5UvUIlSq68R">每 100 克</div><div class="head" data-page-node-id="9fszu0YjxsrdlMHhUpwPmm">NRV%</div>
+            <div data-page-node-id="pZMk5zeKMZAMXon6mogtGU">能量</div><div data-page-node-id="EylfItqDnHYGxxh1sxhKzr">1429 千焦</div><div data-page-node-id="uCgrYhPNyeUTUDGtjnE5CE">17%</div>
+            <div data-page-node-id="rZipWndEE5lZJ5V3CT4AEa">蛋白质</div><div data-page-node-id="8KhJ3WKg5ey6nErkjQCZkg">1.5 克</div><div data-page-node-id="rkpuC7Re51bhOiBziNmLpM">3%</div>
+            <div data-page-node-id="kGR0dQnRwpHRfsh6pHKC0g">脂肪</div><div data-page-node-id="W39UVOiEQ7C7opmCNCCx1A">0.8 克</div><div data-page-node-id="DtnA6kmJeqiCjBj8cMghji">1%</div>
+            <div data-page-node-id="dFdNm17WWLgEqN4JCkCmNJ">碳水化合物</div><div data-page-node-id="xC0w0Lg7VZtAG1Xa43vgFQ">80.8 克</div><div data-page-node-id="4uuTjGiOkVVUeLEC8bUOn3">27%</div>
+            <div data-page-node-id="aAzySm3nr6M0f8MTGUFNfh">钠</div><div data-page-node-id="zjDAdZCYz8FRy9xip4A4G3">49 毫克</div><div data-page-node-id="RcYpfUggk76acWYPVDbczq">2%</div>
+          </div>
+          <div class="pill-row" data-page-node-id="W6EdVeQG1U3dmmh7DjQQsE">
+            <span class="pill" data-page-node-id="D89XwHJTyOP9jVjSpmJyeL">figure × 1（条码）</span>
+            <span class="pill" data-page-node-id="WnwVG1drV8PJdON2zhLCCA">payload 6936832529010</span>
+          </div>
+        </div>
+
+        <p style="font-size:11px;color:var(--muted);margin-top:10px;" data-page-node-id="DCmDUSWolQDUsnfABvWGH4">原图（缩放）</p>
+        <div class="scene-illu" style="height:60px;background:linear-gradient(180deg, #ff6a13 0%, #d84a14 60%, #6e675c 100%);color:white;font-weight:600;text-align:center;" data-page-node-id="kx9REDGCeevtDVRpIdEXoK">原图（占位）<br data-page-node-id="v9VVIRyuCthKF2t25JU6op">📷</div>
+      </div>
+      <div class="footer" data-page-node-id="Q4MSi3ddkrjgrg207O9M5A">
+        <div class="seg" data-page-node-id="MIyzG5Oh4fKSC5XuktaQff">
+          <span class="on" data-page-node-id="HAeWO3EGUtHZHKvgQoungO">A 结构化</span><span data-page-node-id="CWHhXE3K5aqZCvKtWgL8pJ">B 重排版</span><span data-page-node-id="kuyZn7ju0WYX07Auy7eAak">C 衬底图</span>
+        </div>
+        <button class="btn primary" data-page-node-id="D7vCVlqGMfACLVI7txms10">导出 Word</button>
+        <div style="height:6px" data-page-node-id="feXLgfK6Yzirmu6Dx4x8Gr"></div>
+        <button class="btn secondary" data-page-node-id="jZGAyofhGK0HaG3yTUhPrB">可检索 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 还原页 练习册 -->
+  <div data-page-node-id="J7ETfSFgqv82klkbB5BUDD">
+    <h3 data-page-node-id="elczye8sqzh7GYdehzs5HN">② 还原页（成功 · 练习册预览）</h3>
+    <div class="phone" data-page-node-id="b45YJve7anO5UHZwZaBz4z">
+      <span class="stageLabel" data-page-node-id="QtBXiVmxbHib8BULTUwnSw">页 2 / 4</span>
+      <div class="status" data-page-node-id="iG2KJ2wAWYwlCuIxKHNnok"><span data-page-node-id="sZSjji9w0IuGc0nZQdHMXa">14:23</span><span data-page-node-id="H1Qyozh9KYR4dNNEB63QjG">●●●●</span></div>
+      <div class="nav" data-page-node-id="WLLTA5aPRpAYMcxMbWjLSa"><span class="back" data-page-node-id="FbbnFCxuEcMXVB3nFtcIa5">‹</span><span class="title" data-page-node-id="cA6TwznDmL2KiudY1rAE5j">还原版</span><span class="more" data-page-node-id="iJz2bp9OH6qbAUq7j8x1qt">⋯</span></div>
+      <div class="body" data-page-node-id="5CWTiUIEB0Nd7RFz4y2bZi">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" data-page-node-id="xgwECBSh2Tmrzu1QupBaaF">本机解析完成 · 未上传 · <span class="pill ok" data-page-node-id="7RNey9Sk6N0olMFHHAOf1v">已识别为练习册</span></div>
+
+        <div class="preview" data-page-node-id="aDx0igNTcb3CdFZnWco6gy">
+          <h4 data-page-node-id="0LFxzFTtqU0xdFVRBGDmeK">Test 4 Questions 1~5</h4>
+          <p style="font-size:12px;margin:4px 0;" data-page-node-id="rxTk8DCrSbGbYP4k7CTiaV">Question 1. What is Becky going to take for the picnic?</p>
+          <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:4px;font-size:11px;" data-page-node-id="7zM6MQ7oOEnYRy0ZYVBnWv">
+            <div style="background:#fff;border:1px solid var(--line);border-radius:4px;padding:6px;" data-page-node-id="rHl6bZZuXQvF3cuslABwJm">🥫 A 口</div>
+            <div style="background:#fff;border:1px solid var(--line);border-radius:4px;padding:6px;" data-page-node-id="qFVEJjQQ8O9DyQnFZjmGOW">🍋 B 口</div>
+            <div style="background:#fff;border:1px solid var(--line);border-radius:4px;padding:6px;" data-page-node-id="sLexasDfeX3Apno1Cn37jj">🧁 C 口</div>
+          </div>
+          <p style="font-size:11px;margin:6px 0;color:var(--muted);" data-page-node-id="T0emJ8QOTiOeA0OkfjvRMh">🔳 QR → https://qrcode.5rs.me/jp091…</p>
+          <div class="pill-row" data-page-node-id="mqWHp6iYqc57ck9mz3CnHb">
+            <span class="pill" data-page-node-id="M01cRhGtTwGXr0aKSlspKc">figure × 4（题图3 + QR）</span>
+            <span class="pill warn" data-page-node-id="3OpepcbQTLBFQI8ExqV8lI">页眉已丢弃</span>
+          </div>
+        </div>
+      </div>
+      <div class="footer" data-page-node-id="QHnN5LoJHhSxm2pwcnxg5S">
+        <div class="seg" data-page-node-id="an4yuEOXBssPtt1c4qFCKV">
+          <span class="on" data-page-node-id="uSguL7iPQtzUkygeHdfEe9">A 结构化</span><span data-page-node-id="pzzM0X2O4slGOlecobJldx">B 重排版</span><span data-page-node-id="kFuHRFi3R4ZXVWE8nXNlIc">C 衬底图</span>
+        </div>
+        <button class="btn primary" data-page-node-id="14EJeS0sfQKQG4JqvAo9WM">导出 Word</button>
+        <div style="height:6px" data-page-node-id="mtk18Q11wdu1GopWnufNEB"></div>
+        <button class="btn secondary" data-page-node-id="0O8FqI5pNuQvprR5h4lEqU">可检索 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 还原页 失败 -->
+  <div data-page-node-id="KvUSleVFM2FBIEVKuFUlSW">
+    <h3 data-page-node-id="hKny7ccf3MumziEIpE88U8">③ 还原页（失败空态 · 营养表误拍）</h3>
+    <div class="phone" data-page-node-id="SjN10KSOBQQplvcGwtbUYR">
+      <span class="stageLabel" data-page-node-id="FpZLt8sHBdGMyNcoo5rBs8">页 3 / 4</span>
+      <div class="status" data-page-node-id="c8DoLHnwMFovTsXBx9zhIm"><span data-page-node-id="IwcvN1VjARtko0aVXGAZ7i">14:23</span><span data-page-node-id="gUNx5o78CXAtDgwmZcfupQ">●●●●</span></div>
+      <div class="nav" data-page-node-id="6PVzAacCttBMqPY6bYeJ7B"><span class="back" data-page-node-id="YuqGETR7tgO6BdClWJDxaO">‹</span><span class="title" data-page-node-id="U7F7dBIVFL1Q1tvRd8aUqe">还原版</span><span class="more" data-page-node-id="DJ1cZQHFMWoDzgFQEg4r0T">⋯</span></div>
+      <div class="body" data-page-node-id="Jx2GGpz6Cq6b2i3ygmRYbt">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" data-page-node-id="oEfv4GYLmcwkTNPVH2GmCS">本机可能仍不准</div>
+        <h3 style="margin-top:6px;" data-page-node-id="qVgbMg6NcnsVsUku72BmyW">⚠ 没找到表</h3>
+        <p style="font-size:13px;color:var(--muted);" data-page-node-id="TxFD563gExmdVaHJlcPhPB">3 列网格未识别出。可能原因：</p>
+        <ul style="font-size:13px;color:var(--ink);padding-left:18px;" data-page-node-id="LJnVVFTyQsGWKmVwA4fVVo">
+          <li data-page-node-id="Rt3sgXYDTzpgxC5TLYsXCJ">纸面光照不足</li>
+          <li data-page-node-id="iUP5JNTlVpID2LTYQ0FSqj">字号过小 / 倾斜</li>
+          <li data-page-node-id="SbIOCIZEKyaYDYREwWkb7b">列间距过小（&lt; 8pt）</li>
+        </ul>
+        <p style="font-size:13px;color:var(--muted);" data-page-node-id="3ZaJu6PBLri7YohH9tS1rD">可以试试：</p>
+        <div class="pill-row" data-page-node-id="WaQUhUeiBEWrOB4C8K50wr">
+          <span class="pill" data-page-node-id="NtDU6ocB0tCfTDc0kk4RNx">重新拍一拍</span>
+          <span class="pill" data-page-node-id="gBSreYHSMuCYkgFgR5UK7l">切换场景</span>
+        </div>
+        <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:10px;font-size:12px;margin-top:10px;" data-page-node-id="ESP4KyLqRX2PC7LFHU0gWI">
+          <label style="display:flex;gap:6px;align-items:center;" data-page-node-id="E9Bk60meyXYUNLQmeXcmmg">
+            <input type="checkbox" data-page-node-id="F49Ckcyu3cxC2YVEdkaiNf" /> 本页上传到云解析（已加密，临时存储）
+          </label>
+        </div>
+      </div>
+      <div class="footer" data-page-node-id="x4WidJj1cmn7VSqE7exjTp">
+        <button class="btn secondary" data-page-node-id="eFbG4Zn1BARB0DrZGQAyDx">重试</button>
+        <div style="height:6px" data-page-node-id="LKw3jLeBufR1AleDApD8oJ"></div>
+        <button class="btn primary" data-page-node-id="s30i18U0FQCl75GRfFd9CQ">修复 / 跳过</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. 场景选择 -->
+  <div data-page-node-id="4uldXWbkU0ICnhc0WFNF9U">
+    <h3 data-page-node-id="CWGEyqD27t9l1UY6ZQXEr7">④ 场景选择</h3>
+    <div class="phone" data-page-node-id="dawrLDVSViExizXqEoM5rG">
+      <span class="stageLabel" data-page-node-id="BVw9vnIg68jvYwfHbw79C9">页 4 / 4</span>
+      <div class="status" data-page-node-id="g1QoNxf5iyhZKUtyNIGmMV"><span data-page-node-id="buudrxiXKLEHs0Uhe7OHRv">14:23</span><span data-page-node-id="YLSdyBYtqMmMEufGQqa9j4">●●●●</span></div>
+      <div class="nav" data-page-node-id="ASptrCvFCu2xYQh9OiTS0Z"><span class="back" data-page-node-id="4eejEH6JXoVpIhEpTnMxJd">‹</span><span class="title" data-page-node-id="gZxwtFBJeI2nA1vVipClNR">识别到的场景</span><span class="more" data-page-node-id="WReH5EY8RiLoAF6f2bDfoC">✕</span></div>
+      <div class="body" data-page-node-id="huyA8LTBRqgsKs3KFwdsCM">
+        <p style="font-size:13px;color:var(--muted);" data-page-node-id="jhCYc2YHiphydBVkS3CKgq">看起来像</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;" data-page-node-id="58VutN1r1n08hJStRYASW9">
+          <select style="flex:1;font-size:15px;padding:8px;border-radius:8px;border:1px solid var(--line);background:white;" data-page-node-id="Pa0HvND1p39cVaIV8OoiHR">
+            <option data-page-node-id="KDT38VYHbCRtpBqfXjc8wN">营养成分表（表格）</option>
+            <option data-page-node-id="pZW2tvP3HdHHOQE1ch5n8S">试卷 / 练习</option>
+            <option data-page-node-id="VvjSjOH2NqLy3LixHMJcXI">包装说明</option>
+            <option data-page-node-id="EQofVKzVLoB2gSvPvyXaMl">普通文本</option>
+          </select>
+        </div>
+        <div class="seg" data-page-node-id="B7C1goLElLG5KOA0hUDnOk"><span data-page-node-id="b4njkDH5qTzpGbhn9XC87s">自动</span><span class="on" data-page-node-id="rI5SkkkHN8PCHQEK4vDpEB">营养成分表</span><span data-page-node-id="9AZUJFRDIZzTlXXxGgwUzc">试卷</span><span data-page-node-id="mDgEDwWOUf3hTu68tCVB9a">包装</span></div>
+        <p style="font-size:12px;color:var(--muted);" data-page-node-id="Y08yYdF8IenmvxEmrSfRDi">提示：选择场景后用对应模板与启发式。</p>
+
+        <h4 style="margin-top:14px;font-size:13px;" data-page-node-id="XExsCtUpFDAVCoDCPGX1gC">检测到的信号</h4>
+        <div class="pill-row" data-page-node-id="U3dSe0vwhZtAVNEpVEAxkp">
+          <span class="pill ok" data-page-node-id="6Sr8JPgy5n8S6SMABnGkLG">命中「营养成分表」</span>
+          <span class="pill" data-page-node-id="dsuC1BU1ograQKhnfbynoR">列对齐 3 列</span>
+          <span class="pill warn" data-page-node-id="BHZvhfrCqEBPUIJAhAe6gG">无 barcode</span>
+        </div>
+
+        <h4 style="margin-top:14px;font-size:13px;" data-page-node-id="Ap6Yh8WcvkNSmyPZKDpyDF">原图缩略</h4>
+        <div class="scene-illu" style="height:80px;background:linear-gradient(180deg,#ff6a13 0%,#d84a14 100%);color:white;text-align:center;" data-page-node-id="Sa4QGQRzkhc96oyoUjOXrS">📷</div>
+      </div>
+      <div class="footer" data-page-node-id="U9tBOX2gg94mI0vZHfxL5h">
+        <button class="btn primary" data-page-node-id="vGsD74hpylU3YuXe1XZNZm">重跑识别</button>
+        <div style="height:6px" data-page-node-id="kn53dHmEBDOmlQFjXWEBrV"></div>
+        <button class="btn secondary" data-page-node-id="9EFUG4DK0v0PY75yGKc3ys">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. 修复提示 -->
+  <div data-page-node-id="hQ6FWKRONWEcT4lNa5EAhP">
+    <h3 data-page-node-id="Td8pY8AT6JvsFJcIWmZjHI">⑤ 修复提示（被动 · v2 启用）</h3>
+    <div class="phone" data-page-node-id="dyEw52alVvoVYAhWBjBRTZ">
+      <span class="stageLabel" data-page-node-id="nPKYGTxsfQcr3owBUrVmo7">页 5 / 8</span>
+      <div class="status" data-page-node-id="R2SfI4VG4h1vKKs8zXdwth"><span data-page-node-id="LOQKyHylxTDgQRoicAACZ0">14:23</span><span data-page-node-id="M7ptCgHNYKRdXvemeAaH7J">●●●●</span></div>
+      <div class="nav" data-page-node-id="1owRGgiUpbOOm1KxfLM14T"><span class="back" data-page-node-id="ZjGUbu8sQo6Vo3Bt8EYe12">‹</span><span class="title" data-page-node-id="w5ue6MbDRa0P2pqtEpwjf0">检测到 3 处问题</span><span class="more" data-page-node-id="x7NEbaNRHHgyMrluPaDxfy">⋯</span></div>
+      <div class="body" data-page-node-id="ExaG4fiG0Tg0bQYRRNILB4">
+        <div class="issue" data-page-node-id="bczs0GdjqTvBV6pBHJAuPa">
+          <div data-page-node-id="bgFH11goaMrq8CIvXNqjni">📷 题目 1 的图未识别</div>
+          <div class="actions" data-page-node-id="e0cERlLwWG3vRBaCZpNojh">
+            <a data-page-node-id="LID13TDjwGLPEQdJ74Vs5m">把这个区域指定成图</a><a data-page-node-id="JBwQjwFudeuR5HlvbB8oe3">跳过</a>
+          </div>
+        </div>
+        <div class="issue" data-page-node-id="RqP20tHQvRPTL9M6X8uLK0">
+          <div data-page-node-id="Lk2QsHeLRgBZvwB6W4YapK">📊 表头「每 100 克」被拆成两段</div>
+          <div class="actions" data-page-node-id="HxPGlIqLasVG30zEYMV5NV">
+            <a data-page-node-id="EwgPLXHwI4nfmadQqjcmoF">合并</a><a data-page-node-id="Cz7J2zqOTDPKcbKhEPHEAL">跳过</a>
+          </div>
+        </div>
+        <div class="issue" style="background:rgba(196,164,106,0.10);border-left-color:var(--wheat);" data-page-node-id="oBeUffUNvR2ZJZmqqjLMhF">
+          <div data-page-node-id="BxIkBOZaCD2CcoeHabbbzX">📝 这段是页脚「20:14C」可丢弃</div>
+          <div class="actions" data-page-node-id="QwoojgKS0aAvYYcfRVVKgj">
+            <a data-page-node-id="YC4gpakthS5qeinEumi7eI">丢掉</a><a data-page-node-id="Npoz2PoqFCcUMrzoTAnFwZ">保留</a>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin-top:10px;" data-page-node-id="UNuivAiJfxlzDM5fLLW8Da">v2 仅展示 + 跳过的被动修复；R3 会开放手动指定框、合并单元格、补图。</p>
+      </div>
+      <div class="footer" data-page-node-id="9ovlxTqHndlz7fksM2zz4r">
+        <button class="btn primary" data-page-node-id="ovqWRySiEzqkrLqEoYxjWi">应用全部</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. B 档 DOCX 锚点示意 -->
+  <div data-page-node-id="7I5E6yWcUcxwTIbfKdv5ME">
+    <h3 data-page-node-id="HdhTwKPoLlpCWiUOSqLKsl">⑥ 导出物比较（A / B / C 三档）</h3>
+    <div class="scene" data-page-node-id="OGp8euuwS4YG0IQ8yHtZsD">
+      <p style="margin-top:0;" data-page-node-id="bqzEjzD9oHbhqhdX6QdKge">同一营养表 → 三种导出物内部示意（点击左侧切换）：</p>
+      <div class="grid cols3" data-page-node-id="E0eu3gbEm4erZ3ec2EQDzH">
+        <div style="background:white;border:1px solid var(--line);border-radius:10px;padding:12px;" data-page-node-id="G2X5s2HD8RQ5NVIeGRzFTp">
+          <div style="font-size:12px;color:var(--muted);" data-page-node-id="TcFd1RnkktIKhj4EDEhprs">A 结构化</div>
+          <div class="grid-block" style="margin-top:6px;" data-page-node-id="8o1XiuEmOYzvQoF6TeODsR">
+            <div class="head" data-page-node-id="CCXHOHFseNRLKeFIpx3tUU">项目</div><div class="head" data-page-node-id="g6YONhcLD9WEKDBShhsV70">每 100g</div><div class="head" data-page-node-id="6PQqLZgackD6FotBg7jlFL">NRV%</div>
+            <div data-page-node-id="yzxhBxZ9yXBYPJ1FJCcMgM">能量</div><div data-page-node-id="ueTNCjCvEOwiu4GALL27z8">1429 千焦</div><div data-page-node-id="bmnqj8I2WNuKgBZ5m859lz">17%</div>
+          </div>
+          <div style="height:6px" data-page-node-id="sLr9XhYSvD3mxSbnELHlO0"></div>
+          <div style="background:#fafafa;border:1px dashed var(--line);padding:6px;text-align:center;font-size:11px;color:var(--muted);" data-page-node-id="qpOToXSUEaXecx2yiOiC2S">[ figure: 条码 PNG ]</div>
+          <p style="font-size:11px;color:var(--muted);margin-top:6px;" data-page-node-id="GaVxayAKmgkBzptj6qmHHT">段落流 + 嵌图。Word 可编辑。</p>
+        </div>
+        <div style="background:white;border:1px solid var(--line);border-radius:10px;padding:12px;" data-page-node-id="vXwY1L3FnKV0BqJcEVsz62">
+          <div style="font-size:12px;color:var(--muted);" data-page-node-id="PuLI240iIS9iYmT9fwCduY">B 重排版</div>
+          <div class="grid-block" style="margin-top:6px;" data-page-node-id="oBHrsOHlS3UTlNPg4Tgi4c">
+            <div class="head" data-page-node-id="zRZQmDrWQI1tORA29ObidO">项目</div><div class="head" data-page-node-id="gFwWbd2qf3NRpVrqmkGU7k">每 100g</div><div class="head" data-page-node-id="JBUHkaBOdqpb7Jxn9SIVnM">NRV%</div>
+            <div data-page-node-id="dZcSAyxMHT7Z4fnsG9PptM">能量</div><div data-page-node-id="XAjp5TUaVeT9wLxdZ9nRRx">1429 千焦</div><div data-page-node-id="H4iY9XolTWJBTrEUIa6kwB">17%</div>
+          </div>
+          <div style="height:6px" data-page-node-id="SbJvm9TbZbGBr5wla8Xguw"></div>
+          <div style="position:relative;background:#fafafa;border:1px dashed var(--line);height:50px;" data-page-node-id="NS3Q2AxV4D25lVC6MwdHU7">
+            <div style="position:absolute;left:60%;top:0;background:#ddd;width:30%;height:80%;font-size:11px;text-align:center;line-height:40px;color:var(--muted);" data-page-node-id="gQI9Yv8XrPJjBhcuCnUbpX">[ 图锚点 60%,0% ]</div>
+          </div>
+          <p style="font-size:11px;color:var(--muted);margin-top:6px;" data-page-node-id="Rmf8phJ137EvIgBlidEbW1">段落 + 锚点定位图。版面接近原图。</p>
+        </div>
+        <div style="background:white;border:1px solid var(--line);border-radius:10px;padding:12px;" data-page-node-id="W8UkzLhZxHHBeBPIVZBGbo">
+          <div style="font-size:12px;color:var(--muted);" data-page-node-id="xCyloZXpfgSKzcabjcWlW3">C 衬底图</div>
+          <div style="position:relative;height:130px;background:linear-gradient(180deg,#ff6a13 0%,#d84a14 100%);border-radius:6px;overflow:hidden;" data-page-node-id="J5gxYopWInoIFtXu6ZCfL2">
+            <div style="position:absolute;inset:auto 6px 6px 6px;background:rgba(255,255,255,0.92);border-radius:4px;padding:6px;font-size:11px;" data-page-node-id="wGAPAL8OldpnIsh9jCl93T">
+              <strong style="display:block;font-size:13px;margin-bottom:4px;" data-page-node-id="hWb3PP4ZW1XARXsOuNrPuC">营养成分表</strong>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2px;font-size:10px;" data-page-node-id="4eThOqo6G0W0FL4KMQCSkV">
+                <span style="background:#c4a46a;font-weight:600;padding:2px;" data-page-node-id="ibJywLPrsRybob3XCqEHoq">项目</span><span style="background:#c4a46a;font-weight:600;padding:2px;" data-page-node-id="KV8xOGV0FqNCA3iKHoIyZH">100g</span><span style="background:#c4a46a;font-weight:600;padding:2px;" data-page-node-id="keGdHiOY3BKgnmm1WCJxC8">NRV%</span>
+                <span style="padding:2px;" data-page-node-id="ieu10Xv7RLZo92UWo0wpTF">能量</span><span style="padding:2px;" data-page-node-id="iLrJckGGWqpgi0fc1j3TwK">1429千焦</span><span style="padding:2px;" data-page-node-id="7AdeavRmlpEHWDaTbZgEVH">17%</span>
+              </div>
+            </div>
+          </div>
+          <p style="font-size:11px;color:var(--muted);margin-top:6px;" data-page-node-id="nHLMalDkV0EnjoThHyDhli">原图底 + 文字层。导出物明示含原图。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. C 档确认 -->
+  <div data-page-node-id="cVdo78DwYe1nW9ZAO5ZnnQ">
+    <h3 data-page-node-id="U0tIhoS5Q70IFR9TGUshCm">⑦ C 档确认（必须）</h3>
+    <div class="phone" data-page-node-id="SJj7GRwHIvlVCibcKbv2mh">
+      <span class="stageLabel" data-page-node-id="pTYkavKMkwXY0PausRnru6">页 7 / 8</span>
+      <div class="status" data-page-node-id="E4BCdE7xHvCBIljC08582y"><span data-page-node-id="bFbU5CvFPVZ7eLqJEw0Fri">14:23</span><span data-page-node-id="q7wQLCC8LGzi7c9eFJYyvZ">●●●●</span></div>
+      <div class="nav" data-page-node-id="5Vtyyk1P69frDdheGxj7cz"><span class="back" data-page-node-id="bQxVu97jmlz5xmvjqrPEZE">‹</span><span class="title" data-page-node-id="0VTdX6Ql1nhJQpDn2hVBYp">衬底图确认</span><span class="more" data-page-node-id="DW7R5AYGk0wrlS2jczUvXU">✕</span></div>
+      <div class="body" data-page-node-id="HjrqHOVYtGZxF3V0X8VUZs">
+        <p style="font-size:14px;" data-page-node-id="F0oGHmWOWy3qbdrSNeKJAy">⚠ 这份 Word 会包含本页原图作为衬底，仅用于版面参考。</p>
+        <ul style="font-size:13px;padding-left:18px;" data-page-node-id="2g9xvhhgF310iTkS2vlkiq">
+          <li data-page-node-id="jmS5WAZYvTrtGGlubcgUnC">PDF 内的图与原图一致</li>
+          <li data-page-node-id="b9FGepXSPnUExDE7AY32ae">文字层为可复制版本</li>
+          <li data-page-node-id="5YjJsBasCWS6gt02udVSVT">导出物文件名带 _backdrop 后缀，便于区分</li>
+        </ul>
+        <div class="scene-illu" style="height:60px;background:linear-gradient(180deg,#ff6a13 0%,#d84a14 100%);color:white;text-align:center;" data-page-node-id="GLOsOWz9dctdEeFCtDo6Sp">📷 原图缩略</div>
+      </div>
+      <div class="footer" data-page-node-id="ibAF9TNb6paRNYeWrj0fRO">
+        <button class="btn primary" data-page-node-id="VrlWbaDAaithjJzvFmOR2M">导出（衬底图）</button>
+        <div style="height:6px" data-page-node-id="B6WQTqD6NQnaIrCRGgBSEG"></div>
+        <button class="btn secondary" data-page-node-id="7t6SGePOTB0IPoPQQSJEHq">改回 A 结构化</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. 云开关 -->
+  <div data-page-node-id="2NZ1oiIlRxl0pqQQ6mB7rS">
+    <h3 data-page-node-id="ApNOn9w7WlNxFEgFWcnUsT">⑧ 云开关（用户主动）</h3>
+    <div class="phone" data-page-node-id="tVPXsLlDAtMq644O0ggvy6">
+      <span class="stageLabel" data-page-node-id="AHKkMg2UhuHJOX4mlWrh8j">页 8 / 8</span>
+      <div class="status" data-page-node-id="EDBQVgN1Kqd1DMrEFjrHJa"><span data-page-node-id="lI83juVNYIHWyQ9rZax81A">14:23</span><span data-page-node-id="T5dB98ApX5KtLRWXWbfP4R">●●●●</span></div>
+      <div class="nav" data-page-node-id="iZDt7rtvX3BnsoUiK6MZ3Y"><span class="back" data-page-node-id="i9LgjrFCmSVmgrlaxebUn3">‹</span><span class="title" data-page-node-id="NvFgaWnHmEPImkEAAJ3BiL">用云解析本页</span><span class="more" data-page-node-id="y984w2rRhCGcBCx8hrTc3G">✕</span></div>
+      <div class="body" data-page-node-id="oxnegachPWK2UTIUufIciH">
+        <p style="font-size:13px;color:var(--muted);" data-page-node-id="jJU2HYSlUAZpTZXV1QHPvm">本页将临时上传至云解析（TextIn 接口）。</p>
+        <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:10px;font-size:12px;" data-page-node-id="kI0wivixbXOZZZHxyikMDG">
+          <strong data-page-node-id="8Z3QutpiC9mdr161hOBah4">包括：</strong> 原图（original / rendered JPG）<br data-page-node-id="MpHe8Av14f5O62uhnnBIB9">
+          <strong data-page-node-id="jGBgfjTlp5iTvLB2PmAYZb">不含：</strong> 个人账号、库的其他文档
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:10px;" data-page-node-id="1jCFamNEC9vr6PY2kFs5Y2">隐私标签将更新"数据使用情况"。</p>
+
+        <h4 style="font-size:13px;margin-top:14px;" data-page-node-id="xNbwTs8YlilXyFAAEoUBcA">解析后你将得到</h4>
+        <ul style="font-size:12px;padding-left:18px;" data-page-node-id="CyBQuqnl4tCIhbCD7zlEjX">
+          <li data-page-node-id="d1KdzoJLO8CdGX0yuvL4Cq">更准确的表格 / 配图 IR</li>
+          <li data-page-node-id="PzCnTmmrL7QCALXlkJ2U9Y">合并单元格 / 复杂分栏</li>
+          <li data-page-node-id="juWTlw7QO6ntTp2lCBuL1W">完成后本机仍优先呈现</li>
+        </ul>
+      </div>
+      <div class="footer" data-page-node-id="CZLRu4bufL4pDg9XzsCDdI">
+        <button class="btn primary" data-page-node-id="58hbJ8FLthjuBzgsTgevB9">同意并上传</button>
+        <div style="height:6px" data-page-node-id="mZKGJZivtGlV4uOzP59H90"></div>
+        <button class="btn secondary" data-page-node-id="Rkz50ecamafZnWCWfxzntN">取消</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- 4. 现 vs 新 -->
+<section id="compare" data-page-node-id="Ex5sHLcojjniwnMovS0wIe">
+<h2 data-page-node-id="Yw5kpcIc52hK0xoJ1OCYMW">4. 现状 vs R2</h2>
+<div class="grid cols2" data-page-node-id="Bd03qYFmlEKRK8eQBJ4LOz">
+  <div class="scene" data-page-node-id="giZPACWAq0pktXiaEC8qiE">
+    <h3 data-page-node-id="px6xzNEfgoiTXcEiVowBJk">现状（R1）</h3>
+    <ul data-page-node-id="bHuAFFrhAIYeEO3uQgc5zN">
+      <li data-page-node-id="fDaRHHZzXxoKSczyNQ1XlK">单管线：OCR → 表 → 阅读序 → 图 → 按 Y 排序 → DOCX</li>
+      <li data-page-node-id="eDayFzhlEi8Bky3nLH5OGa">配图：36×48 栅格、文字 inset 0.018</li>
+      <li data-page-node-id="hthCD0jg8HLkExXGOIzx0b">DOCX：段落 + 表格 + inline 图</li>
+      <li data-page-node-id="3v0E59S9CaEujgIbIrQOdw">无档位、无场景选择、失败只显示通用文案</li>
+    </ul>
+  </div>
+  <div class="scene" data-page-node-id="jt224p8BNhVHekv0TrmtrH">
+    <h3 data-page-node-id="eSllgEb4R2h4xoh33DEFDl">R2 目标</h3>
+    <ul data-page-node-id="VvSx6vgV30f6An3imCNAtL">
+      <li data-page-node-id="WOvaHq5MTUZrGCJBpH2KTB">三段管线：版面分析 → 块映射 → 锚点式导出</li>
+      <li data-page-node-id="Wmb44QEIbigGlYcz3DNqL2">配图：72×96 栅格 + 显著性 + 题下 anchor</li>
+      <li data-page-node-id="StVPYfj1Eo3ECEaHzkV7bV">DOCX 三档：A 流式 / B 锚点 / C 衬底图</li>
+      <li data-page-node-id="DDkZNMAr5XjqDV5RV8zFBS">场景选择 + 修复提示 + 失败空态引导</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- 5. -->
+<section id="anatomy" data-page-node-id="Rwl6BgRmQJgjXLmUSW7PQA">
+<h2 data-page-node-id="lDANJZzHRHrP78B9FbWIXd">5. 文档结构示意（A 档 DOCX）</h2>
+<div class="scene-illu ink" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;" data-page-node-id="ei9Q5DarnxP1rGdPQcgN2V">
+[Content_Types].xml
+_rels/.rels
+word/
+  document.xml          ← <w:body data-page-node-id="2tGqvYMq55syGcT1IbButV"> 内流式段落 + w:tbl + wp:inline 图
+  styles.xml
+  _rels/document.xml.rels
+  media/
+    image1.png          ← 营养表的条码裁切 PNG
+document.xml 结构：
+  &lt;w:body&gt;
+    &lt;w:p&gt;                        ← 包装说明段（heading）
+    &lt;w:p&gt;                        ← 配料、保质期（paragraph）
+    &lt;w:p&gt;                        ← 表标题「营养成分表」
+    &lt;w:tbl&gt;                     ← 三列网格（col widths 按 OCR 推）
+      &lt;w:tr&gt;                     ← 表头加粗
+      &lt;w:tr&gt; 能量|1429 千焦|17%
+      &lt;w:tr&gt; 蛋白质|1.5 克|3%
+      &lt;w:tr&gt; 脂肪|0.8 克|1%
+      &lt;w:tr&gt; 碳水化合物|80.8 克|27%
+      &lt;w:tr&gt; 钠|49 毫克|2%
+    &lt;/w:tbl&gt;
+    &lt;w:p&gt;&lt;w:drawing&gt;&lt;wp:inline .../&gt;       ← 条码图
+    &lt;w:p&gt;                        ← 题注「6936832529010」
+    &lt;w:sectPr/&gt;                  ← A4
+  &lt;/w:body&gt;
+</div>
+<p class="note" data-page-node-id="8NMtKvQxmseEmAjYOdwXQN">B 档：用 <code data-page-node-id="xT6LINdZha5kiWvMR6sVlC">wp:anchor</code> + <code data-page-node-id="GZJPGvKht4nDu8w82yPrmz">w:positionH/V</code> 让图按页面绝对位置落位；C 档：在背景层铺一张原图 full-page。</p>
+</section>
+
+<!-- 6. -->
+<section id="rationale" data-page-node-id="FkMacahBkP0ws8Decdi06W">
+<h2 data-page-node-id="qeuw4p0p0MABXhIA8NHuh6">6. 设计原则</h2>
+<div class="grid cols3" data-page-node-id="HVIijG7zok0jF7aYKNny6O">
+  <div class="scene" data-page-node-id="ifGnQj5j7JULyPLDVOe1rI">
+    <h3 data-page-node-id="i3Cd81Je6WXbPHqeNLVFLX">产品定位</h3>
+    <p data-page-node-id="G7LgCsAV4qSMt7kpuMKRKZ">「还原」默认本机、不上传；R2 增加可切换产物的三档，让用户按场景选择。</p>
+  </div>
+  <div class="scene" data-page-node-id="DipCgkz57vYxEivceoKI1X">
+    <h3 data-page-node-id="Az3EFBjyrkaFrQf623QJcS">失败可见</h3>
+    <p data-page-node-id="0T7UvIIGGnlxSfEHtZBBxZ">失败空态给出可能原因与修复入口；不仅「失败」。</p>
+  </div>
+  <div class="scene" data-page-node-id="bxtZTfx09idxQtfMqW0vW4">
+    <h3 data-page-node-id="2HsfW4pyGk2J23eoBHpgBa">隐私默认</h3>
+    <p data-page-node-id="xrUYKeCACEZbTz00qQ2fQN">云解析永远需要用户主动确认单页并明示披露。</p>
+  </div>
+</div>
+</section>
+
+<footer data-page-node-id="2jdN62RJOHnU93uRZNqFYj">
+  本原型对应 <a href="07-reconstruct-r2-optimization.md" data-page-node-id="ltGVagzSDJDdkcECfKwLok">docs/07-reconstruct-r2-optimization.md</a>，R2 优化方案 v1。
+</footer>
+
+</main>
+</body>
+</html>

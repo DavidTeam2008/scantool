@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 560" role="img">
+  <style>
+    .t { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  </style>
+  <rect width="920" height="560" fill="#F6F3EC"/>
+
+  <rect x="40" y="24" width="840" height="72" rx="14" fill="#1B1914"/>
+  <text class="t" x="64" y="54" font-size="13" fill="#C4A46A">App</text>
+  <text class="t" x="64" y="78" font-size="15" fill="#F6F3EC">ZhixiaApp � AppEnvironment � AppRoute � RootView � CP��</text>
+
+  <rect x="40" y="112" width="840" height="100" rx="14" fill="#2A2420"/>
+  <text class="t" x="64" y="142" font-size="13" fill="#E8B4A8">Features</text>
+  <text class="t" x="64" y="172" font-size="15" fill="#F6F3EC">Library � Capture � Edit � Document � OCR � Export � Settings</text>
+  <text class="t" x="64" y="194" font-size="13" fill="rgba(246,243,236,0.55)">�V Domain / DesignSystem / O� � �b� AVCaptureSession  CIFilter</text>
+
+  <rect x="40" y="228" width="840" height="88" rx="14" fill="#24302C"/>
+  <text class="t" x="64" y="258" font-size="13" fill="#9BD4A0">Domain</text>
+  <text class="t" x="64" y="286" font-size="15" fill="#F6F3EC">ScanDocument � ScanPage � Quad � Enhancement � ScanMode � ZhixiaError</text>
+
+  <rect x="40" y="332" width="840" height="100" rx="14" fill="#3D241E"/>
+  <text class="t" x="64" y="362" font-size="13" fill="#C24A32">Services</text>
+  <text class="t" x="64" y="390" font-size="15" fill="#F6F3EC">Camera � Vision � Image � OCR � PDF � DocumentStore � PageFileStore</text>
+  <text class="t" x="64" y="412" font-size="13" fill="rgba(246,243,236,0.55)">actor ' CI � Feature 
+�(wS��{�</text>
+
+  <rect x="40" y="448" width="840" height="80" rx="14" fill="#E7DFD4"/>
+  <text class="t" x="64" y="478" font-size="13" fill="#6E675C">����</text>
+  <text class="t" x="64" y="504" font-size="15" fill="#3A3530">AVFoundation � Vision � Core Image � SwiftData � PDFKit � PhotosPicker � ShareLink</text>
+</svg>

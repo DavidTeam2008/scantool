@@ -1,0 +1,99 @@
+import Foundation
+
+/// OCR 噪声过滤（docs/07 §6.1 补丁 · 2026-09-07 真机回归）。
+///
+/// ## 为什么需要它
+/// 真机产物里混进了大量**非文档内容**：
+/// ```
+/// 20:14C                              ← iOS 状态栏（时间 + 电量）
+/// <1to you更多                         ← App 导航栏
+/// 文本分享加页                          ← App 底部工具栏
+/// https://qrcode.5rs.me/B8vPhXfLxUMzVI2X  ← 二维码内容（×3）
+/// ```
+/// 用户扫描的原图常常是「对着另一块屏幕拍的截图」，或者照片带了 UI 边框。
+/// Vision 会忠实地把这些都识别成文本，于是一股脑进正文 —— 这是「和扫描王差太多」
+/// 最直观的一条：扫描王会先裁掉非文档区域。
+///
+/// ## 设计原则
+/// - **只降级，不静默丢弃**（URL 除外）。误杀真实内容比漏掉噪声更糟。
+/// - 判定必须**多条件 AND**：孤立 + 短 + 靠边。单靠关键词会在英文文档上误伤。
+/// - 坐标一律用 Vision 归一化坐标（原点左下，y 向上），与 `OCRLine` 一致。
+enum OCRNoiseFilter {
+
+    /// 一条 OCR 行的处置结果。
+    enum Verdict {
+        /// 正常内容，走常规阅读顺序。
+        case keep
+        /// 噪声，直接丢弃（状态栏 / UI 工具栏）。
+        case drop
+        /// 有价值但不是正文：改成链接/条码类块，单独呈现。
+        case demoteToBarcode
+    }
+
+    struct Context {
+        /// 该行的行高（用于判断「短」）。
+        var medianLineHeight: CGFloat = 0.02
+        /// 是否位于页面顶部/底部边缘条带（Vision 坐标：y 越接近 1 越靠上）。
+        var isNearTopEdge: Bool = false
+        var isNearBottomEdge: Bool = false
+    }
+
+    static func verdict(for text: String, context: Context) -> Verdict {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .drop }
+
+        // 1. URL / 二维码内容 → 降级（不是正文句子，但可能是有用的链接）
+        if looksLikeURL(trimmed) { return .demoteToBarcode }
+
+        // 2. 状态栏：HH:MM 开头且整体很短（"20:14C"、"9:41 "）
+        if looksLikeStatusBar(trimmed) { return .drop }
+
+        // 3. UI chrome：靠边 + 短 + 命中界面词
+        if (context.isNearTopEdge || context.isNearBottomEdge),
+           trimmed.count <= 12,
+           looksLikeUIChrome(trimmed) {
+            return .drop
+        }
+
+        return .keep
+    }
+
+    // MARK: - 判定
+
+    private static func looksLikeURL(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") { return true }
+        if lower.hasPrefix("www.") { return true }
+        // 短域名形态：qrcode.5rs.me/B8vPhXfLxUMzVI2X
+        let compact = text.replacingOccurrences(of: " ", with: "")
+        guard compact.count >= 8, compact.count <= 120 else { return false }
+        guard compact.contains("."), compact.contains("/") else { return false }
+        // 不能含 CJK，否则是中文句子
+        return !compact.contains { ch in
+            (ch.unicodeScalars.first?.value ?? 0) > 0x2E80
+        }
+    }
+
+    private static func looksLikeStatusBar(_ text: String) -> Bool {
+        // "20:14"、"9:41"、"20:14C"、"20:14 5G"
+        let pattern = #"^\d{1,2}:\d{2}\s*[A-Za-z0-9%]{0,3}$"#
+        return text.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// 界面常用词。刻意保持短表 —— 宁可漏，不要误杀正文。
+    private static let chromeWords = [
+        "更多", "分享", "加页", "收藏", "返回", "首页", "我的", "设置", "搜索",
+        "完成", "取消", "保存", "编辑", "全选", "下一页", "上一页",
+        "back", "share", "more", "done", "cancel", "save", "edit", "home"
+    ]
+
+    private static func looksLikeUIChrome(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if chromeWords.contains(where: { lower.contains($0) }) { return true }
+        // 导航箭头 + 短串，如 "<1to you更多"、"〈 详情"
+        if text.count <= 10, text.contains("<") || text.contains("〈") || text.contains("‹") {
+            return true
+        }
+        return false
+    }
+}

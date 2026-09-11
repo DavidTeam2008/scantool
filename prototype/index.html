@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>纸匣 Zhixia · 原型</title>
+  <style>
+    :root {
+      --paper: #f6f3ec;
+      --ink: #1b1914;
+      --muted: #6e675c;
+      --line: #e4ddd2;
+      --card: #fffdf8;
+      --seal: #c24a32;
+      --forest: #3d5a4c;
+      --wheat: #c4a46a;
+      --danger: #b42318;
+      --preview: #16140f;
+      --dim: rgba(246, 243, 236, 0.58);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--paper); color: var(--ink); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      line-height: 1.5;
+    }
+    header.top {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 14px 28px;
+      background: rgba(246, 243, 236, 0.92);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
+    .brand strong { font-size: 18px; letter-spacing: 0.06em; }
+    .brand span { color: var(--muted); font-size: 13px; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; }
+    nav a {
+      color: var(--muted); text-decoration: none; font-size: 13px;
+      padding: 6px 10px; border-radius: 999px;
+    }
+    nav a:hover { background: #ece6dc; color: var(--ink); }
+    nav a.now { background: var(--ink); color: var(--paper); }
+    main { max-width: 1180px; margin: 0 auto; padding: 36px 24px 80px; }
+    h1 { font-size: 40px; letter-spacing: -0.03em; margin: 0 0 8px; font-weight: 640; }
+    .lede { font-size: 18px; color: var(--muted); max-width: 720px; margin: 0 0 28px; }
+    h2 { font-size: 22px; margin: 0 0 8px; letter-spacing: -0.02em; }
+    p.note { color: var(--muted); margin: 0 0 20px; max-width: 680px; }
+    section { margin-bottom: 72px; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.02fr 0.98fr;
+      gap: 28px;
+    }
+    @media (max-width: 900px) {
+      .hero-grid, .phones, .weeks, .tokens { grid-template-columns: 1fr !important; }
+    }
+    .scene {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 28px;
+    }
+    .phone {
+      width: 300px;
+      height: 640px;
+      margin: 0 auto;
+      background: var(--preview);
+      border-radius: 36px;
+      padding: 12px 10px 16px;
+      box-shadow: 0 18px 50px rgba(28, 25, 21, 0.18);
+      color: #f6f3ec;
+      display: flex;
+      flex-direction: column;
+    }
+    .status {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: var(--dim); padding: 4px 10px 8px;
+    }
+    .screen { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .paper-screen { background: var(--paper); color: var(--ink); border-radius: 24px; }
+    .navrow {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 12px 10px;
+      font-size: 16px; font-weight: 640;
+    }
+    .navrow button, .textbtn {
+      background: none; border: 0; color: var(--seal);
+      font-size: 13px; font-weight: 650; cursor: pointer; padding: 4px 0;
+    }
+    .textbtn.ink { color: var(--ink); }
+    .textbtn.light { color: #f0d0c4; }
+    .textbtn.danger { color: #f0a39a; }
+    .textbtn:disabled { color: var(--dim); cursor: default; }
+    .search {
+      margin: 0 12px 10px; padding: 9px 12px; border-radius: 12px;
+      background: #ebe4d8; color: var(--muted); font-size: 13px; border: 0; width: calc(100% - 24px);
+    }
+    .segs {
+      display: flex; gap: 6px; padding: 0 12px 12px;
+    }
+    .segs button {
+      border: 0; background: transparent; color: var(--muted);
+      font-size: 13px; font-weight: 600; padding: 4px 2px; cursor: pointer;
+    }
+    .segs button.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--seal); }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      padding: 0 12px; overflow: auto;
+    }
+    .doc {
+      text-align: left; border: 0; background: var(--card);
+      border-radius: 14px; padding: 0 0 10px; cursor: pointer;
+      box-shadow: 0 1px 0 var(--line);
+    }
+    .cover {
+      height: 112px; border-radius: 14px 14px 8px 8px; margin-bottom: 8px;
+      background:
+        linear-gradient(#fffdf8, #f3eee4),
+        repeating-linear-gradient(180deg, transparent, transparent 13px, rgba(27,25,20,0.06) 14px);
+      position: relative;
+    }
+    .cover::after {
+      content: "";
+      position: absolute; inset: 16px 14px;
+      border: 1.5px solid rgba(194, 74, 50, 0.35);
+      border-radius: 2px;
+    }
+    .cover.contract { background: #f4efe6; }
+    .cover.id { background: linear-gradient(160deg, #e8eef5, #d9e4d8); }
+    .doc b { display: block; font-size: 12px; padding: 0 8px; font-weight: 640; }
+    .doc small { display: block; color: var(--muted); font-size: 11px; padding: 2px 8px 0; }
+    .fabwrap {
+      margin-top: auto; display: flex; justify-content: center; padding: 12px 0 4px;
+    }
+    .fab {
+      width: 64px; height: 64px; border-radius: 50%; border: 0;
+      background: var(--seal); color: #fffdf8;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+      box-shadow: 0 8px 20px rgba(194, 74, 50, 0.28);
+    }
+    .empty {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 14px; padding: 20px; text-align: center;
+    }
+    .finder {
+      flex: 1; position: relative; margin: 0 4px; border-radius: 18px; overflow: hidden;
+      background:
+        radial-gradient(ellipse at 50% 40%, #3a3428 0%, #16140f 70%);
+    }
+    .sheet {
+      position: absolute; left: 18%; top: 18%; width: 64%; height: 58%;
+      background: #efe6d4;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.35);
+      transform: perspective(400px) rotateX(8deg) rotateZ(-2deg);
+    }
+    .sheet .lines {
+      position: absolute; inset: 18px 16px;
+      background: repeating-linear-gradient(180deg, transparent, transparent 11px, rgba(27,25,20,0.12) 12px);
+    }
+    .quad {
+      position: absolute; left: 16%; top: 16%; width: 68%; height: 62%;
+      border: 2.5px solid var(--seal);
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px rgba(194,74,50,0.2);
+    }
+    .quad.loose { border-style: dashed; opacity: 0.55; }
+    .hint {
+      position: absolute; left: 0; right: 0; bottom: 12px;
+      text-align: center; font-size: 13px; color: #f0d0c4;
+    }
+    .idmask {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.45);
+      clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0, 12% 32%, 12% 68%, 88% 68%, 88% 32%, 12% 32%);
+    }
+    .idwin {
+      position: absolute; left: 12%; top: 32%; width: 76%; height: 36%;
+      border: 2px solid #f0d0c4; border-radius: 8px;
+    }
+    .chrome {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px 4px;
+    }
+    .shutter {
+      width: 68px; height: 68px; border-radius: 50%;
+      border: 4px solid #f6f3ec; background: #fff; cursor: pointer;
+    }
+    .shutter:disabled { opacity: 0.35; }
+    .side {
+      width: 52px; text-align: center; font-size: 12px; color: #f0d0c4; background: none; border: 0; cursor: pointer;
+    }
+    .thumbs {
+      display: flex; gap: 6px; padding: 0 12px 8px; min-height: 44px;
+    }
+    .thumbs i {
+      width: 34px; height: 44px; border-radius: 5px; background: #efe6d4; display: block;
+      box-shadow: inset 0 0 0 1px rgba(246,243,236,0.2);
+    }
+    .review-img {
+      flex: 1; margin: 4px 16px; background: #efe6d4; border-radius: 4px; position: relative;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .review-img .dot {
+      position: absolute; width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; border: 2px solid var(--seal);
+    }
+    .review-img .dot.tl { left: -6px; top: -6px; }
+    .review-img .dot.tr { right: -6px; top: -6px; }
+    .review-img .dot.bl { left: -6px; bottom: -6px; }
+    .review-img .dot.br { right: -6px; bottom: -6px; }
+    .filters {
+      display: flex; gap: 8px; padding: 8px 10px 12px; overflow: auto;
+    }
+    .filters button {
+      flex: 0 0 auto; border: 0; border-radius: 10px; padding: 8px 10px;
+      background: #2a2620; color: var(--dim); font-size: 12px; cursor: pointer;
+    }
+    .filters button.on { background: var(--seal); color: #fff; }
+    .pagebar { display: flex; justify-content: center; gap: 6px; padding: 4px 0 8px; }
+    .pagebar span { width: 6px; height: 6px; border-radius: 50%; background: #4a453c; }
+    .pagebar span.on { background: var(--seal); width: 16px; }
+    .toolbar {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
+      padding: 8px 16px 16px;
+    }
+    .toolbar button {
+      border: 0; border-radius: 12px; padding: 12px 8px;
+      background: #efe8dc; color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer;
+    }
+    .ocr {
+      flex: 1; margin: 0 12px 12px; padding: 14px; border-radius: 14px;
+      background: #fffdf8; color: var(--ink); font-size: 13px; line-height: 1.65; overflow: auto;
+    }
+    .share {
+      width: calc(100% - 24px); margin: 0 12px 10px; padding: 12px;
+      border: 0; border-radius: 12px; background: var(--seal); color: #fff;
+      font-weight: 700; cursor: pointer;
+    }
+    .share.ghost {
+      background: #efe8dc; color: var(--ink);
+    }
+    .row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 16px; border-bottom: 1px solid var(--line);
+      width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0;
+      color: var(--ink); text-align: left; cursor: pointer; font-size: 15px;
+    }
+    .row small { color: var(--muted); }
+    .banner {
+      margin: 0 12px 10px; padding: 10px 12px; border-radius: 12px;
+      background: #f4e4d6; color: #5a3a2a; font-size: 12px;
+    }
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tabs button {
+      border: 1px solid var(--line); background: #fff; border-radius: 999px;
+      padding: 6px 12px; cursor: pointer; color: var(--muted);
+    }
+    .tabs button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    .cap { text-align: center; font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .weeks {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+    .week {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 16px;
+    }
+    .week strong { display: block; margin-bottom: 6px; }
+    .tokens {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+    .swatch {
+      border-radius: 14px; padding: 16px; min-height: 88px; border: 1px solid var(--line);
+    }
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--ink); color: var(--paper); padding: 10px 16px;
+      border-radius: 999px; font-size: 13px; display: none;
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <strong>纸匣</strong>
+      <span>扫描工具原型 · 拍 / 理 / 出</span>
+    </div>
+    <nav>
+      <a class="now" href="index.html">原型</a>
+      <a href="../docs/01-product-prototype.md">产品</a>
+      <a href="../docs/02-architecture.md">架构</a>
+      <a href="../docs/03-tech-choices.md">选型</a>
+      <a href="../docs/04-implementation-principles.md">原理</a>
+      <a href="../docs/05-roadmap.md">路线图</a>
+    </nav>
+  </header>
+
+  <main>
+    <section>
+      <h1>对着纸，三步收进匣里</h1>
+      <p class="lede">对标全能扫描王的主体功能，但首页是档案柜，不是功能墙。主路径只有：扫描 → 快门 → 完成 → 保存。无广告、无账号、不上云。</p>
+      <div class="hero-grid">
+        <div class="scene">
+          <h2>可点的手机</h2>
+          <p class="note">从空库走到一份三页合同，再看文本和证件。检测失败仍可快门——框是帮手，不是门槛。</p>
+          <div class="tabs" id="tabs"></div>
+          <div class="phone" id="phone"></div>
+        </div>
+        <div>
+          <div class="scene" style="margin-bottom:16px">
+            <h2>和全能扫描王对齐什么</h2>
+            <p class="note" style="margin-bottom:0">实时框、连拍、相册导入、透视、五档增强、文档库、文件夹、OCR、PDF 分享、证件双面。不对齐会员墙、云盘和宫格入口。</p>
+          </div>
+          <div class="scene">
+            <h2>操作简单怎么保证</h2>
+            <p class="note" style="margin-bottom:0">拍完再命名、再选文件夹。未点保存不入库。整理是一屏：拖角 + 滤镜，没有「下一步」向导。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>三块主界面</h2>
+      <p class="note">同一套纸色与朱砂。差异只在：库是卡片，取景是黑底框，详情是大图加三个动作。</p>
+      <div class="phones">
+        <div>
+          <div class="phone" id="p-lib"></div>
+          <div class="cap">首页 · 文档库</div>
+        </div>
+        <div>
+          <div class="phone" id="p-cam"></div>
+          <div class="cap">取景 · 框锁定可拍</div>
+        </div>
+        <div>
+          <div class="phone" id="p-doc"></div>
+          <div class="cap">详情 · 文本 / 分享 / 加页</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>色板</h2>
+      <p class="note">书桌：暖纸、暖墨、一枚朱砂印。文件夹用松绿点缀，不用彩虹图标。</p>
+      <div class="tokens">
+        <div class="swatch" style="background:#f6f3ec"><strong>纸</strong><br>#F6F3EC</div>
+        <div class="swatch" style="background:#1b1914;color:#f6f3ec"><strong>墨</strong><br>#1B1914</div>
+        <div class="swatch" style="background:#c24a32;color:#fff"><strong>朱砂</strong><br>#C24A32</div>
+        <div class="swatch" style="background:#3d5a4c;color:#fff"><strong>松绿</strong><br>#3D5A4C</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>七周怎么落地</h2>
+      <div class="weeks">
+        <div class="week"><strong>W1 壳</strong>工程、Token、空库、扫描钮。</div>
+        <div class="week"><strong>W2–3 框</strong>自建相机、Vision、快门出原图。</div>
+        <div class="week"><strong>W3–5 理</strong>拉正、五档、连拍入库。</div>
+        <div class="week"><strong>W6–7 出</strong>OCR、PDF、证件、打磨。</div>
+      </div>
+    </section>
+  </main>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      screen: "empty",
+      pages: 0,
+      filter: "enhance",
+      mode: "document",
+      idFace: "front",
+      tab: "all",
+      hasLibrary: false
+    };
+
+    const filters = [
+      ["original", "原图"],
+      ["enhance", "增强"],
+      ["deskewShadow", "去阴影"],
+      ["grayscale", "灰度"],
+      ["blackWhite", "黑白"]
+    ];
+
+    function toast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.style.display = "block";
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => { el.style.display = "none"; }, 2200);
+    }
+
+    function clock(light) {
+      return `<div class="status" style="${light ? "color:#6e675c" : ""}"><span>9:41</span><span>纸匣</span></div>`;
+    }
+
+    function filterBar() {
+      return `<div class="filters">${filters.map(([id, label]) =>
+        `<button type="button" class="${state.filter === id ? "on" : ""}" onclick="setFilter('${id}')">${label}</button>`
+      ).join("")}</div>`;
+    }
+
+    function thumbs(n) {
+      return `<div class="thumbs">${Array.from({ length: n }, () => "<i></i>").join("")}</div>`;
+    }
+
+    function screens() {
+      const doneLabel = state.pages ? `完成 ${state.pages}` : "完成";
+      return {
+        empty: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow"><span></span><span>纸匣</span><button type="button" onclick="go('settings')">设置</button></div>
+            <input class="search" readonly value="搜索文档或文字" />
+            <div class="segs">
+              <button class="on" type="button">全部</button>
+              <button type="button" onclick="toast('先拍一份，再建立文件夹')">文件夹</button>
+              <button type="button">收藏</button>
+            </div>
+            <div class="empty">拍一张纸，从这里开始</div>
+            <div class="fabwrap"><button class="fab" type="button" onclick="go('camera')">扫</button></div>
+          </div>
+        `,
+        home: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow"><span></span><span>纸匣</span><button type="button" onclick="go('settings')">设置</button></div>
+            <input class="search" readonly value="搜索文档或文字" onclick="toast('可搜标题，OCR 后也能搜正文')" />
+            <div class="segs">
+              <button class="${state.tab === "all" ? "on" : ""}" type="button" onclick="state.tab='all'; renderPhone()">全部</button>
+              <button class="${state.tab === "folders" ? "on" : ""}" type="button" onclick="state.tab='folders'; renderPhone()">文件夹</button>
+              <button type="button" onclick="toast('长按卡片可收藏')">收藏</button>
+            </div>
+            ${state.tab === "folders" ? `
+              <button class="row" type="button" onclick="toast('打开「工作」文件夹')"><span>工作</span><small>2</small></button>
+              <button class="row" type="button"><span>证件</span><small>1</small></button>
+            ` : `
+              <div class="grid">
+                <button class="doc" type="button" onclick="go('document')">
+                  <div class="cover contract"></div>
+                  <b>租赁合同</b><small>3 页 · 今天</small>
+                </button>
+                <button class="doc" type="button" onclick="go('document')">
+                  <div class="cover"></div>
+                  <b>8月30日 扫描</b><small>1 页 · 今天</small>
+                </button>
+                <button class="doc" type="button" onclick="go('idDoc')">
+                  <div class="cover id"></div>
+                  <b>身份证</b><small>2 页 · 昨天</small>
+                </button>
+              </div>
+            `}
+            <div class="fabwrap"><button class="fab" type="button" onclick="startCapture()">扫</button></div>
+          </div>
+        `,
+        camera: `
+          ${clock(false)}
+          <div class="screen">
+            <div class="navrow">
+              <button class="textbtn light" type="button" onclick="cancelCam()">关闭</button>
+              <span style="font-size:14px">
+                <button class="textbtn ${state.mode === "document" ? "light" : ""}" style="${state.mode === "document" ? "color:#fff" : ""}" type="button" onclick="setMode('document')">文档</button>
+                ·
+                <button class="textbtn ${state.mode === "id" ? "light" : ""}" style="${state.mode === "id" ? "color:#fff" : ""}" type="button" onclick="setMode('id')">证件</button>
+              </span>
+              <button class="textbtn light" type="button" onclick="toast('闪光：关 / 开 / 自动')">闪光</button>
+            </div>
+            <div class="finder">
+              <div class="sheet"><div class="lines"></div></div>
+              ${state.mode === "id"
+                ? `<div class="idmask"></div><div class="idwin"></div><div class="hint">${state.idFace === "front" ? "对准正面" : "对准反面"}</div>`
+                : `<div class="quad ${state.pages ? "" : ""}"></div><div class="hint">${state.pages ? "已锁定 · 可继续拍" : "已对准，轻点快门"}</div>`}
+            </div>
+            ${thumbs(state.pages)}
+            <div class="chrome">
+              <button class="side" type="button" onclick="go('import')">相册</button>
+              <button class="shutter" type="button" onclick="shoot()"></button>
+              <button class="side" type="button" ${state.pages ? "" : "disabled style='opacity:.35'"} onclick="go('review')">${doneLabel}</button>
+            </div>
+          </div>
+        `,
+        import: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go('camera')">取消</button>
+              <span>相册</span>
+              <button type="button" onclick="importPages()">添加</button>
+            </div>
+            <p class="note" style="padding:12px 16px;margin:0">选已拍的纸张。导入后走同一条裁切与增强，不另做编辑器。</p>
+            <div class="grid">
+              <div class="cover contract"></div>
+              <div class="cover"></div>
+              <div class="cover id"></div>
+              <div class="cover"></div>
+            </div>
+          </div>
+        `,
+        review: `
+          ${clock(false)}
+          <div class="screen">
+            <div class="navrow">
+              <button class="textbtn danger" type="button" onclick="go('camera')">返回</button>
+              <span style="font-size:15px">整理</span>
+              <button class="textbtn light" type="button" onclick="saveDoc()">保存</button>
+            </div>
+            <div class="pagebar">${Array.from({ length: Math.max(state.pages, 1) }, (_, i) =>
+              `<span class="${i === 0 ? "on" : ""}"></span>`
+            ).join("")}</div>
+            <div class="review-img">
+              <i class="dot tl"></i><i class="dot tr"></i><i class="dot bl"></i><i class="dot br"></i>
+            </div>
+            <div style="text-align:center;padding:4px 0 0">
+              <button class="textbtn light" type="button" onclick="toast('旋转 90°')">旋转</button>
+              &nbsp;
+              <button class="textbtn light" type="button" onclick="toast('长按滤镜可应用到全部页')">应用到全部</button>
+            </div>
+            ${filterBar()}
+          </div>
+        `,
+        document: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go('home')">库</button>
+              <span style="font-size:15px">租赁合同</span>
+              <button type="button" onclick="toast('重命名 · 移动 · 收藏 · 删除')">⋯</button>
+            </div>
+            <div class="cover contract" style="margin:8px 20px;height:280px;border-radius:8px"></div>
+            <div class="pagebar"><span></span><span class="on"></span><span></span></div>
+            <div class="toolbar">
+              <button type="button" onclick="go('ocr')">文本</button>
+              <button type="button" onclick="go('share')">分享</button>
+              <button type="button" onclick="startCapture()">加页</button>
+            </div>
+          </div>
+        `,
+        ocr: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go('document')">返回</button>
+              <span>文本</span>
+              <button type="button" onclick="toast('已复制全文')">全选复制</button>
+            </div>
+            <div class="banner">在本机识别 · 未上传</div>
+            <div class="ocr">
+              房屋租赁合同<br><br>
+              甲方（出租人）：林秋白<br>
+              乙方（承租人）：周南<br><br>
+              一、甲方将本市枫林路 12 号 3 层房屋出租给乙方使用。<br>
+              二、租期自 2026 年 9 月 1 日起至 2027 年 8 月 31 日止。<br>
+              三、月租金人民币陆仟元整，每月 5 日前支付。
+            </div>
+          </div>
+        `,
+        share: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go('document')">关闭</button>
+              <span>分享</span>
+              <span></span>
+            </div>
+            <p class="note" style="padding:8px 16px">走系统分享面板。不内嵌微信或钉钉。</p>
+            <button class="share" type="button" onclick="toast('将打开系统分享 · PDF')">导出 PDF</button>
+            <button class="share ghost" type="button" onclick="toast('将分享 3 张图片')">导出图片</button>
+          </div>
+        `,
+        idDoc: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go('home')">库</button>
+              <span style="font-size:15px">身份证</span>
+              <button type="button" onclick="toast('正、反两页')">⋯</button>
+            </div>
+            <div class="cover id" style="margin:8px 20px;height:200px;border-radius:12px"></div>
+            <div class="pagebar"><span class="on"></span><span></span></div>
+            <p class="note" style="padding:0 20px">一份文档，两页。分享 PDF 时正面在前。</p>
+            <div class="toolbar">
+              <button type="button" onclick="go('ocr')">文本</button>
+              <button type="button" onclick="go('share')">分享</button>
+              <button type="button" onclick="setMode('id'); startCapture()">加页</button>
+            </div>
+          </div>
+        `,
+        settings: `
+          ${clock(true)}
+          <div class="screen paper-screen">
+            <div class="navrow">
+              <button class="textbtn ink" type="button" onclick="go(state.hasLibrary ? 'home' : 'empty')">完成</button>
+              <span>设置</span>
+              <span></span>
+            </div>
+            <button class="row" type="button" onclick="toast('默认开：框稳定约 0.6 秒后拍摄')"><span>自动拍摄</span><small>开</small></button>
+            <button class="row" type="button" onclick="toast('默认增强，证件建议原图')"><span>默认滤镜</span><small>增强</small></button>
+            <button class="row" type="button"><span>保存原图</span><small>开</small></button>
+            <button class="row" type="button" onclick="toast('本机约 48 MB · 不含系统相册')"><span>存储占用</span><small>查看</small></button>
+          </div>
+        `
+      };
+    }
+
+    function renderPhone() {
+      document.getElementById("phone").innerHTML = screens()[state.screen];
+    }
+
+    function go(name) {
+      state.screen = name;
+      if (name === "home" || name === "document" || name === "idDoc") state.hasLibrary = true;
+      renderPhone();
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.screen === name));
+    }
+
+    function startCapture() {
+      state.pages = 0;
+      go("camera");
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      state.idFace = "front";
+      renderPhone();
+    }
+
+    function shoot() {
+      if (state.mode === "id") {
+        if (state.idFace === "front") {
+          state.pages = Math.max(state.pages, 1);
+          state.idFace = "back";
+          toast("正面已拍，请拍反面");
+        } else {
+          state.pages = 2;
+          toast("反面已拍，可以完成");
+        }
+      } else {
+        state.pages += 1;
+        toast(`第 ${state.pages} 页已加入这份文档`);
+      }
+      renderPhone();
+    }
+
+    function cancelCam() {
+      if (state.pages) {
+        if (confirm("丢弃这 " + state.pages + " 页？")) {
+          state.pages = 0;
+          go(state.hasLibrary ? "home" : "empty");
+        }
+      } else {
+        go(state.hasLibrary ? "home" : "empty");
+      }
+    }
+
+    function importPages() {
+      state.pages = Math.max(state.pages, 2);
+      toast("已加入 2 张，进入整理");
+      go("review");
+    }
+
+    function setFilter(id) {
+      state.filter = id;
+      renderPhone();
+    }
+
+    function saveDoc() {
+      toast("已保存到本机，未上传");
+      state.pages = Math.max(state.pages, 1);
+      state.hasLibrary = true;
+      go("document");
+    }
+
+    const tabItems = [
+      ["empty", "空库"],
+      ["home", "有文档"],
+      ["camera", "取景"],
+      ["review", "整理"],
+      ["document", "详情"],
+      ["ocr", "文本"],
+      ["share", "分享"],
+      ["idDoc", "证件"],
+      ["settings", "设置"]
+    ];
+    document.getElementById("tabs").innerHTML = tabItems.map(([id, label]) =>
+      `<button type="button" data-screen="${id}" onclick="go('${id}')">${label}</button>`
+    ).join("");
+
+    function staticPhone(html, paper) {
+      return `${clock(paper)}${html}`;
+    }
+    document.getElementById("p-lib").innerHTML = staticPhone(`
+      <div class="screen paper-screen">
+        <div class="navrow"><span></span><span>纸匣</span><span style="color:var(--seal);font-size:13px">设置</span></div>
+        <div class="search">搜索文档或文字</div>
+        <div class="grid">
+          <div class="doc"><div class="cover contract"></div><b>租赁合同</b><small>3 页</small></div>
+          <div class="doc"><div class="cover"></div><b>8月30日 扫描</b><small>1 页</small></div>
+        </div>
+        <div class="fabwrap"><button class="fab" type="button">扫</button></div>
+      </div>
+    `, true);
+    document.getElementById("p-cam").innerHTML = staticPhone(`
+      <div class="screen">
+        <div class="navrow"><span style="color:#f0d0c4;font-size:13px">关闭</span><span style="font-size:14px">文档</span><span style="color:#f0d0c4;font-size:13px">闪光</span></div>
+        <div class="finder"><div class="sheet"><div class="lines"></div></div><div class="quad"></div><div class="hint">已对准，轻点快门</div></div>
+        <div class="chrome"><span class="side">相册</span><button class="shutter" type="button"></button><span class="side">完成</span></div>
+      </div>
+    `, false);
+    document.getElementById("p-doc").innerHTML = staticPhone(`
+      <div class="screen paper-screen">
+        <div class="navrow"><span style="color:var(--seal);font-size:13px">库</span><span style="font-size:15px">租赁合同</span><span>⋯</span></div>
+        <div class="cover contract" style="margin:8px 20px;height:240px;border-radius:8px"></div>
+        <div class="toolbar">
+          <button type="button">文本</button>
+          <button type="button">分享</button>
+          <button type="button">加页</button>
+        </div>
+      </div>
+    `, true);
+
+    go("empty");
+  </script>
+</body>
+</html>

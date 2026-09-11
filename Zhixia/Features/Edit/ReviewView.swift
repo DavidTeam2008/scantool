@@ -1,0 +1,144 @@
+import SwiftUI
+
+struct ReviewView: View {
+    @Bindable var viewModel: ReviewViewModel
+    var onSaved: (UUID) -> Void
+    var onRetake: (UUID) -> Void
+    var onCancel: () -> Void
+
+    @State private var confirmDelete = false
+
+    var body: some View {
+        ZStack {
+            Tokens.preview.ignoresSafeArea()
+            VStack(spacing: 8) {
+                header
+                pageDots
+                canvas
+                tools
+                FilterStrip(selected: viewModel.current?.enhancement ?? .enhance) { enhancement in
+                    viewModel.setFilter(enhancement)
+                }
+                .onLongPressGesture {
+                    viewModel.applyFilterToAll()
+                }
+            }
+            if viewModel.isSaving {
+                ProgressView()
+                    .tint(.white)
+                    .padding(20)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .onAppear {
+            viewModel.appear()
+        }
+        .confirmationDialog("review.deletePage", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("common.delete", role: .destructive) {
+                viewModel.deleteCurrent()
+            }
+            Button("common.cancel", role: .cancel) {}
+        }
+        .alert("error.storeFailed", isPresented: storeAlert) {
+            Button("common.ok", role: .cancel) {}
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Button("common.back", action: onCancel)
+                .foregroundStyle(Color(hex: 0xF0A39A))
+            Spacer()
+            Text("review.title")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.white)
+            Spacer()
+            Button("common.save") {
+                Task {
+                    if let id = await viewModel.save() {
+                        onSaved(id)
+                    }
+                }
+            }
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.white)
+            .disabled(!viewModel.canSave)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    private var pageDots: some View {
+        HStack(spacing: 6) {
+            ForEach(viewModel.drafts.indices, id: \.self) { index in
+                Capsule()
+                    .fill(index == viewModel.selectedIndex ? Tokens.seal : Color.white.opacity(0.25))
+                    .frame(width: index == viewModel.selectedIndex ? 16 : 6, height: 6)
+                    .onTapGesture { viewModel.select(index: index) }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var canvas: some View {
+        if viewModel.isAdjustingCrop, let original = viewModel.originalImage {
+            CropCanvas(
+                image: original,
+                quad: Binding(
+                    get: { viewModel.current?.quad ?? .fullImage },
+                    set: { viewModel.updateQuad($0) }
+                ),
+                onChanged: {},
+                onEnded: {}
+            )
+            .padding(.horizontal, 16)
+        } else if let preview = viewModel.previewImage {
+            Image(uiImage: preview)
+                .resizable()
+                .scaledToFit()
+                .padding(.horizontal, 16)
+                .shadow(radius: 16)
+                .onTapGesture {
+                    viewModel.beginCrop()
+                }
+        } else if let original = viewModel.originalImage {
+            Image(uiImage: original)
+                .resizable()
+                .scaledToFit()
+                .padding(.horizontal, 16)
+                .opacity(0.92)
+                .onTapGesture {
+                    viewModel.beginCrop()
+                }
+        } else {
+            ProgressView().tint(.white).frame(maxHeight: .infinity)
+        }
+    }
+
+    private var tools: some View {
+        HStack(spacing: 24) {
+            Button("review.rotate") { viewModel.rotate() }
+                .foregroundStyle(Color.white.opacity(0.85))
+            Button("review.crop") { viewModel.toggleCrop() }
+                .foregroundStyle(viewModel.isAdjustingCrop ? Tokens.seal : Color.white.opacity(0.85))
+            Button("review.retake") {
+                if let id = viewModel.current?.id {
+                    onRetake(id)
+                }
+            }
+            .foregroundStyle(Color.white.opacity(0.85))
+            Button("common.delete") { confirmDelete = true }
+                .foregroundStyle(Color(hex: 0xF0A39A))
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .padding(.top, 4)
+    }
+
+    private var storeAlert: Binding<Bool> {
+        Binding(
+            get: { viewModel.error != nil },
+            set: { if !$0 { viewModel.error = nil } }
+        )
+    }
+}
