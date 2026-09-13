@@ -47,21 +47,20 @@ actor DocxExportService: DocxRendering {
         nextDocPr: inout Int
     ) -> String {
         var body = ""
-        // C 档：把每页最大可用图（或原图）作为 behindDoc 衬底
-        if tier == .background {
-            for page in document.pages {
-                if let bg = backgroundDrawingXML(
+        for (index, page) in document.pages.enumerated() {
+            // C 档：把每页最大可用图作为 behindDoc 衬底。
+            // ⚠️ 必须**逐页**插在该页正文之前。曾经是把所有页的衬底一次性 append 到 body 最前面，
+            // 而衬底用 `relativeFrom="page"` + `posOffset 0,0` —— Word 会把这些 anchored 段落排在
+            // 它们所在的**第 1 页**上，于是多页文档变成「第 1 页堆 N 张 A4 互相遮挡、第 2..N 页没有衬底」。
+            if tier == .background {
+                body += backgroundDrawingXML(
                     page: page,
                     media: &media,
                     imageRels: &imageRels,
                     nextImage: &nextImage,
                     nextDocPr: &nextDocPr
-                ) {
-                    body += bg
-                }
+                ) ?? ""
             }
-        }
-        for (index, page) in document.pages.enumerated() {
             if document.pages.count > 1 {
                 body += paragraphXML(
                     String(localized: "ocr.pageHeader \(index + 1)"),
@@ -243,12 +242,16 @@ actor DocxExportService: DocxRendering {
         fileName: String,
         relID: String
     ) -> String {
-        let pageWidth: Double = 11906
-        let pageHeight: Double = 16838
-        let posX = Int64((anchor.minX) * pageWidth)
-        let posY = Int64((1.0 - anchor.maxY) * pageHeight)  // Vision y 翻转
-        let sizeX = min(cx, Int64(anchor.width * pageWidth))
-        let sizeY = min(cy, Int64(anchor.height * pageHeight))
+        // ⚠️ 单位是 **EMU**，不是 twips。
+        // `wp:posOffset` 与 `wp:extent` 都按 EMU 解析（1 twip = 635 EMU，A4 宽 11906 twips = 7,560,310 EMU）。
+        // 这里曾经错误地直接用 twips 常量 11906/16838，导致：
+        //   ① 位置最大只有 11906 EMU ≈ 0.33 mm —— 所有 B 档图片全挤在页面左上角；
+        //   ② `min(cx, twips 值)` 恒取小值（cx 是 EMU，比 twips 大 635 倍）—— 图片被缩成约 1/635。
+        // inline 路径与 behindDoc 路径用的都是正确的 EMU（见 `emus(width:height:)`），只有这里用错。
+        let posX = Int64(anchor.minX * Self.pageWidthEMU)
+        let posY = Int64((1.0 - anchor.maxY) * Self.pageHeightEMU)  // Vision y 翻转
+        let sizeX = min(cx, Int64(anchor.width * Self.pageWidthEMU))
+        let sizeY = min(cy, Int64(anchor.height * Self.pageHeightEMU))
         return """
             <w:p>
               <w:r>
@@ -378,6 +381,11 @@ actor DocxExportService: DocxRendering {
         return (width, height)
     }
 
+    /// A4（11906 × 16838 twips）换算成 EMU。1 twip = 1/1440 英寸，1 英寸 = 914400 EMU → 1 twip = 635 EMU。
+    /// `wp:posOffset` / `wp:extent` / `a:ext` 一律用这个单位。
+    private static let pageWidthEMU: Double = 11_906 * 635
+    private static let pageHeightEMU: Double = 16_838 * 635
+
     private func emus(width: Int, height: Int) -> (Int64, Int64) {
         let maxWidth: Double = 5_486_400
         let maxHeight: Double = 7_315_200
@@ -389,8 +397,24 @@ actor DocxExportService: DocxRendering {
         return (Int64(w.rounded()), Int64(h.rounded()))
     }
 
+    /// XML 转义。**先剔除 XML 1.0 非法字符再转义** —— OCR 输出里可能出现
+    /// `0x00-0x08 / 0x0B / 0x0C / 0x0E-0x1F` 这类控制字符（Vision 对表格线、噪声的误识别），
+    /// 它们没有任何可用实体形式，写进 `document.xml` 会让整个 docx 变成**损坏文件**（Word 拒开）。
+    /// 只转义五个实体是不够的。
     private func escape(_ text: String) -> String {
-        text
+        // XML 1.0 §2.2 允许的字符集：Tab / LF / CR / #x20-#xD7FF / #xE000-#xFFFD / #x10000-#x10FFFF
+        let sanitized = String(String.UnicodeScalarView(
+            text.unicodeScalars.filter { scalar in
+                switch scalar.value {
+                case 0x09, 0x0A, 0x0D: return true
+                case 0x20...0xD7FF: return true
+                case 0xE000...0xFFFD: return true
+                case 0x10000...0x10FFFF: return true
+                default: return false
+                }
+            }
+        ))
+        return sanitized
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
@@ -435,26 +459,49 @@ actor DocxExportService: DocxRendering {
     </Relationships>
     """
 
+    /// 字体：`w:eastAsia` 必须显式声明，否则中文只能靠 Word 的字体回退 ——
+    /// 在 Windows 上会落到「等线」、macOS/iOS 上落到别的默认脸，同一份 Word 在不同平台观感不一致，
+    /// 也解释不了「中文像宋体又像黑体」的随机性。西文用 Calibri，中文用宋体。
     private static let styles = """
     <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:docDefaults>
+        <w:rPrDefault>
+          <w:rPr>
+            <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体" w:cs="Calibri"/>
+            <w:sz w:val="24"/>
+            <w:szCs w:val="24"/>
+          </w:rPr>
+        </w:rPrDefault>
+      </w:docDefaults>
       <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
         <w:name w:val="Normal"/>
         <w:qFormat/>
+        <w:rPr>
+          <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体" w:cs="Calibri"/>
+          <w:sz w:val="24"/>
+          <w:szCs w:val="24"/>
+        </w:rPr>
       </w:style>
       <w:style w:type="paragraph" w:styleId="Heading1">
         <w:name w:val="heading 1"/>
         <w:basedOn w:val="Normal"/>
         <w:qFormat/>
         <w:pPr><w:outlineLvl w:val="0"/></w:pPr>
-        <w:rPr><w:b/><w:sz w:val="36"/></w:rPr>
+        <w:rPr>
+          <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体" w:cs="Calibri"/>
+          <w:b/><w:sz w:val="36"/>
+        </w:rPr>
       </w:style>
       <w:style w:type="paragraph" w:styleId="Heading2">
         <w:name w:val="heading 2"/>
         <w:basedOn w:val="Normal"/>
         <w:qFormat/>
         <w:pPr><w:outlineLvl w:val="1"/></w:pPr>
-        <w:rPr><w:b/><w:sz w:val="28"/></w:rPr>
+        <w:rPr>
+          <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体" w:cs="Calibri"/>
+          <w:b/><w:sz w:val="28"/>
+        </w:rPr>
       </w:style>
     </w:styles>
     """

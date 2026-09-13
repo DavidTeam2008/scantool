@@ -71,4 +71,31 @@ struct OCRNoiseFilterTests {
         let long = "这一行虽然靠近页面顶部但内容明显是正文而不是界面按钮文案"
         #expect(isKept(long, top: true))
     }
+
+    /// 回归（2026-09-12 真机反馈）。
+    ///
+    /// 原判据是「去掉空格后同时含 `.` 和 `/` 就算 URL」，于是把练习册的
+    /// **选项句**整条降级成条码块 —— 「A / B 选出正确形式」是教材/练习册的通用句式，
+    /// 误伤面很大。而且被降级的行既不在正文里、又统一排在正文之后，正文顺序也跟着乱。
+    ///
+    /// 真 URL 的判据应该是**不含空白**（URL 里不会有空格，英文句子里到处是空格）。
+    @Test("选项句里的斜杠不能被当成链接")
+    func optionSlashIsNotAURL() {
+        #expect(isKept("stopped / was stopping working."))
+        #expect(isKept("later the sun came / was coming out."))
+        #expect(isKept("I used to enjoy / was enjoying history when I was in"))
+        #expect(isKept("7 The children made / were making so much noise in the"))
+        #expect(isKept("while we used to shop / were shopping in the city"))
+    }
+
+    @Test("不含空格的裸域名仍然要被降级")
+    func bareDomainStillDemoted() {
+        for text in ["qrcode.5rs.me/B8vPhXfLxUMzVI2X", "www.example.com/a", "example.org/path"] {
+            if case .demoteToBarcode = verdict(text) {
+                // pass
+            } else {
+                Issue.record("\(text) 应被降级为 .demoteToBarcode")
+            }
+        }
+    }
 }

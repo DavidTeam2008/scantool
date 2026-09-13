@@ -46,6 +46,12 @@ actor PageFileStore: PageFileStoring {
         keepOriginals: Bool
     ) async throws -> [ScanPage] {
         var pages: [ScanPage] = []
+        // 失败回滚只删**本次新写入**的文件。
+        // 曾经这里是无条件 `removeItem(at: documentDirectory(document))` —— 在「给已有文档加页」
+        // 的场景下 `document` 是**已存在**文档的 ID，一旦第 N 页写盘失败（典型是磁盘满），
+        // 会把该文档此前所有页的图全部删掉，而 `documentStore.appendPages` 因异常未执行 →
+        // 数据库仍指向不存在的文件 → 文档永久损坏。见 docs/09 §6.2。
+        var written: [URL] = []
         do {
             for (index, draft) in drafts.enumerated() {
                 guard let renderedData = rendered[draft.id], let thumbData = thumbs[draft.id] else {
@@ -57,12 +63,15 @@ actor PageFileStore: PageFileStoring {
                 let thumbDest = url(document: document, page: draft.id, kind: .thumbnail)
                 try ensureParent(of: renderedDest)
                 try renderedData.write(to: renderedDest, options: .atomic)
+                written.append(renderedDest)
                 try thumbData.write(to: thumbDest, options: .atomic)
+                written.append(thumbDest)
                 if keepOriginals, fileManager.fileExists(atPath: originalSource.path) {
                     if fileManager.fileExists(atPath: originalDest.path) {
                         try fileManager.removeItem(at: originalDest)
                     }
                     try fileManager.copyItem(at: originalSource, to: originalDest)
+                    written.append(originalDest)
                 }
                 pages.append(
                     ScanPage(
@@ -79,7 +88,9 @@ actor PageFileStore: PageFileStoring {
                 )
             }
         } catch {
-            try? fileManager.removeItem(at: documentDirectory(document))
+            for url in written {
+                try? fileManager.removeItem(at: url)
+            }
             throw mapDiskError(error)
         }
         return pages

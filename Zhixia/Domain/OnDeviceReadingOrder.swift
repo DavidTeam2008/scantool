@@ -31,11 +31,17 @@ enum OnDeviceReadingOrder {
             let cjkCount = paragraph.text.unicodeScalars.filter { $0.value >= 0x4E00 && $0.value <= 0x9FFF }.count
             let nonCjkCount = paragraph.text.count - cjkCount
             let weightedLength = cjkCount * 2 + nonCjkCount
-            let isHeading = index == 0
+            // 外部标题提示（只有 iOS 26 结构化通路会给）优先于按行高猜的启发式。
+            // 几何通路下所有 line 的 isTitle 都是 false，这里与改动前完全一致。
+            let hasTitleHint = paragraph.rows.contains { row in
+                row.lines.contains { $0.isTitle }
+            }
+            let isHeading = (index == 0
                 && paragraph.rows.count <= 2
                 && weightedLength >= 8
                 && paragraph.text.count <= 60
-                && paragraph.height > medianH * 1.1
+                && paragraph.height > medianH * 1.1)
+                || (hasTitleHint && paragraph.text.count <= 60)
             let isList = looksLikeList(paragraph.text)
             let kind: ReconstructBlockKind = isHeading ? .heading : (isList ? .list : .paragraph)
             return ReconstructBlock(

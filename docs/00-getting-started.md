@@ -1,8 +1,11 @@
 # 00 接手指南
 
-给第一次打开 `scantool/` 的同事：先能跑通，再知道改哪里。产品细节见 [01](01-product-prototype.md)，分层见 [02](02-architecture.md)，版面还原见 [06](06-document-reconstruction.md)。
+给第一次打开 `scantool/` 的同事：先能跑通，再知道改哪里。
+**建议先读 [09 接手手册](09-project-handbook.md)**（一页讲全：产品 / 架构 / 选型 / 原理 / 现状 / 卡点 / 方向），
+再回来看本篇的实操细节。产品细节见 [01](01-product-prototype.md)，分层见 [02](02-architecture.md)，
+版面还原见 [06](06-document-reconstruction.md)，真机根因见 [08](08-reconstruct-v3-realworld-fix.md)。
 
-更新：2026-09-07（与当前 `Zhixia` 工程对齐）
+更新：2026-09-07（与当前 `Zhixia` 工程对齐）；2026-09-12 补上手册指引
 
 ---
 
@@ -119,16 +122,22 @@ ZhixiaTests/           单测（含 ReconstructTests）
 ## 6. 还原管线（当前实现）
 
 ```
-优先 original.jpg（没有则 rendered）
-  → Vision OCR
+rendered 优先（original 兜底）
+  ├─ iOS 26：VisionDocumentStructureRecognizer（RecognizeDocumentsRequest）
+  │    直接拿 lines / tables（行列结构）/ barcodes
+  └─ 回退：Vision OCR → TableGridV2Detector（锚点）→ OnDeviceTableCluster（v1）
+  两条通路归一成 StructuredDocumentPage ↓
   → ReconstructSceneRouter（plain / exam / table / packaging）
-  → OnDeviceTableCluster（OCR 盒子 → 网格）
-  → OnDeviceReadingOrder（剩余行 → 段落）
-  → OnDeviceFigureRegions（非文字连通域 → 裁 PNG）
+  → OCRNoiseFilter（状态栏 / UI chrome / URL）
+  → PageColumnSplitter（x 投影找 gutter → 按栏切）
+  → OnDeviceReadingOrder（栏内：剩余行 → 段落 / 标题 / 列表）
+  → FigureRegionsV2（空白连通域）+ InkFigureDetector（像素墨块）→ 裁 PNG
   → PageBarcodeDetector（条码裁图 + payload）
   → ReconstructDocument IR
   → 预览 / DocxExportService / SearchablePDFExportService
 ```
+
+> **加还原通路时从这里入手**：只要产出 `StructuredDocumentPage`，下游一行都不用改。
 
 `TextInDocumentParser`：**未配置密钥时不会调用**；调用也会抛 `reconstructCloudUnavailable`。不要以为云已经接通。
 
@@ -199,6 +208,14 @@ macOS 26.6 收紧后 `sandbox_apply` 被拒 → 插件服务起不来 → 编译
 | `OCRViewModelTests` | 中文质量、双图择优 |
 | `ReconstructTests` | 场景路由、阅读序、表聚类、配图空洞、DOCX 嵌表嵌图（**合成 bbox**） |
 | `ReconstructV2Tests` | **真实样张夹具**：同上，但跑在 `docs/fixtures/` 的真机 OCR 上 |
+| `ReconstructEndToEndTests` | **端到端**：图片 → parse → docx 断言 `w:tbl`；含真机烂图 fixture |
+| `ExportSafetyTests` | 数据安全回归：commit 回滚、DOCX 控制字符、B 档 EMU 单位、C 档逐页衬底 |
+| `DocumentStructureTests` | iOS 26 结构化通路的接线契约（含条码合并、合并单元格拉平） |
+| `OCRPreprocessorTests` | OCR 预处理档：灰度 / 保对比 / 去阴影 |
+| `ReconstructTierTests` | A/B/C 档位契约（含「B/C 已下架」的决定） |
+| `PageColumnSplitterTests` | 分栏切分 + 按栏排阅读序（含「块不得跨栏」回归） |
+| `InkFigureDetectorTests` | 像素墨块找图（合成图，确定性） |
+| `TextbookFixtureTests` | **真实双栏教材页**：分栏 / 照片 / 端到端块序 |
 
 **单测绿 ≠ 样张过关。** 营养表 / 练习册必须以真机或导入样张手验「还原 → Word」。
 

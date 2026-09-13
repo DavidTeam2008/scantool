@@ -1,0 +1,287 @@
+import Foundation
+import Testing
+import UIKit
+
+@testable import Zhixia
+
+/// V3.1：iOS 26 结构化通路（`RecognizeDocumentsRequest`）的接线契约。
+///
+/// 这一组测试**不碰真实的 Vision**（模拟器上跑不出稳定结果，而且老系统上根本没有这个 API），
+/// 验证的是「接线」本身：结构化结果优先、拿不到就回退、回退时行为与改动前完全一致。
+struct DocumentStructureTests {
+
+    // MARK: - 通路选择
+
+    @Test("结构化通路给出表格时，必须直接用它的行列结构")
+    func structuredTableIsUsed() async throws {
+        let structured = StructuredDocumentPage(
+            lines: [OCRLine(text: "营养成分表", boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.5, height: 0.05))],
+            tables: [
+                DetectedTable(
+                    table: ReconstructTable(rows: [["项目", "每100克", "NRV%"], ["能量", "1429千焦", "17%"]]),
+                    bbox: CGRect(x: 0.1, y: 0.5, width: 0.8, height: 0.25)
+                )
+            ],
+            barcodes: [],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+
+        let tables = page.blocks.filter { $0.kind == .table }
+        #expect(tables.count == 1)
+        #expect(tables.first?.table?.rows.count == 2)
+        #expect(tables.first?.table?.rows.first == ["项目", "每100克", "NRV%"])
+    }
+
+    @Test("结构化通路返回 nil 时必须回退几何管线")
+    func fallsBackWhenStructureReturnsNil() async throws {
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: nil)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+        #expect(page.blocks.contains { $0.text.contains("房屋租赁合同") })
+    }
+
+    @Test("结构化通路返回空结果时必须回退，而不是当成「这页没内容」")
+    func fallsBackWhenStructureIsEmpty() async throws {
+        let empty = StructuredDocumentPage(lines: [], tables: [], barcodes: [], source: .documentRequest)
+        #expect(empty.hasContent == false)
+
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: empty)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+        #expect(page.blocks.contains { $0.text.contains("房屋租赁合同") })
+    }
+
+    @Test("不注入结构化识别器时行为不变（iOS 18/25 的真实情形）")
+    func geometricOnlyStillWorks() async throws {
+        let parser = OnDeviceDocumentParser(recognizer: PreviewRecognizer())
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+        #expect(page.blocks.contains { $0.text.contains("房屋租赁合同") })
+    }
+
+    @Test("结构化通路的表格区域内的行不再进正文段落")
+    func tableRowsDoNotLeakIntoParagraphs() async throws {
+        let structured = StructuredDocumentPage(
+            lines: [
+                OCRLine(text: "配料：饮用水", boundingBox: CGRect(x: 0.1, y: 0.9, width: 0.7, height: 0.04)),
+                // 这一行落在表格 bbox 内 → 应被剔除，不能既进表格又进正文
+                OCRLine(text: "能量1429千焦17%", boundingBox: CGRect(x: 0.15, y: 0.6, width: 0.6, height: 0.03))
+            ],
+            tables: [
+                DetectedTable(
+                    table: ReconstructTable(rows: [["能量", "1429千焦", "17%"]]),
+                    bbox: CGRect(x: 0.1, y: 0.5, width: 0.8, height: 0.2)
+                )
+            ],
+            barcodes: [],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+
+        let paragraphText = page.blocks
+            .filter { $0.kind != .table }
+            .map(\.text)
+            .joined(separator: "\n")
+        #expect(paragraphText.contains("配料"))
+        #expect(paragraphText.contains("能量1429千焦17%") == false)
+    }
+
+    /// 回归：实测 `RecognizeDocumentsRequest` 的 `container.barcodes` 在样张上是 **0 个**，
+    /// 而 `VNDetectBarcodesRequest` 能检出。条码漏掉 = 导出产物里少一张图 + 少个 payload，
+    /// 所以两条来源必须取并集，不能用新的替换旧的。
+    ///
+    /// ⚠️ 这里必须注入替身：`VNDetectBarcodesRequest` 在 iOS 模拟器上**恒定返回 0**
+    /// （已用真实样张 + 全部 symbology 验证过），拿真检测器写这条测试会得到假绿。
+    @Test("结构化通路漏掉的条码，要用几何检测补回来")
+    func structuredPathMergesGeometricBarcodes() async throws {
+        let image = try #require(PageImageFixture.write())
+        defer { try? FileManager.default.removeItem(at: image) }
+
+        // 结构化通路「什么都没检到」——正是样张上的真实情形
+        let structured = StructuredDocumentPage(
+            lines: [OCRLine(text: "配料：饮用水", boundingBox: CGRect(x: 0.1, y: 0.9, width: 0.7, height: 0.04))],
+            tables: [],
+            barcodes: [],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured),
+            barcodeDetector: StubBarcodeDetector(barcodes: [
+                DetectedBarcode(payload: "https://qrcode.5rs.me/abc", bbox: CGRect(x: 0.3, y: 0.3, width: 0.4, height: 0.4))
+            ])
+        )
+        let page = try await parser.parse(imageURL: image, pageID: UUID(), scene: .auto)
+
+        let barcodes = page.blocks.filter { $0.kind == .barcode }
+        #expect(barcodes.isEmpty == false, "结构化通路漏掉的条码没有被几何检测补回来")
+        #expect(barcodes.contains { $0.barcodePayload?.contains("qrcode.5rs.me") == true })
+    }
+
+    @Test("条码合并要去重：同一位置 / 同一 payload 不能出两块")
+    func barcodeMergeDeduplicates() async throws {
+        let image = try #require(PageImageFixture.write())
+        defer { try? FileManager.default.removeItem(at: image) }
+
+        let shared = CGRect(x: 0.3, y: 0.3, width: 0.4, height: 0.4)
+        let structured = StructuredDocumentPage(
+            lines: [OCRLine(text: "配料：饮用水", boundingBox: CGRect(x: 0.1, y: 0.9, width: 0.7, height: 0.04))],
+            tables: [],
+            barcodes: [DetectedBarcode(payload: "same-payload", bbox: shared)],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured),
+            barcodeDetector: StubBarcodeDetector(barcodes: [
+                // 位置重叠 → 视为同一个
+                DetectedBarcode(payload: "same-payload", bbox: shared),
+                // 位置不同、payload 也不同 → 应当保留
+                DetectedBarcode(payload: "another-code", bbox: CGRect(x: 0.05, y: 0.05, width: 0.1, height: 0.1))
+            ])
+        )
+        let page = try await parser.parse(imageURL: image, pageID: UUID(), scene: .auto)
+        let payloads = page.blocks.filter { $0.kind == .barcode }.compactMap(\.barcodePayload)
+        #expect(Set(payloads).count == payloads.count, "同一个条码重复成块：\(payloads)")
+        #expect(payloads.contains("same-payload"))
+        #expect(payloads.contains("another-code"), "不同位置的条码被误去重了：\(payloads)")
+    }
+
+    @Test("几何通路也得用注入的条码检测器")
+    func geometricPathUsesInjectedBarcodeDetector() async throws {
+        let image = try #require(PageImageFixture.write())
+        defer { try? FileManager.default.removeItem(at: image) }
+
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            barcodeDetector: StubBarcodeDetector(barcodes: [
+                DetectedBarcode(payload: "geo-only", bbox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3))
+            ])
+        )
+        let page = try await parser.parse(imageURL: image, pageID: UUID(), scene: .auto)
+        #expect(page.blocks.contains { $0.barcodePayload == "geo-only" })
+    }
+
+    @Test("结构化通路的 isTitle 提示能让这一行判成标题")
+    func titleHintProducesHeading() {
+        // 行高刻意做成「不大」— 光靠启发式（height > medianH * 1.1）判不出标题，
+        // 只有 isTitle 提示能救。几何通路没有这个字段，行为不受影响。
+        let plain = [
+            OCRLine(text: "季度经营情况汇报", boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.6, height: 0.03)),
+            OCRLine(text: "本季度收入较上季度增长一成，主要来自新客户。", boundingBox: CGRect(x: 0.1, y: 0.7, width: 0.7, height: 0.03)),
+            OCRLine(text: "成本端基本持平，毛利率略有改善。", boundingBox: CGRect(x: 0.1, y: 0.6, width: 0.7, height: 0.03))
+        ]
+        let hinted = plain.enumerated().map { index, line in
+            OCRLine(text: line.text, boundingBox: line.boundingBox, isTitle: index == 0)
+        }
+
+        let withoutHint = OnDeviceReadingOrder.makeBlocks(from: plain)
+        let withHint = OnDeviceReadingOrder.makeBlocks(from: hinted)
+
+        #expect(withoutHint.first?.kind != .heading, "没有提示时按启发式不该判成标题")
+        #expect(withHint.first?.kind == .heading, "给了 isTitle 提示就该判成标题")
+    }
+
+    // MARK: - 表格拉平（合并单元格）
+
+    @Test("合并单元格只在左上角保留文本，不重复 N 遍")
+    func mergedCellKeepsTextOnce() {
+        // 一个 2 行 × 2 列的网格，左上角那个 cell 跨了 2 行。
+        // 它在 `rows` 里会出现在两个视觉行里 —— 只能保留一次。
+        let spanning = VisionDocumentStructureRecognizer.RawCell(
+            text: "项目",
+            rowRange: 0...1,
+            columnRange: 0...0
+        )
+        let grid = VisionDocumentStructureRecognizer.flatten([
+            [spanning, .init(text: "1429千焦", rowRange: 0...0, columnRange: 1...1)],
+            [spanning, .init(text: "17%", rowRange: 1...1, columnRange: 1...1)]
+        ])
+        #expect(grid == [["项目", "1429千焦"], ["", "17%"]])
+    }
+
+    @Test("跨列的单元格在右侧留下空位，而不是把后面的列挤前")
+    func spanningColumnsLeaveGap() {
+        let grid = VisionDocumentStructureRecognizer.flatten([
+            [
+                .init(text: "标题横跨两列", rowRange: 0...0, columnRange: 0...1),
+                .init(text: "C", rowRange: 0...0, columnRange: 2...2)
+            ],
+            [
+                .init(text: "a", rowRange: 1...1, columnRange: 0...0),
+                .init(text: "b", rowRange: 1...1, columnRange: 1...1),
+                .init(text: "c", rowRange: 1...1, columnRange: 2...2)
+            ]
+        ])
+        #expect(grid == [["标题横跨两列", "", "C"], ["a", "b", "c"]])
+        #expect(grid.allSatisfy { $0.count == 3 })
+    }
+
+    @Test("参差不齐的行要补成矩形，否则导出会静默丢列")
+    func raggedRowsArePadded() {
+        let grid = VisionDocumentStructureRecognizer.flatten([
+            [.init(text: "a", rowRange: 0...0, columnRange: 0...0),
+             .init(text: "b", rowRange: 0...0, columnRange: 1...1),
+             .init(text: "c", rowRange: 0...0, columnRange: 2...2)],
+            [.init(text: "d", rowRange: 1...1, columnRange: 0...0)]
+        ])
+        #expect(grid.count == 2)
+        #expect(grid[1].count == 3)
+        #expect(grid[1] == ["d", "", ""])
+    }
+
+    @Test("空表格拉平成空数组")
+    func emptyTableFlattensToNothing() {
+        #expect(VisionDocumentStructureRecognizer.flatten([]) == [])
+        #expect(VisionDocumentStructureRecognizer.flatten([[]]) == [])
+    }
+}
+
+/// 可控的结构化识别替身。
+private struct StubStructureRecognizer: DocumentStructureRecognizing {
+    let result: StructuredDocumentPage?
+    func recognize(imageURL: URL, pageID: UUID) async -> StructuredDocumentPage? { result }
+}
+
+/// 条码检测替身。真检测器在模拟器上恒为空，见 `BarcodeDetecting` 的说明。
+private struct StubBarcodeDetector: BarcodeDetecting {
+    let barcodes: [DetectedBarcode]
+    func detect(in image: CGImage) -> [DetectedBarcode] { barcodes }
+}
+
+/// 一张「存在即可」的页面图 —— 解析器需要它能被解码，用来裁图与取尺寸。
+/// 内容不重要，因为条码检测已经换成替身了。
+enum PageImageFixture {
+    static func write() -> URL? {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 520), format: format)
+        let image = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 520))
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 40, y: 60, width: 320, height: 40))
+        }
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "zhixia-page-\(UUID().uuidString).jpg")
+        do {
+            try data.write(to: url)
+        } catch {
+            return nil
+        }
+        return url
+    }
+}

@@ -7,6 +7,21 @@ import Vision
 
 actor VisionTextRecognizer: TextRecognizing {
     private let context = CIContext(options: [.useSoftwareRenderer: false])
+    private let preprocessor: any OCRImagePreparing
+
+    /// 「这一遍读得够不够」的分数线。
+    ///
+    /// 改动前用的是 `OCRTextQuality.cjkCount(text) >= 12` —— 只要认出 12 个汉字就提前返回。
+    /// 那个门槛低到几乎等于「看到中文就停」，于是这个类**自己设计的两轮配置择优**
+    /// （`usesLanguageCorrection` 关/开）在中文页面上永远跑不到第二轮，
+    /// 更不会去试反色档或 OCR 专用预处理档。换成按质量分判断：240 ≈ 30 个汉字，或 240 个拉丁字符。
+    ///
+    /// 分数够高时行为与改动前一致（第一轮就返回，不多花时间）；只有「没读出来」时才多跑几轮。
+    static let confidentScore = 240
+
+    init(preprocessor: any OCRImagePreparing = OCRPreprocessor()) {
+        self.preprocessor = preprocessor
+    }
 
     func recognize(imageURL: URL, pageID: UUID) async throws -> OCRPageText {
         guard let image = loadCGImage(at: imageURL) else {
@@ -35,7 +50,7 @@ actor VisionTextRecognizer: TextRecognizing {
                 bestLines = lines
                 bestScore = score
             }
-            return OCRTextQuality.cjkCount(text) >= 12
+            return score >= Self.confidentScore
         }
 
         for variant in variants {
@@ -63,6 +78,22 @@ actor VisionTextRecognizer: TextRecognizing {
                 if consider(lines) {
                     return OCRPageText(pageID: pageID, lines: bestLines)
                 }
+            }
+        }
+
+        // P0-3：到这一步说明「读得不够」。用 OCR 专用预处理档（去阴影 / 灰度 / 轻度锐化）
+        // 重跑一次。这一步能救的是真机最常见的失败模式 —— 手机在纸面投下阴影、
+        // 或对比度不足导致字符误识（docs/08 §3 的 R1 之后剩下的那部分）。
+        // 只有在质量分不达标时才会走到这里，所以正常页面不付这份成本。
+        if bestScore < Self.confidentScore, let prepared = await preprocessor.prepareForOCR(image) {
+            for (level, langs, correction) in configs {
+                guard let lines = try? recognizeLines(
+                    in: prepared,
+                    level: level,
+                    languages: langs,
+                    correction: correction
+                ), !lines.isEmpty else { continue }
+                if consider(lines) { break }
             }
         }
 

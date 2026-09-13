@@ -158,8 +158,23 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
         if session.canAddOutput(videoOutput) {
             session.addOutput(videoOutput)
         }
-        if let connection = videoOutput.connection(with: .video), connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
+        // ⚠️ 视频输出连接**必须保持 0（不旋转）**，旋转只在 `emit` 里做一次。
+        //
+        // 真机反馈（2026-09-12）：拍照时的虚线框对不上书的边框，但成片是对的。
+        // 根因是这里原本设了 90，而 `emit` 里又做了 `CIImage.oriented(.right)` ——
+        // **转了两次**。预览层只转一次（`bindPreview` 的 90），于是检测出来的四边形
+        // 坐标落在「多转了一次的画面」上：检测本身没错，但 `frameSize` 变成了横向
+        // （720×405），`FrameMapper` 按 aspect-fill 算出 3.86 倍的水平拉伸，
+        // 框被推到屏幕外 —— 看起来就是「虚线框捕不到书」。
+        // 成片走的是 `AVCapturePhotoOutput` 的另一条链路，不受影响，所以一直是准的。
+        //
+        // 为什么设 0 而不是两个都留：`videoRotationAngle` 对 `AVCaptureVideoDataOutput`
+        // 是否真的旋转 buffer，历史上随系统版本变过。**设 0 在两种情况下都成立** ——
+        // 属性生效 → buffer 不旋转；属性不生效 → buffer 本来也是 sensor 原始朝向。
+        // 两种结果都是「横向」，交给 `emit` 的 `.oriented(.right)` 统一转成竖向。
+        if let connection = videoOutput.connection(with: .video),
+           connection.isVideoRotationAngleSupported(0) {
+            connection.videoRotationAngle = 0
         }
         session.commitConfiguration()
         configured = true

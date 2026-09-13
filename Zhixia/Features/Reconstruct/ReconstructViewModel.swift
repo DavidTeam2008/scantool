@@ -9,9 +9,11 @@ final class ReconstructViewModel {
     var docxURL: URL?
     var pdfURL: URL?
     var isExporting = false
-    /// M4：当前选中的导出档位（A / B / C）。默认 A（结构化）。用户可在 UI 切换。
-    /// 注意：档位只影响 **Word 导出产物**，不改动 `blocks` 预览本身 —— 预览永远是
-    /// 结构化块流。要让预览也随档位变，得让 C 档的衬底图参与渲染（见 docs/07 §11）。
+    /// M4：当前选中的导出档位（A / B / C）。默认 A（结构化）。
+    ///
+    /// 档位**同时**影响两件事：① 导出的 Word 产物；② 页面预览的渲染方式。
+    /// 早期版本档位只作用于 ①，预览永远是结构化块流 —— 用户切 A/B/C 看到画面纹丝不动，
+    /// 直接反馈「选了没反应」。现在 `ReconstructView.preview` 按档位分三种渲染。
     var outputTier: R2OutputTier = .structured
 
     /// 切换档位。必须走这个方法而不是直接赋值：
@@ -48,6 +50,22 @@ final class ReconstructViewModel {
 
     var blocks: [ReconstructBlock] {
         reconstructed?.pages.flatMap(\.blocks) ?? []
+    }
+
+    /// B / C 档预览要按页还原版面位置，所以这里暴露**按页**的结果，
+    /// 而不是 A 档那种全文档拍平的块流。
+    var pages: [ReconstructPage] {
+        reconstructed?.pages ?? []
+    }
+
+    /// C 档（衬底图）需要页面原图。
+    /// 取 `.rendered` 而不是 `.original` —— 与 OCR 同源（见 2026-09-08 真机回归 R1：
+    /// 版面坐标是相对 rendered 图算的，拿 original 会对不上）。
+    func pageImageURL(for pageID: UUID) -> URL? {
+        guard scanPages.contains(where: { $0.id == pageID }) else { return nil }
+        let url = fileStore.url(document: document.id, page: pageID, kind: .rendered)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
     }
 
     var needsCloudHint: Bool {

@@ -72,6 +72,18 @@ protocol DocumentParsing: Sendable {
     func parse(imageURL: URL, pageID: UUID, scene: ReconstructScene) async throws -> ReconstructPage
 }
 
+/// 结构化文档识别（iOS 26 的 `RecognizeDocumentsRequest`）。
+///
+/// 与 `TextRecognizing` 的关键差别：它**直接给表格的行列结构**，不需要「按 OCR 行的 midX
+/// 聚类推列」——后者在真机上已被证伪（Vision 只给 line 级 bbox，真机常把整行单元格合并成一行，
+/// 见 docs/08 §2.3 / docs/09 §6.2/§6.3）。这是目前唯一能根治「真机 `w:tbl = 0`」的通路。
+///
+/// 契约：**系统不支持、识别不出结构、或抛错时一律返回 `nil`**，绝不 throw 给调用方。
+/// 调用方（`OnDeviceDocumentParser`）必须准备好回退到几何管线 —— 在 iOS 18/25 上它恒为 nil。
+protocol DocumentStructureRecognizing: Sendable {
+    func recognize(imageURL: URL, pageID: UUID) async -> StructuredDocumentPage?
+}
+
 protocol ReconstructRepairing: Sendable {
     func repair(imageURL: URL, page: ReconstructPage, failures: [UUID]) async throws -> ReconstructPage
 }
@@ -90,6 +102,18 @@ enum R2OutputTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable 
     case structured
     case anchored
     case background
+
+    /// **当前允许用户在 UI 里选择的档位**（2026-09-12）。
+    ///
+    /// B/C 被下架：用户实测反馈「效果很差，没法用」。根因不是渲染层做错了，而是**块的 bbox 本身就偏**
+    /// （真机表格/配图定位不准，见 docs/09 §6.2/§6.5），而 B/C 的观感完全由 bbox 的准确性决定 ——
+    /// 所以它们不可能在检测层修好之前变好。放出来是负体验。
+    ///
+    /// 枚举与 `DocxExportService` 的三档实现**全部保留**，`R2OutputTier.allCases` 仍是 3 个
+    /// （测试依赖这一点）。等检测层稳定后，把 `selectable` 改回 `allCases` 即可恢复入口 ——
+    /// 注意届时 C 档还有一个已知问题：导出用的是「本页最大的 figure」当衬底，
+    /// 而预览用的是页面原图，两者不是一回事（见 docs/09 §6.5）。
+    static let selectable: [R2OutputTier] = [.structured]
 
     var displayName: String {
         switch self {

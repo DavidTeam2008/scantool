@@ -64,10 +64,26 @@ enum OCRNoiseFilter {
         let lower = text.lowercased()
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") { return true }
         if lower.hasPrefix("www.") { return true }
+
         // 短域名形态：qrcode.5rs.me/B8vPhXfLxUMzVI2X
-        let compact = text.replacingOccurrences(of: " ", with: "")
+        //
+        // ⚠️ 真机反馈（2026-09-12）：这里原本是「去掉空格后同时含 `.` 和 `/`」就算 URL，
+        // 于是把练习册的选项句 `stopped / was stopping working.` 误判成链接、降级成条码块 ——
+        // 「A / B 选出正确形式」是教材/练习册的**通用句式**，误伤面很大，
+        // 而且降级后这些行既不在正文里、又排在正文之后，正文顺序也跟着乱。
+        //
+        // 真正的判据是**不含空白**：URL 里不会有空格，而英文句子里到处是空格。
+        // 再叠加一个域名形态检查（`xxx.yy/`）做第二道闸。
+        guard text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return false }
+        let compact = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard compact.count >= 8, compact.count <= 120 else { return false }
-        guard compact.contains("."), compact.contains("/") else { return false }
+        guard compact.contains("/") else { return false }
+        guard compact.range(
+            of: #"[A-Za-z0-9][A-Za-z0-9-]*\.[A-Za-z]{2,6}(/|$)"#,
+            options: .regularExpression
+        ) != nil else {
+            return false
+        }
         // 不能含 CJK，否则是中文句子
         return !compact.contains { ch in
             (ch.unicodeScalars.first?.value ?? 0) > 0x2E80

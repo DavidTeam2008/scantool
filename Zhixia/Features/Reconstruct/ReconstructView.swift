@@ -54,6 +54,12 @@ struct ReconstructView: View {
         }
     }
 
+    /// 预览**随档位变化**（2026-09-12 修复）。
+    /// 之前三档共用同一个块流渲染，用户切 A/B/C 画面纹丝不动，反馈「选了没反应」。
+    /// 现在：
+    /// - A 结构化：段落流（可编辑、可复制，Word 里是 inline）
+    /// - B 重排版：白底 + 块按 bbox 落回原位（Word 里是 wp:anchor）
+    /// - C 衬底图：页面原图作底 + 块浮在原位（Word 里是 behindDoc 衬底）
     private var preview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -65,8 +71,27 @@ struct ReconstructView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(hex: 0xEFE8DC), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                ForEach(viewModel.blocks) { block in
-                    blockView(block)
+                switch viewModel.outputTier {
+                case .structured:
+                    ForEach(viewModel.blocks) { block in
+                        blockView(block)
+                    }
+                case .anchored:
+                    ForEach(viewModel.pages, id: \.pageID) { page in
+                        LayoutCanvas(page: page, backgroundImageURL: nil)
+                    }
+                case .background:
+                    ForEach(viewModel.pages, id: \.pageID) { page in
+                        LayoutCanvas(
+                            page: page,
+                            backgroundImageURL: viewModel.pageImageURL(for: page.pageID)
+                        )
+                    }
+                    if viewModel.pages.contains(where: { viewModel.pageImageURL(for: $0.pageID) == nil }) {
+                        Text("reconstruct.tierBackgroundMissingImage")
+                            .font(.caption2)
+                            .foregroundStyle(Tokens.muted)
+                    }
                 }
             }
             .padding(.horizontal, Tokens.horizontalPadding)
@@ -163,18 +188,25 @@ struct ReconstructView: View {
 
     /// M4 档位选择器：A 结构化 / B 重排版 / C 衬底图。
     /// 切档会走 `viewModel.setTier`，把已导出的 docx 作废，提示用户重新导出。
+    ///
+    /// 2026-09-12：可选项收缩到 `R2OutputTier.selectable`（当前只有 A 档）。
+    /// B/C 因效果不可用被下架，只剩一个选项时选择器本身没有意义，直接不渲染 ——
+    /// 也让同屏的两个导出按钮上移，少占一行。恢复 B/C 只需改 `R2OutputTier.selectable`。
+    @ViewBuilder
     private var tierPicker: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Picker("reconstruct.tier", selection: tierBinding) {
-                ForEach(R2OutputTier.allCases, id: \.self) { tier in
-                    Text(tier.displayName).tag(tier)
+        if R2OutputTier.selectable.count > 1 {
+            VStack(alignment: .leading, spacing: 4) {
+                Picker("reconstruct.tier", selection: tierBinding) {
+                    ForEach(R2OutputTier.selectable, id: \.self) { tier in
+                        Text(tier.displayName).tag(tier)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("reconstruct.tier")
+                Text("reconstruct.tierHint")
+                    .font(.caption2)
+                    .foregroundStyle(Tokens.muted)
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("reconstruct.tier")
-            Text("reconstruct.tierHint")
-                .font(.caption2)
-                .foregroundStyle(Tokens.muted)
         }
     }
 
@@ -215,5 +247,119 @@ struct ReconstructView: View {
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
             .foregroundStyle(prominent ? Color.white : Tokens.ink)
+    }
+}
+
+// MARK: - B / C 档版面预览
+
+/// 把块按 `bbox` 落回原始视觉位置，用于 B（重排版）和 C（衬底图）。
+///
+/// 坐标换算要点：`ReconstructBlock.bbox` 是 **Vision 归一化坐标**（原点左下、y 向上），
+/// SwiftUI 是原点左上、y 向下 —— y 必须翻转，否则整页上下颠倒。
+private struct LayoutCanvas: View {
+    let page: ReconstructPage
+    /// C 档传入页面原图；B 档传 nil（用纸色底）。
+    let backgroundImageURL: URL?
+
+    private var aspect: CGFloat {
+        guard page.size.width > 0, page.size.height > 0 else { return 3.0 / 4.0 }
+        return page.size.width / page.size.height
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let height = width / aspect
+            ZStack(alignment: .topLeading) {
+                if let url = backgroundImageURL, let image = UIImage(contentsOfFile: url.path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: width, height: height)
+                        .clipped()
+                } else {
+                    Tokens.paper
+                }
+                ForEach(page.blocks) { block in
+                    canvasBlock(block, width: width, height: height)
+                }
+            }
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Tokens.line, lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func canvasBlock(_ block: ReconstructBlock, width: CGFloat, height: CGFloat) -> some View {
+        let box = block.bbox
+        let x = box.minX * width
+        let y = (1 - box.maxY) * height
+        let boxWidth = max(box.width * width, 12)
+        let boxHeight = max(box.height * height, 14)
+        // 字号跟着块高走，视觉位置才对得上；再夹一层防止极端值炸掉
+        let font = max(8, min(20, box.height * height * 0.78))
+        let overImage = backgroundImageURL != nil
+        let isImageBlock = block.kind == .figure || block.kind == .barcode
+
+        Group {
+            switch block.kind {
+            case .figure, .barcode:
+                if let path = block.figureRelativePath,
+                   let image = UIImage(contentsOfFile: path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: boxWidth, height: boxHeight)
+                }
+            case .table:
+                if let table = block.table, !table.rows.isEmpty {
+                    canvasTable(table, fontSize: font)
+                } else {
+                    Text(block.displayText)
+                        .font(.system(size: font))
+                        .foregroundStyle(Tokens.ink)
+                }
+            case .heading:
+                Text(block.text)
+                    .font(.system(size: font, weight: .bold))
+                    .foregroundStyle(Tokens.ink)
+            default:
+                Text(block.text)
+                    .font(.system(size: font))
+                    .foregroundStyle(Tokens.ink)
+            }
+        }
+        .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
+        // C 档文字压在扫描图上，不垫一层半透明纸底基本没法读
+        .background {
+            if overImage, !isImageBlock {
+                Tokens.paper.opacity(0.72)
+            }
+        }
+        .position(x: x + boxWidth / 2, y: y + boxHeight / 2)
+    }
+
+    private func canvasTable(_ table: ReconstructTable, fontSize: CGFloat) -> some View {
+        let columns = max(table.columnCount, 1)
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                let padded = row + Array(repeating: "", count: max(0, columns - row.count))
+                HStack(spacing: 0) {
+                    ForEach(0..<columns, id: \.self) { index in
+                        Text(padded[index])
+                            .font(.system(size: max(7, fontSize * 0.8)))
+                            .foregroundStyle(Tokens.ink)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(2)
+                            .border(Tokens.line, width: 0.5)
+                    }
+                }
+            }
+        }
     }
 }

@@ -14,6 +14,8 @@ final class AppEnvironment {
     let documentStore: any DocumentStore
     let fileStore: any PageFileStoring
     let recognizer: any TextRecognizing
+    /// iOS 26 结构化文档识别（`RecognizeDocumentsRequest`）。为 nil 时还原链路全程走几何管线。
+    let structureRecognizer: (any DocumentStructureRecognizing)?
     let parser: any DocumentParsing
     let docx: any DocxRendering
     let searchablePDF: any SearchablePDFRendering
@@ -29,6 +31,7 @@ final class AppEnvironment {
         documentStore: (any DocumentStore)? = nil,
         fileStore: any PageFileStoring = PageFileStore(),
         recognizer: any TextRecognizing = VisionTextRecognizer(),
+        structureRecognizer: (any DocumentStructureRecognizing)? = VisionDocumentStructureRecognizer(),
         parser: (any DocumentParsing)? = nil,
         docx: any DocxRendering = DocxExportService(),
         searchablePDF: any SearchablePDFRendering = SearchablePDFExportService(),
@@ -51,7 +54,13 @@ final class AppEnvironment {
         self.documentStore = documentStore ?? Self.makeStore()
         self.fileStore = fileStore
         self.recognizer = recognizer
-        self.parser = parser ?? CompositeDocumentParser(onDevice: OnDeviceDocumentParser(recognizer: recognizer))
+        self.structureRecognizer = structureRecognizer
+        self.parser = parser ?? CompositeDocumentParser(
+            onDevice: OnDeviceDocumentParser(
+                recognizer: recognizer,
+                structureRecognizer: structureRecognizer
+            )
+        )
         self.docx = docx
         self.searchablePDF = searchablePDF
         self.pdf = pdf
