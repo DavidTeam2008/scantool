@@ -23,6 +23,41 @@ enum CameraAuthorization: Sendable, Equatable {
     case notDetermined
 }
 
+/// 「照片空间 → 屏幕」的实测线性映射（plan D3）：预览层探针用全幅矩形标定出的
+/// 逐轴缩放与偏移。照片空间归一化点 (x, y) ↦ `(x·scaleX + offsetX, y·scaleY + offsetY)`。
+///
+/// 由 `CameraPreviewAttaching.overlayTransform(forViewSize:)` 产出；**T022 起
+/// 仅作诊断对照**（渲染真值 = `OverlaySpaceMap` 解析链，SC-004 比对证据）。
+/// 轻量值类型，随协议定义（plan「Contracts」）。
+struct QuadSpaceTransform: Sendable, Equatable {
+    var scaleX: CGFloat
+    var scaleY: CGFloat
+    var offsetX: CGFloat
+    var offsetY: CGFloat
+
+    init(scaleX: CGFloat, scaleY: CGFloat, offsetX: CGFloat, offsetY: CGFloat) {
+        self.scaleX = scaleX
+        self.scaleY = scaleY
+        self.offsetX = offsetX
+        self.offsetY = offsetY
+    }
+
+    /// 照片空间归一化点 → 屏幕坐标。
+    func apply(to point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x * scaleX + offsetX, y: point.y * scaleY + offsetY)
+    }
+
+    /// 照片空间四边形 → 屏幕坐标四边形。
+    func apply(to quad: Quad) -> Quad {
+        Quad(
+            topLeft: apply(to: quad.topLeft),
+            topRight: apply(to: quad.topRight),
+            bottomRight: apply(to: quad.bottomRight),
+            bottomLeft: apply(to: quad.bottomLeft)
+        )
+    }
+}
+
 protocol CameraCapturing: Sendable {
     func start() async throws
     func stop() async
@@ -30,11 +65,20 @@ protocol CameraCapturing: Sendable {
     func setTorch(enabled: Bool) async throws
     func setFlashAuto(_ enabled: Bool) async
     var frames: AsyncStream<VideoFrame> { get }
+    /// 运行时测量的取景几何（plan D2）：视频流帧与照片输出的竖屏宽高比。
+    /// 未配置会话时返回 `CaptureGeometry.identity`（恒等换算，调用方不崩溃、不变形）。
+    func geometry() async -> CaptureGeometry
 }
 
 @MainActor
 protocol CameraPreviewAttaching: AnyObject {
     func attachPreview(to layer: AnyObject)
+    /// 「照片空间 → 该视图尺寸屏幕坐标」的实测映射（plan D3，FR-006）。
+    /// **T022 起降级为诊断对照源**：overlay 渲染真值改走解析链（`OverlaySpaceMap`），
+    /// 本探针仅用于输出与解析式值的比对日志（`ZhixiaLog.overlayProbeAnalytic`，
+    /// SC-004 证据链）。基于预览层实际显示的视野标定；无有效预览层
+    ///（未 attach / 无连接 / 尺寸非法）时返回 nil。
+    func overlayTransform(forViewSize: CGSize) -> QuadSpaceTransform?
 }
 
 protocol EdgeDetecting: Sendable {
@@ -92,34 +136,29 @@ protocol DocxRendering: Sendable {
     func makeDocx(_ document: ReconstructDocument, fileName: String, tier: R2OutputTier) async throws -> URL
 }
 
-/// DOCX 导出档位（docs/07 §3.1 / §6.6.1）。
-/// - `structured`（默认）：A 档结构化 —— 段落流 + 表格 + 内联图，最稳。
-/// - `anchored`：B 档重排版 —— 块按 anchor 位置浮于页面上，结构 + 视觉位置都保真；
-///   Word 兼容性比 A 档略差，旧版 Word 可能 inline fallback。
-/// - `background`：C 档衬底图 —— 原图作为 `wp:anchor behindDoc=1` 衬底，文字层正常流。
-///   视觉最忠实（与扫描原图几乎一致），可检索性靠文字层。
+/// DOCX 导出档位（spec/layout-restore plan D1/D8）。
+/// - `restored`（版面还原，默认）：整页原图统一底座 + 块级覆盖 mask + 元素原位渲染；
+///   预览与导出同构（动态 sectPr + behindDoc 底图 + 浮动文本框 + srcRect 浮动图 + 浮动表格）。
+/// - `structured`（结构化）：段落流 + 表格 + 内联图，最稳（行为与历史版本完全一致）。
+///
+/// 历史：曾经还有 `.anchored`（B 档重排版）/`.background`（C 档衬底图）两个 case，
+/// 2026-09-12 因 bbox 不准被下架（`selectable` 收缩到只剩 `.structured`）；
+/// 2026-09-18 随「版面还原」特性**删除**——它们从未对用户开放，且
+/// `ReconstructDocument`（IR v2）从不编码落盘，无数据兼容风险（plan D1）。
+/// 可复用的 XML 部件（EMU 换算、y 翻转、锚定图结构）已并入 `.restored` 实现。
 enum R2OutputTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
+    case restored
     case structured
-    case anchored
-    case background
 
-    /// **当前允许用户在 UI 里选择的档位**（2026-09-12）。
-    ///
-    /// B/C 被下架：用户实测反馈「效果很差，没法用」。根因不是渲染层做错了，而是**块的 bbox 本身就偏**
-    /// （真机表格/配图定位不准，见 docs/09 §6.2/§6.5），而 B/C 的观感完全由 bbox 的准确性决定 ——
-    /// 所以它们不可能在检测层修好之前变好。放出来是负体验。
-    ///
-    /// 枚举与 `DocxExportService` 的三档实现**全部保留**，`R2OutputTier.allCases` 仍是 3 个
-    /// （测试依赖这一点）。等检测层稳定后，把 `selectable` 改回 `allCases` 即可恢复入口 ——
-    /// 注意届时 C 档还有一个已知问题：导出用的是「本页最大的 figure」当衬底，
-    /// 而预览用的是页面原图，两者不是一回事（见 docs/09 §6.5）。
-    static let selectable: [R2OutputTier] = [.structured]
+    /// UI 里用户可选择的档位。`.restored` 在前 = 默认档（版面还原）。
+    static let selectable: [R2OutputTier] = [.restored, .structured]
 
+    /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.*`，spec layout-restore T017）。
+    /// `Text(String)` 是 verbatim 渲染，本地化必须在这里发生（`String(localized:)`）。
     var displayName: String {
         switch self {
-        case .structured: return "A · 结构化"
-        case .anchored: return "B · 重排版"
-        case .background: return "C · 衬底图"
+        case .restored: return String(localized: "reconstruct.tier.restored")
+        case .structured: return String(localized: "reconstruct.tier.structured")
         }
     }
 }

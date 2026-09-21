@@ -67,6 +67,23 @@ struct DocumentStructureTests {
         #expect(page.blocks.contains { $0.text.contains("房屋租赁合同") })
     }
 
+    /// T007（spec/layout-engine plan D3）：`ReconstructPage.layout` 字段自 IR v2 起就存在，
+    /// 但此前**从未被赋值**。现在 `LayoutAnalyzer` 产物必须页级落盘 —— 区域布局引擎
+    /// （US1）与配图检测消费同一份度量。图缺失（/dev/null）也必须照写：layout 是
+    /// 纯几何产物，不依赖图像。
+    ///
+    /// 不复用 `PreviewRecognizer`：它给的 bbox 是 `.zero`，度量值全是 0，
+    /// 断言不出「度量真的来自行几何」。
+    @Test("parser 必须把页级版面度量写进 page.layout（图缺失也一样）")
+    func parserWritesPageLayout() async throws {
+        let parser = OnDeviceDocumentParser(recognizer: LayoutMetricRecognizer())
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+
+        let layout = try #require(page.layout, "有文本行的页必须有版面度量")
+        #expect(abs(layout.medianLineHeight - 0.03) < 1e-9)
+        #expect(abs(layout.contentBounds.width - 0.6) < 1e-9)
+    }
+
     @Test("结构化通路的表格区域内的行不再进正文段落")
     func tableRowsDoNotLeakIntoParagraphs() async throws {
         let structured = StructuredDocumentPage(
@@ -247,12 +264,105 @@ struct DocumentStructureTests {
         #expect(VisionDocumentStructureRecognizer.flatten([]) == [])
         #expect(VisionDocumentStructureRecognizer.flatten([[]]) == [])
     }
+
+    // MARK: - 列宽比例（T006：不再丢弃列边界）
+
+    @Test("列宽比例来自各列内容区域的并集，相邻边界取中点")
+    func columnRatiosMeasureContentExtents() {
+        let row0: [VisionDocumentStructureRecognizer.RawCell] = [
+            .init(text: "项目", rowRange: 0...0, columnRange: 0...0,
+                  frame: CGRect(x: 0.10, y: 0.50, width: 0.20, height: 0.05)),
+            .init(text: "每100克", rowRange: 0...0, columnRange: 1...1,
+                  frame: CGRect(x: 0.40, y: 0.50, width: 0.40, height: 0.05))
+        ]
+        let row1: [VisionDocumentStructureRecognizer.RawCell] = [
+            .init(text: "能量", rowRange: 1...1, columnRange: 0...0,
+                  frame: CGRect(x: 0.10, y: 0.40, width: 0.18, height: 0.05)),
+            .init(text: "1429千焦", rowRange: 1...1, columnRange: 1...1,
+                  frame: CGRect(x: 0.42, y: 0.40, width: 0.30, height: 0.05))
+        ]
+        let ratios = VisionDocumentStructureRecognizer.columnRatios([row0, row1])
+        // 列 0 内容并集 [0.10, 0.30]，列 1 [0.40, 0.80]；
+        // 边界 0.10 / 0.35 / 0.80 → 宽 0.25 / 0.45，归一化和为 1。
+        #expect(ratios?.count == 2)
+        #expect(abs((ratios?[0] ?? 0) - 0.25 / 0.70) < 1e-9)
+        #expect(abs((ratios?[1] ?? 0) - 0.45 / 0.70) < 1e-9)
+        #expect(abs((ratios?.reduce(0, +) ?? 0) - 1) < 1e-9)
+    }
+
+    @Test("跨列单元格不参与列宽测量，只有单列单元格决定边界")
+    func spanningCellsAreExcludedFromRatios() {
+        let header: [VisionDocumentStructureRecognizer.RawCell] = [
+            .init(text: "营养成分表", rowRange: 0...0, columnRange: 0...2,
+                  frame: CGRect(x: 0.10, y: 0.60, width: 0.70, height: 0.05))
+        ]
+        let body: [VisionDocumentStructureRecognizer.RawCell] = [
+            .init(text: "项目", rowRange: 1...1, columnRange: 0...0,
+                  frame: CGRect(x: 0.10, y: 0.50, width: 0.20, height: 0.05)),
+            .init(text: "NRV%", rowRange: 1...1, columnRange: 1...1,
+                  frame: CGRect(x: 0.40, y: 0.50, width: 0.15, height: 0.05)),
+            .init(text: "17%", rowRange: 1...1, columnRange: 2...2,
+                  frame: CGRect(x: 0.62, y: 0.50, width: 0.18, height: 0.05))
+        ]
+        let ratios = VisionDocumentStructureRecognizer.columnRatios([header, body])
+        // 表头跨列 frame 不许污染测量：三列内容 [0.10,0.30] [0.40,0.55] [0.62,0.80]，
+        // 边界 0.10 / 0.35 / 0.585 / 0.80 → 宽 0.25 / 0.235 / 0.215。
+        #expect(ratios?.count == 3)
+        #expect(abs((ratios?[0] ?? 0) - 0.25 / 0.70) < 1e-9)
+        #expect(abs((ratios?[1] ?? 0) - 0.235 / 0.70) < 1e-9)
+        #expect(abs((ratios?[2] ?? 0) - 0.215 / 0.70) < 1e-9)
+    }
+
+    @Test("合成输入没有 frame 时返回 nil（下游均分兜底）")
+    func ratiosRequireFrames() {
+        let synthetic = [[
+            VisionDocumentStructureRecognizer.RawCell(
+                text: "a", rowRange: 0...0, columnRange: 0...0
+            ),
+            .init(text: "b", rowRange: 0...0, columnRange: 1...1)
+        ]]
+        #expect(VisionDocumentStructureRecognizer.columnRatios(synthetic) == nil)
+    }
+
+    @Test("某列只有跨列单元格时信息不完整，返回 nil")
+    func ratiosNeedEveryColumnMeasured() {
+        let row: [VisionDocumentStructureRecognizer.RawCell] = [
+            .init(text: "a", rowRange: 0...0, columnRange: 0...0,
+                  frame: CGRect(x: 0.10, y: 0.50, width: 0.20, height: 0.05)),
+            .init(text: "跨两列", rowRange: 0...0, columnRange: 1...2,
+                  frame: CGRect(x: 0.40, y: 0.50, width: 0.40, height: 0.05))
+        ]
+        let ratios = VisionDocumentStructureRecognizer.columnRatios([row])
+        #expect(ratios == nil)
+    }
+
+    @Test("空表格与单列表格返回 nil")
+    func ratiosDegenerateInputs() {
+        #expect(VisionDocumentStructureRecognizer.columnRatios([]) == nil)
+        #expect(VisionDocumentStructureRecognizer.columnRatios([[]]) == nil)
+        let singleColumn: [[VisionDocumentStructureRecognizer.RawCell]] = [
+            [.init(text: "a", rowRange: 0...0, columnRange: 0...0,
+                   frame: CGRect(x: 0.10, y: 0.50, width: 0.20, height: 0.05))]
+        ]
+        #expect(VisionDocumentStructureRecognizer.columnRatios(singleColumn) == nil)
+    }
 }
 
 /// 可控的结构化识别替身。
 private struct StubStructureRecognizer: DocumentStructureRecognizing {
     let result: StructuredDocumentPage?
     func recognize(imageURL: URL, pageID: UUID) async -> StructuredDocumentPage? { result }
+}
+
+/// 带真实行几何的 OCR 替身（`PreviewRecognizer` 的 bbox 是 `.zero`，
+/// 验证不了「版面度量来自行几何」这条通路）。
+private struct LayoutMetricRecognizer: TextRecognizing {
+    func recognize(imageURL: URL, pageID: UUID) async throws -> OCRPageText {
+        OCRPageText(pageID: pageID, lines: [
+            OCRLine(text: "第一行正文", boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.6, height: 0.03)),
+            OCRLine(text: "第二行正文", boundingBox: CGRect(x: 0.1, y: 0.7, width: 0.6, height: 0.03))
+        ])
+    }
 }
 
 /// 条码检测替身。真检测器在模拟器上恒为空，见 `BarcodeDetecting` 的说明。

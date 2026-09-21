@@ -10,12 +10,17 @@ import Foundation
 /// 根因：gap 区域里本来就是对话正文，不是图；为了凑 `boxes.count >= 3` 而放弃质量。
 ///
 /// 修正后的做法：
-/// 1. **barcode 通道**（最可靠）：`occupied` 里像条码的框 + layout 的 barcode anchor 兜底。
-/// 2. **题下 anchor 通道**（练习册）：只在「题目 → 下一题」的 gap **内部**做网格
+/// 1. **题下 anchor 通道**（练习册）：只在「题目 → 下一题」的 gap **内部**做网格
 ///    flood fill，用该区域里的文字盒做掩码，**只取真正的空白连通域**。
 ///    找不到合格空白 → 这个 anchor 不产出 figure（宁缺毋滥）。
-/// 3. **v1 兜底**：整页 flood fill，ad-hoc 空洞。
-/// 4. 全部经「面积 / 长宽比 / fill 率」三重过滤 + IoU dedup。
+/// 2. **v1 兜底**：整页 flood fill，ad-hoc 空洞。
+/// 3. 全部经「面积 / 长宽比 / fill 率」三重过滤 + IoU dedup。
+///
+/// ## US3（spec/layout-restore plan D5 / FR-007）：条码通道已移除
+/// 早期还有一条「barcode 通道」把 occupied 里像条码的框 / layout 条码锚点外扩成
+/// figure 输出 —— 那会让同一条码在产物里同时出现 figure、`.barcode` 块、URL 降级
+/// 块三份表示。现在条码由 `.barcode` 块**单份表示**（裁图 + payload），
+/// `occupied` 里的条码框仅作为墙（不产 figure、也不被图侵占）。
 ///
 /// ## 关键阈值（真机调出来的，别乱动）
 /// - `maxArea = 0.12`：题下整块 gap 约 0.9×0.3 = 0.27，必须卡掉，否则又变满屏文字。
@@ -48,7 +53,6 @@ enum FigureRegionsV2 {
 
     static func boxes(_ input: Input) -> [CGRect] {
         var figs: [CGRect] = []
-        figs.append(contentsOf: barcodeFigures(input))
         figs.append(contentsOf: questionAnchorFigures(input))
         figs.append(
             contentsOf: OnDeviceFigureRegions.boxes(
@@ -60,29 +64,7 @@ enum FigureRegionsV2 {
             .sorted { $0.maxY > $1.maxY }
     }
 
-    // MARK: - 通道 1：barcode
-
-    /// Vision 检出的条码框最可靠；没有再退回 layout 的 barcode anchor（OCR 文字框）。
-    /// 注意：营养表的 OCR 文本 "6 936832 529010" 很扁，用它膨胀出来的框勉强可用，
-    /// 但真机上 Vision 的 barcode bbox 更准 —— 那条从 `occupied` 进来。
-    private static func barcodeFigures(_ input: Input) -> [CGRect] {
-        var out: [CGRect] = []
-        for box in input.occupied where looksLikeBarcodeBox(box) {
-            out.append(box.insetBy(dx: -0.01, dy: -0.01))
-        }
-        for anchor in input.layout.anchors where anchor.kind == .barcode {
-            out.append(anchor.frame.insetBy(dx: -0.03, dy: -0.03))
-        }
-        return out
-    }
-
-    /// 条码框特征：扁、不太高。
-    private static func looksLikeBarcodeBox(_ box: CGRect) -> Bool {
-        let aspect = box.width / max(box.height, 0.001)
-        return aspect > 1.2 && aspect < 12 && box.height < 0.12
-    }
-
-    // MARK: - 通道 2：题下 anchor（练习册）
+    // MARK: - 题下 anchor 通道（练习册）
 
     private static func questionAnchorFigures(_ input: Input) -> [CGRect] {
         let qs = input.layout.anchors

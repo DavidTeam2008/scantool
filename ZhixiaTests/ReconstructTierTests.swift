@@ -3,12 +3,15 @@ import Foundation
 
 @testable import Zhixia
 
-/// A/B/C 三档切换的行为契约（2026-09-12）。
+/// 档位切换的行为契约（spec/layout-restore plan D1）。
 ///
-/// 背景：用户反馈「选了 A/B/C 页面没有任何变化」。两个原因：
+/// 背景（2026-09-12）：用户反馈「选了 A/B/C 页面没有任何变化」。两个原因：
 /// 1. `setTier` 没清 `docxURL` → 导出按钮变成 ShareLink，分享的是旧文件；
 /// 2. 预览只渲染结构化块流，**档位根本没接进预览管道** → 画面纹丝不动。
 /// 这里锁住第 1 条；第 2 条是 `ReconstructView.preview` 的分档渲染，靠人工验收。
+///
+/// 2026-09-18：档位枚举迁移为 `.restored`（版面还原）+ `.structured`（结构化）两项，
+/// 旧 B/C 档（`.anchored`/`.background`）删除；用例随枚举迁移。
 @MainActor
 struct ReconstructTierTests {
 
@@ -46,23 +49,26 @@ struct ReconstructTierTests {
         )
     }
 
+    /// 2026-09-18 默认档切 `.restored`（plan D1/FR-006）后，"切档"方向随之翻转：
+    /// 默认档 → `.structured` 才是真切换。
     @Test("切档必须作废已导出的 docx，否则分享的是旧文件")
     func switchingTierInvalidatesDocx() {
         let viewModel = makeViewModel()
         viewModel.docxURL = URL(fileURLWithPath: "/tmp/old.docx")
 
-        viewModel.setTier(.anchored)
-        #expect(viewModel.outputTier == .anchored)
+        viewModel.setTier(.structured)
+        #expect(viewModel.outputTier == .structured)
         #expect(viewModel.docxURL == nil)
     }
 
+    /// 重选默认档 `.restored`（= 当前档）不应作废产物。
     @Test("切到当前档位不应作废产物")
     func reselectingSameTierKeepsDocx() {
         let viewModel = makeViewModel()
         let url = URL(fileURLWithPath: "/tmp/keep.docx")
         viewModel.docxURL = url
 
-        viewModel.setTier(.structured)   // 默认就是 A
+        viewModel.setTier(.restored)
         #expect(viewModel.docxURL == url)
     }
 
@@ -72,30 +78,29 @@ struct ReconstructTierTests {
         let url = URL(fileURLWithPath: "/tmp/keep.pdf")
         viewModel.pdfURL = url
 
-        viewModel.setTier(.background)
+        viewModel.setTier(.restored)
         #expect(viewModel.pdfURL == url)
         #expect(viewModel.docxURL == nil)
     }
 
-    @Test("三档都有中文显示名，且默认 A 档")
+    @Test("两档都有非空显示名")
     func tiersAreLabelled() {
-        #expect(R2OutputTier.allCases.count == 3)
+        #expect(R2OutputTier.allCases.count == 2)
         for tier in R2OutputTier.allCases {
             #expect(tier.displayName.isEmpty == false)
         }
-        #expect(makeViewModel().outputTier == .structured)
     }
 
-    /// 2026-09-12：B/C 因「效果很差，没法用」被下架 —— 用户只在 UI 里能看到 A 档。
-    /// 三档的**实现**仍在（枚举 3 个 case、导出分档照旧），被下架的只是入口。
-    /// 这条测试锁住下架这个决定，避免有人顺手把 `selectable` 改回 `allCases` 而没意识到后果。
-    @Test("UI 只暴露 A 档；B/C 的实现保留但不可选")
-    func onlyStructuredIsSelectable() {
-        #expect(R2OutputTier.selectable == [.structured])
-        #expect(R2OutputTier.selectable.count < R2OutputTier.allCases.count)
+    /// 2026-09-12 B/C 被下架时这条锁住「UI 只暴露 A 档」；
+    /// 2026-09-18 版面还原特性落地后（plan D1/FR-006）：`.anchored`/`.background` 删除，
+    /// `.restored` + `.structured` 两项**全部可选**，`.restored` 在前。
+    @Test("可选档位 = 版面还原 + 结构化，且与全枚举一致")
+    func selectableTiersAreRestoredAndStructured() {
+        #expect(R2OutputTier.selectable == [.restored, .structured])
+        #expect(R2OutputTier.selectable.count == R2OutputTier.allCases.count)
     }
 
-    @Test("按页访问与拍平块流内容一致（B/C 档按页渲染依赖这一点）")
+    @Test("按页访问与拍扁块流内容一致（版面还原档按页渲染依赖这一点）")
     func pagesMatchFlattenedBlocks() async {
         let viewModel = makeViewModel()
         await viewModel.reconstruct()
@@ -105,7 +110,7 @@ struct ReconstructTierTests {
         #expect(flattened.count == viewModel.blocks.count)
     }
 
-    @Test("拿不到页面原图时 pageImageURL 返回 nil，C 档要能退化")
+    @Test("拿不到页面原图时 pageImageURL 返回 nil，版面还原档要能退化")
     func pageImageURLIsNilWhenMissing() async {
         let viewModel = makeViewModel()
         await viewModel.reconstruct()

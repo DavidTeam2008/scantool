@@ -165,23 +165,30 @@ struct ReconstructV2TableTests {
     }
 }
 
-// MARK: - 配图 / 条码 v2（docs/07 §6.4 · R5/R6）
-//  M3 用 PageLayout.anchors 做配图：questionStem → 题下区域，barcode → barcode 区域。
-//  这把营养表 0 个配图 / 练习册 0 个配图都修到 ≥ 1 / ≥ 3。
+// MARK: - 配图 v2（docs/07 §6.4 · R5/R6）
+//  M3 用 PageLayout.anchors 做配图：questionStem → 题下区域。
+//  条码通道已移除（spec/layout-restore US3 / plan D5）：条码由 `.barcode` 块
+//  单份表示（裁图 + payload），不再外扩成 figure —— 同一条码曾因此在产物里
+//  出现 figure / 条码块 / URL 降级块三份表示。
 //  v1 (OnDeviceFigureRegions) 保留作 ad-hoc 兜底。
 
 struct ReconstructV2FigureTests {
 
-    @Test("营养表至少要有 1 个配图候选（条码）")
-    func nutritionFindsBarcodeFigure() {
+    @Test("营养表条码不再外扩成 figure（US3 单份表示，由 .barcode 块承担）")
+    func nutritionBarcodeIsNotAFigureAnymore() {
         let lines = ReconstructV2Fixtures.nutritionMango.lines
-        guard let layout = LayoutAnalyzer.analyze(lines: lines) else { return }
+        guard let layout = LayoutAnalyzer.analyze(lines: lines),
+              let barcodeText = lines.first(where: { $0.text.contains("936832") })
+        else { return }
         let boxes = FigureRegionsV2.boxes(.init(
             textBoxes: lines.map(\.boundingBox),
             layout: layout,
             occupied: []
         ))
-        #expect(boxes.count >= 1, "M3 应当至少为营养表产出 1 个 figure（barcode 区域）")
+        #expect(
+            boxes.contains { $0.insetBy(dx: -0.02, dy: -0.02).intersects(barcodeText.boundingBox) } == false,
+            "条码 OCR 文本位置仍在被外扩成 figure：\(boxes)"
+        )
     }
 
     @Test("练习册至少要有 3 个配图候选（题下 anchor）")
@@ -194,21 +201,6 @@ struct ReconstructV2FigureTests {
             occupied: []
         ))
         #expect(boxes.count >= 3, "M3 应当为练习册 Q1/Q2/Q3 各产 1 个题下图")
-    }
-
-    @Test("营养表配图应与 barcode OCR 文本位置大致一致")
-    func nutritionFigureCoversBarcode() {
-        let lines = ReconstructV2Fixtures.nutritionMango.lines
-        guard let layout = LayoutAnalyzer.analyze(lines: lines),
-              let barcodeText = lines.first(where: { $0.text.contains("936832") })
-        else { return }
-        let boxes = FigureRegionsV2.boxes(.init(
-            textBoxes: lines.map(\.boundingBox),
-            layout: layout,
-            occupied: []
-        ))
-        #expect(boxes.contains { $0.intersects(barcodeText.boundingBox) },
-                "M3 产出的 figure 之一应覆盖到 barcode OCR 文本位置")
     }
 
     @Test("练习册题下 figure 应该在 question 视觉位置之下")

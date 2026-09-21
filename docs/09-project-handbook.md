@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-09-12 · 对应代码 90 个 Swift 文件 / 约 9.3k 行 / 全量 131 passed + 1 known issue + 0 failed
+> 最后更新：2026-09-21 · 对应代码 102 个 Swift 文件 / 约 13.5k 行 / 全量 301 passed + 1 known issue + 0 failed
 
 ---
 
@@ -28,7 +28,7 @@ scantool/
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             17 个测试文件 / 132 个 @Test（含端到端断言 + 真实双栏样张）
+├── ZhixiaTests/             36 个测试文件 / 302 个 @Test（含端到端断言 + 真实双栏样张）
 ├── docs/                    本文 + 专题文档（01~09）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
@@ -149,15 +149,18 @@ AppEnvironment(
 
 ### 2.4 两条主数据流
 
-**A. 扫描链路**（已稳定）
+**A. 扫描链路**（已稳定；2026-09 边框精度重构后）
 
 ```
 AVCaptureSession 帧流
-  → VisionEdgeDetector (VNDetectRectangles / VNDetectDocumentSegmentation)
-  → QuadSmoother 平滑  → EdgeOverlayView 实时框
-  → 快门 → CapturedPhoto
+  → VisionEdgeDetector（VNDetectRectangles；live 无可信候选时条件补跑 VNDetectDocumentSegmentation）
+  → DetectionStrategy 统一择优（两级面积兜底 + 包含降权，见 §4.2）
+  → CaptureViewModel 摄入边界：FOVLayout 把视频空间 quad 换算到「照片空间」（§4.2 权威空间）
+  → QuadSmoother 平滑（照片空间）→ EdgeOverlayView 实时框（OverlaySpaceMap 解析映射 → 屏幕点 Shape，见 §4.2）
+  → 可疑锁定门禁（近满幅/贴边不下自动快门，只提示后退）
+  → 快门 → CapturedPhoto → still 检测（同上择优）→ EdgeSnapper 贴边吸附（内缩 1~3% 恢复）
   → PageFileStore.writeOriginal（暂存会话目录）
-  → ReviewView 拖角校正 / 选滤镜
+  → ReviewView 拖角校正（aspect-fit 同坐标系）/ 选滤镜
   → ImagePipeline.renderPage（透视拉正 + 增强 + 缩略图）
   → PageFileStore.commit → SwiftData 写元数据
 ```
@@ -236,9 +239,82 @@ let y = (1 - box.maxY) * height      // 漏了这一句，整页上下颠倒
 
 ### 4.2 扫描管线要点
 
-- `VisionEdgeDetector` 双策略：先 `VNDetectRectanglesRequest`，失败再 `VNDetectDocumentSegmentationRequest`。
-- `QuadSmoother` 对连续帧的四边形做平滑，避免实时框抖动。
-- 证件模式（`ScanMode.idCard`）用一个固定比例窗约束检测。
+**权威照片空间（2026-09 重构的核心约定）**：全链路的 `Quad` 一律是**照片 FOV** 的归一化
+坐标（竖屏、原点左上、EXIF 校正后）。视频流检测（16:9）与照片输出（4:3）视野不同，
+`CaptureViewModel` 在**摄入边界**经 `FOVLayout.convert` 一次性换算（FR-011 单点收敛），
+下游 smoother / overlay / PageDraft / 裁剪全部空间一致——别在任何消费点再换算。
+
+**候选择优（`DetectionStrategy`，VisionEdgeDetector.swift 内）**：
+- 两级面积兜底：一级维持 0.96 上限（整幅误检防护）；一级为空时二级放宽 ≤1.0，
+  近拍书占满画面的真实外框不再被静默丢弃（层级经 `detectionTier` 日志可读）。
+- 包含降权：被另一候选高度包含（≥0.9）的内部矩形评分 ×0.35，封面设计框不再反超外框；
+  互包含（近重复）不互相压分；降权不得让结果退化到更小的框（FR-003 保障）。
+
+**live 三级检测兜底（spec/live-edge-crop，2026-09-20）**：live 链按
+「严格矩形 → 条件文档分割 → 放宽矩形」三级推进——
+① `VNDetectRectanglesRequest` 严格参数（置信度 0.6 / 最小尺寸 0.25 / 直角容差 20° / 候选 4）；
+② 仅当①无可信候选（无非退化、面积 >0.08）时补跑 `VNDetectDocumentSegmentationRequest`
+  ——圆角书/低对比度的失效信号，把神经网络算力只花在需要的帧上；
+③ 仅当②也无结果时（门控纯函数 `DetectionStrategy.needsRelaxedRectangles(rectangles:segmented:)`，
+  可穷举单测），以 **still 快门同源的放宽参数**（置信度 0.35 / 最小尺寸 0.08 / 直角容差 28° /
+  候选上限 8——`detectRectangles(relaxed:)` 单一参数源，零新参数）再跑一次矩形检测。
+折页厚书的曲面页边缘不满足矩形检测的直线假设，前两级长期落空正是该场景的失效信号——
+第三级让取景器尽可能出框（用户预知裁切范围、敢按快门）。三级候选并入**同一池**经
+`DetectionStrategy.select` 统一择优（两级面积兜底 / 包含降权语义不变——放宽档命中的
+整幅误检同样受 0.96 上限管控）。放宽档**不做**贴边吸附（still 专属，保持 live 轻量）；
+证件模式（idCard）不参与第三级，检测路径不变。
+**已知限制**：曲边页「精确贴合」受矩形检测器物理上限约束——放宽档提高命中率但不保证
+曲边 100% 贴合，极端场景由预览页手动调框兜底（FR-005）。
+
+**取景整框视觉（spec/live-edge-crop）**：文档模式整框为**连续实线**（`DocumentFrameStyle`
+纯数据样式，`EdgeOverlayView.swift` 内）——「dash 恒空」是类型不变量（类型不提供虚线入口）：
+跟踪态 2.5pt 朱砂细实线（替换旧虚线 [8,6]）、锁定态 3pt 白面线 + 5pt 暗描边粗实线
+（新增，与四角括号同风格）；四角括号、框外压暗（tracking 0.25 / locked 0.45）与
+证件模式渲染路径（idMask + 专用描边）不动。
+
+**贴边吸附（`EdgeSnapper`，Domain/）**：still 路径择优后，四边沿外法线采样亮度梯度，
+把普遍内缩 1~3% 的检出框外推到真实边缘（最大位移 = 5% × 短边）；凸性/边界/位移/面积
+四项校验任一失败原样返回。证件模式比例窗跳过；live 路径不动。快门检测与整理页
+refine 都经 `detect(imageData:)` 单点受益。
+
+**可疑锁定门禁**：`.locked` 且照片空间 quad 近满幅（面积 ≥0.95）或贴边（边距 <1.5%）
+时，视为「书超出视场被裁切」——抑制自动快门，状态区提示「再往后移一点」（`isAutoCaptureSuppressed`）。
+
+**自动快门确认窗（spec/overlay-frame-visibility）**：锁定后**不立即拍**——`CaptureViewModel`
+继续累计连续非可疑锁定帧，默认 6 帧（≈0.4s@15fps；init 参数 `autoCaptureHoldFrames`
+可注入，测试用）达阈值且 `autoCapture && !didAutoCaptureThisLock && !suspicious` 才自动快门。
+语义细节：①每轮锁定首帧清零重新起算；②suspicious 帧**冻结**计数（不增也不清零，
+可疑解除后从原值续算）；③清零点 = searching/tracking 转换、`capture()` 复位段、
+`setMode()`；④单周期单拍（`didAutoCaptureThisLock`）与手动快门均不受窗限制
+（手动拍后同样清零计数）。行为由 `CaptureViewModelTests.AutoCaptureHoldWindowTests` ×4
+穷举钉死（等窗拍 / 解锁重计 / 可疑冻结 / 窗内手动拍）。
+
+**overlay 映射与屏幕点契约（渲染真值 = `OverlaySpaceMap` 解析链）**：照片空间 quad 经
+`OverlaySpaceMap.screenQuad`（照片→视频 `FOVLayout` 中心裁切逆换算 → 屏幕 aspectFill
+解析放置）映射为**屏幕点**；旧探针（`layerRectConverted`）与 `FrameMapper` 均已退役为
+诊断对照（`overlayProbeAnalytic` / `overlayProbeDelta` 日志，§6.9 #5）。
+**Shape 契约**：`EdgeOverlayView` 内消费屏幕点的两个 Shape（`QuadShape` /
+`CornerBracketsShape`）遵循同一约定——**输入即屏幕点，`path(in:)` 忽略 `rect` 参数、
+输出点 = 输入点**，不做任何二次归一化/缩放。契约已由 `EdgeOverlayRenderingTests` 钉死
+（包围盒 == 输入 quad / 与 rect 无关 / 顶点 TL→TR→BR→BL 闭合）——此前契约未成文，
+`QuadShape` 旧实现把屏幕点当归一化值再乘 rect、路径放大到屏幕外，缺陷跨两个周期
+无人发现（§6.10）。
+
+**新 Domain 模块（全部纯函数）**：`CaptureGeometry`（运行时视频/照片宽高比）、
+`FOVLayout`（视频↔照片空间换算）、`EdgeSnapper`（贴边吸附）；`Quad` 扩展
+`isSuspiciousForAutoCapture` / `containment(in:)`。
+
+**诊断日志（`ZhixiaLog.capture`，Console.app 按 subsystem `com.david.Zhixia` 过滤）**：
+`geometry`（视频/照片宽高比，取景启动与快门各记一次）、`overlayProbeAnalytic` /
+`overlayProbeDelta`（解析链渲染真值的仿射参数 + 与退役探针实测值的逐轴偏差对照，
+SC-004 证据链）、`detectionTier`（候选层级）、`suspiciousLock`
+（门禁抑制原因）、`relaxedLiveProbe`（live 文档模式每帧一行：`triggered` 是否触发放宽矩形
+重跑（严格+分割双落空）、`candidates` 放宽档命中数——**触发率 = triggered=true 行数 ÷
+本日志总行数**，与 `detectionTier`（面积兜底档位）语义正交）。真机验收步骤见
+`spec/scan-edge-accuracy/device-acceptance.md` 与 `spec/live-edge-crop/device-acceptance.md`。
+
+- `QuadSmoother` 对连续帧的四边形做平滑，避免实时框抖动（未动）。
+- 证件模式（`ScanMode.idCard`）用一个固定比例窗约束检测（语义未动）。
 - 五档滤镜（`Enhancement`）：`original` / `enhance` / `deskewShadow` / `grayscale` / `blackWhite`。
 - **落盘三份**：`.original`（相机直出，**未矫正未增强**）、`.rendered`（拉正+增强）、`.thumbnail`。
   > ⚠️ 这三者的区别是 §6.1 那个重大 bug 的来源，务必记住。
@@ -269,11 +345,13 @@ let y = (1 - box.maxY) * height      // 漏了这一句，整页上下颠倒
 
 ```swift
 ReconstructDocument { documentID, title, pages, version = 2 }
-  └─ ReconstructPage { pageID, size, scene, usedCloud, blocks, layout: PageLayout?, anchors }
+  └─ ReconstructPage { pageID, size, scene, usedCloud, blocks, layout: PageLayout?, anchors,
+                       baseImageRelativePath }   // 版面还原档底座（rendered 原图路径，VM 注入）
        └─ ReconstructBlock { id, kind, bbox, text, style, table, figureRelativePath,
                              barcodePayload, isChecked, semantic, anchors, confidence }
 
-ReconstructBlockKind = heading | paragraph | list | table | figure | barcode | checkbox | handwrittenBlank
+ReconstructBlockKind = heading | paragraph | list | table | figure | barcode | artwork
+                     | checkbox | handwrittenBlank   // artwork：乱码区域按原像素保留，不进文字层
 ReconstructScene     = auto | plain | exam | table | packaging
 ```
 
@@ -287,24 +365,115 @@ ReconstructScene     = auto | plain | exam | table | packaging
 | 锚点 | `AnchorExtractor` | 识别 tableTitle / questionStem / optionLetter / barcode 文本 |
 | 表格 | `Domain/Table/TableGridV2Detector.swift` | 找 tableTitle 锚点 → 焦点窗口 0.22 → 多尺度列聚类（0.13→0.085）→ 自适应行聚类 `clamp(0.55×medianH, 0.013, 0.025)` → x-range 过滤 → occupancy ≥ 0.30 |
 | 阅读序 | `Domain/OnDeviceReadingOrder.swift` | 行级页眉剔除 → `sameRow` 阈值 0.30 + 自适应 rowThreshold → 段落聚类 → CJK-aware 标题判定 |
-| 配图 | `Domain/Figure/FigureRegionsV2.swift` | 题下区域网格 flood fill 找**空白连通域** + `maxArea = 0.12` 闸门；barcode anchor 通道；v1 兜底 |
+| 配图 | `Domain/Figure/FigureRegionsV2.swift` | 题下区域网格 flood fill 找**空白连通域** + `maxArea = 0.12` 闸门；v1 兜底（barcode 通道已删——条码改由 `.barcode` 块**单份表示**，见下） |
+| 墨块 | `Domain/Figure/InkFigureDetector.swift` | 双输出：`figures` + `textCoveredInkRegions`（被文字覆盖的墨块区域，artwork 判定的证据源） |
+| 乱码判定 | `Domain/Layout/GarbledRegionDetector.swift` | **双门控（AND）**：低置信（≤0.5）∧ 低质量（OCRTextQuality=0）+ 墨块重叠 ≥ 0.3 → `.artwork`；低信号行空间聚类（gap 0.02）合并；高置信/识别正确的行**永不剔除**（保守性单测钉死） |
+| 条码单份 | parser 内 dedup（`FigureRegionsV2` / `OnDeviceDocumentParser`） | figure↔barcode 交叉去重（IoU>0.5 或包含）；URL 降级文本与已检条码 bbox 相交 → 并入条码说明、不另出块 |
+| 坐标映射 | `Domain/Layout/PageLayoutMapper.swift` | 归一化 bbox → 画布像素 / DOCX EMU 的**唯一换算入口**（缩放+偏移+y 翻转集中于此；预览与导出共用 → 定位逐位一致） |
+| 布局引擎 | `Domain/Layout/RegionLayoutEngine.swift` | 解析期四步管线：宽行拆分 → 碰撞消解（行序受让 + 重建行帧，迭代 ≤ 4 轮）→ 溢出阶梯（缩字号 → 向下空带扩块 → 保文字）→ clampToPage；产物写 `page.restoredBlocks`，装得下的块零扰动 |
+| 共享排版度量 | `Domain/Layout/LayoutTypography.swift` | 实测行高 → 字号/行距的**唯一**推导处（fontPT 钳 [7,28]、溢出估算、行帧计算、表格单元格度量）；预览与 DOCX 同入口 → 「字号 / 页高」比例恒等 |
+| 覆盖矩形 | `Domain/Layout/LayoutMaskBuilder.swift` | 文本/表格块 bbox 外扩 1.5% → 净化矩形，环带逐通道 **median** 采样取底色；figure/barcode/artwork 区域不进 mask |
 | 噪声过滤 | `Domain/OCRNoiseFilter.swift` | 状态栏/UI chrome 丢弃；URL 降级为 barcode 块 |
 | 场景路由 | `Domain/ReconstructSceneRouter.swift` | 判定顺序：**exam 优先于 grid**（否则练习册被判成表格） |
+
+**版面还原档管线**（`.restored`，spec/layout-restore）——预览（`LayoutCanvas`）与
+DOCX 导出共用 `PageLayoutMapper` 同一套几何：
+
+- **三层预览**：底座（rendered 原图 aspect-fit，ImageIO 下采样 ≤2048px）→
+  覆盖层（`LayoutMask` 净化矩形盖掉原字迹）→ 元素层（文本/表格按 bbox 原位重排；
+  **字号走 `LayoutTypography` 实测行高推导**（无实测才回退页高 1.8% 兜底）；
+  有 `lines` 的块**逐行帧渲染**——每行独立 Text / Word 每行一个 `w:p`，
+  保实测行距与行首位置；表格按实测列宽比例绘制、行高 = bbox 高 ÷ 行数封顶
+  （放不下转增长，与 Word 同构）；figure/barcode/artwork **不绘制**，底座原像素透出）。
+- **底座注入**：VM 把 `PageFileStore` 的 rendered 图路径写入
+  `page.baseImageRelativePath`，切档不重跑 parse；缺底座时退化纸色底、无覆盖层。
+- **artwork 块**：乱码行从文字层剔除、区域不进覆盖 mask、预览/导出均按原像素透出；
+  结构化档忽略 artwork（段落流里没有可表示的内容）。
+- **裁图持久化**：figure/barcode 裁图落 `files/<doc>/reconstruct/<page>/`
+  （`PageFileStore.reconstructCropDirectory(document:page:)`，随文档生命周期），
+  不再写 tmp —— 结构化档导出「缺图」隐患根除。
+- **日志**：`ZhixiaLog.reconstruct` 类目（tier / baseImage / mask / artwork / dedup /
+  **layout**），真机问题按此过滤（抓取步骤见 `spec/layout-restore/device-acceptance.md`）。
+
+**布局引擎（spec/layout-engine，2026-09-19）**——解析期把 blocks 过一遍
+`RegionLayoutEngine.resolve`，产物写 `page.restoredBlocks`；预览与 `.restored`
+导出**只读 `restoredBlocks ?? blocks`**（双档隔离：结构化档 / 可检索 PDF 仍读
+`page.blocks`，零扰动）。四步管线（装得下的块逐位不变）：
+
+1. **宽行拆分**：blockWidth > 0.63 × 内容宽的行级块垂直二分（阅读序、行高、
+   行距保留，行 leadingOffset 按新块重定基）；
+2. **碰撞消解**：相交对中下方块按行序下移让位（文本块不压 figure/barcode），
+   块级行帧重建，迭代 ≤ 4 轮钉死最坏情形；
+3. **溢出阶梯**（文本块装不下的降级链）：先**缩字号**（行高等比、下限 7pt）→
+   仍放不下**向下扩块**（只吃下方空白带，遇任何块即止——防压图）→ 还不行
+   **保文字 intact** 记 extreme；无 `lines` 块不经阶梯，走渲染期兜底
+   （预览 `minimumScaleFactor(0.5)` × Word 布局期预缩 `w:sz`，双端同构、
+   **不写 `normAutofit`**——QuickLook/Pages/WPS 不认，Word-only 特性 violates FR-004）；
+4. **clampToPage**：越界块夹回页内。
+
+**表格几何**（plan D8）：`w:tblGrid` 按实测 `columnRatios` 分配列宽
+（识别通路无列信息 → 均分兜底，同一契约）；`w:trHeight` exact = 区域高 ÷ 行数
+（**封顶**，修 Word 无界增长下坠）；单元格字号按实测列宽自适应
+（`LayoutTypography.tableCellFontPT`，下限 7pt）；到 7pt 仍放不下 → **整表转
+atLeast 增长** + `tableGrowthUpgrade` 日志，文字不截断——预览 `canvasTable` 用
+**同一对**度量函数（tableCellFontPT / tableCellHeightPT）增长行高，FR-008 同构。
+
+**layout 日志**（`ZhixiaLog.reconstruct` debug 级）：`layout yield`（让位计数 +
+总平移量）/ `layout split` / `layout overflowShrink|overflowExpand|overflowExtreme` /
+`layout tableGrowthUpgrade` / `layout figureShrink`——真机抓取步骤见
+`spec/layout-engine/device-acceptance.md`。
+
+**诊断根因 → 决策映射**（详见 `spec/layout-engine/plan.md` D1~D11）：
+
+| 诊断根因 | 决策 |
+|---|---|
+| 字号走 0.018 常数 + 两端各自钳制（密集页字号虚大 ~1.7×，钳制基准不一致） | D4：`LayoutTypography` 唯一推导，页 pt 空间钳 [7,28] 只发生一次 |
+| 行级块横跨多栏（阅读序 / 碰撞检测全乱） | D3：宽行拆分（0.63 × 内容宽阈值） |
+| 行距用块内均分近似（密集页行距失真） | D7：行帧逐行渲染，`w:line` exact = 实测行高 × 20 twips |
+| Word 表格行高无界增长 → 下坠压块 | D8：trHeight exact 封顶 + atLeast 升级链 |
+| 装不下的文本块被截断 / 溢出块框 | D6：溢出阶梯 + 渲染期兜底（预缩 w:sz，二选一之 B） |
+| 块相交 / 越出页面 | D5：碰撞消解（行序受让）+ clampToPage |
+
+**扫描保真（spec/scan-fidelity，2026-09-20）**：在 R2 管线之上补行级与拍摄侧
+保真——字号行级化（`lineFontPT` 逐行一档，退化回退块级）、对话行 y 跨度聚类 +
+分段下划线占位（`LineSegment`）、重建后搜索 blob 回填、取景框解析式映射
+（`OverlaySpaceMap`，探针退役为诊断源）、四态方向引导（`GuidanceDirective`，
+面积滞回防闪烁）。根因表与已知限制（FR-012：OCR 字符级混淆 I/l/1 接受不纠错）
+见 §6.9。
 
 ### 4.5 导出
 
 **DOCX**（`DocxExportService`）—— 手写 OOXML + `ZipArchive` 打包：
 ```
 [Content_Types].xml · _rels/.rels · word/document.xml · word/styles.xml
-word/_rels/document.xml.rels · word/media/imageN.png
+word/_rels/document.xml.rels · word/media/imageN.{png,jpg}
 ```
-三档产物：
+两档产物（旧 A/B/C 三档已删除——B 的 twips 定位事故、C 的多页衬底事故见 §6.7；
+替代者 `.restored` 从坐标链路起重建，spec/layout-restore）：
 
 | 档 | 实现 | 说明 |
 |---|---|---|
-| **A 结构化**（默认） | `wp:inline` | 段落流 + `w:tbl` + 内联图，最稳 |
-| **B 重排版** | `wp:anchor` | 块浮在 anchor 位置，Word 兼容性略差 |
-| **C 衬底图** | `wp:anchor behindDoc=1` | 原图作底，文字层正常流 |
+| **结构化** `.structured` | `wp:inline` | 段落流 + `w:tbl` + 内联图，A4 固定页 |
+| **版面还原** `.restored`（预览默认） | 浮动对象 + 原生浮动表格 | 与预览同构（FR-009） |
+
+`.restored` 的每页 Word 结构（z 层自下而上）：
+
+1. **底图** behindDoc=1：铺满动态页，media 就是 `baseImageRelativePath` 原文件字节
+   （扩展名保持原样，`[Content_Types].xml` 按实际扩展名声明）；
+2. **srcRect 保留区** behindDoc=1：figure/barcode/artwork 引用**同一张底图** +
+   `a:srcRect` 裁剪 —— 每页 media 恰一张（FR-005/FR-010）；
+3. **覆盖 shape** behindDoc=1：`LayoutMask` 环带 median 色矩形盖掉原字迹
+   （外扩 1.5% 会盖住保留区边缘，与预览一致）；必须留在 behindDoc 层——
+   原生浮动表格在文本层渲染，shape 若在最前会整片盖住表格；
+4. **文本层**：承载段落（行高 exact 10，不占版面）+ **原生浮动表格**
+   （`w:tblpPr` 页面原位定位 + 表宽随 bbox + `tblGrid` 实测列宽 + `trHeight`
+   exact 封顶（§4.4 表格几何），US5/FR-008，不套文本框）；
+5. **浮动文本框** behindDoc=0：`wps:txbx` 内是真实段落，Word 里可直接编辑（FR-007）；
+   有 `lines` 的块每行一个 `w:p`（`w:line` exact = 实测行高，FR-005）。
+
+页面 sectPr 宽高随原图（EMU ÷ 635 = twips）且零边距；多页各配独立 section。
+全部定位（posOffset EMU / tblpX·tblpY twips）都出自 `PageLayoutMapper`——
+「导出定位 = 预览定位」有链路级测试钉死（`DocxRestoredLayoutTests` 夹具端到端）。
 
 **可检索 PDF**（`SearchablePDFExportService`）—— 原图渲染 + 不可见文字层（可被 `PDFKit` 选中/搜索）。
 
@@ -321,7 +490,7 @@ word/_rels/document.xml.rels · word/media/imageN.png
 
 | 模块 | 能力 | 状态 |
 |---|---|---|
-| 取景 | 实时框边、手动对焦/曝光、闪光灯、连拍、相册导入 | ✅ |
+| 取景 | 实时框边（三级检测兜底：严格矩形 → 条件分割 → 放宽矩形；连续实线整框：跟踪细实线 / 锁定粗双线）、手动对焦/曝光、闪光灯、连拍、相册导入 | ✅ |
 | 取景 | 证件模式比例窗 | ✅ |
 | 整理 | 拖角校正、五档滤镜、旋转 | ✅ |
 | 库 | 文件夹、搜索、收藏、加页、删除、存储占用统计 | ✅ |
@@ -334,13 +503,27 @@ word/_rels/document.xml.rels · word/media/imageN.png
 | 还原 · 配图 | `FigureRegionsV2` 空白连通域 + barcode 通道 + v1 兜底 | ⚠️ 能出图，真机质量差 |
 | 还原 · 噪声过滤 | 状态栏 / UI chrome / QR URL | ✅ |
 | OCR · 预处理档 | `OCRPreprocessor`：去阴影 + 灰度 + 锐化，质量不达标时自动重跑 | ✅ 新增（§4.3） |
-| 还原 · 三档 | A/B/C 导出 + 预览随档位切换 | ⚠️ 实现保留，**B/C 入口已下架**（§6.5） |
+| 还原 · 双档 | `.structured` 流式 + `.restored` 版面还原（预览默认；底座/覆盖/原位/浮动表格，导出同构） | ✅ 重做（spec/layout-restore，§4.4/§4.5） |
+| 还原 · 乱码治理 | `GarbledRegionDetector` 双门控 → `.artwork` 原像素保留 | ✅ 新增 |
+| 还原 · 条码单份 | figure↔barcode 交叉去重 + URL 并入 | ✅ 新增 |
 | 云解析 | TextIn | ❌ **stub**：无密钥、无网络实现，`parse` 直接 throw |
 | 手写 / 勾选识别 | — | ❌ 未实现（`checkbox` / `handwrittenBlank` 类型已预留但未产出） |
 
 ### 5.1 测试现状
 
-- 10 个测试文件 / 83 个 `@Test`，全量 **82 passed + 0 failed**。
+- 35 个测试文件 / 295 个 `@Test`，全量 **294 passed + 0 failed + 1 expected failure**
+  （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
+  取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
+  纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的
+  `needsRelaxedRectangles` 门控穷举与放宽候选进池择优 + `CaptureFallbackChainTests`
+  （快门回退链三分支替身锚定）+ `ReviewViewModelTests.autoRefineSkipsUserAdjustedQuad`
+  （用户调框不被自动 refine 覆盖）；基线 280 → 295 只增不减。
+   版面还原链路新增套件：`PageLayoutMapperTests` / `LayoutMaskBuilderTests` /
+   `GarbledRegionDetectorTests` / `BarcodeDedupTests` / `DocxRestoredLayoutTests`
+   （OOXML 结构断言 + 真实样张端到端）；
+   布局引擎套件（spec/layout-engine）：`RegionLayoutEngineTests`（拆分 / 消解 /
+   溢出阶梯零扰动）+ `LayoutTypographyTests`（共享度量）+ `DocxRestoredLayoutTests`
+   的行帧 / 字号比例 / 表格几何扩展。
 - 真实样张夹具：`docs/fixtures/`（营养表 + 练习册），由 `Tools/ocr-dump/` 生成，
   固化在 `ZhixiaTests/ReconstructV2Fixtures.swift`（**勿手改**，改原图后重跑生成脚本）。
 - ⚠️ **测试全绿 ≠ 真机能用** —— 见 §6.2，这个坑已经踩过一次。
@@ -396,6 +579,10 @@ table[0] rows=7 cols=3 bbox=(0.128, 0.260, 0.728, 0.177)
 表格检测任一环节失败（锚点 / 行数 / 列数 / occupancy）就整体返回 nil，没有任何 graceful degradation。
 iOS 26 通路绕过了它，但**老系统仍然吃这个亏**。
 
+> 2026-09-19 注：**渲染侧**的降级阶梯已由布局引擎补上（文本块装不下：缩字号 →
+> 扩块 → 保文字，见 §4.4）；本节说的是**检测侧**（表格识别本身）——仍是
+> all-or-nothing，下方 P1-1 依旧有效。
+
 ### 6.4 架构性天花板
 
 | 维度 | 扫描王 / WPS | 纸匣 | 差距性质 |
@@ -406,7 +593,12 @@ iOS 26 通路绕过了它，但**老系统仍然吃这个亏**。
 | 表格还原 | 深度学习表格结构识别 | ✅ iOS 26 同上 | 老系统有差距 |
 | 手写 / 勾选 | 专门模型 | 无 | 缺能力 |
 
-### 6.5 未解决：B / C 档预览效果差（2026-09-12 用户反馈）
+### 6.5 已解决（推倒重来）：B / C 档预览效果差（2026-09-12 用户反馈）
+
+> 2026-09-18 更新：B/C 档已随 spec/layout-restore **整体删除**（枚举只剩
+> `.structured` / `.restored`）。替代者 `.restored` 版面还原档重建了坐标链路
+> （`PageLayoutMapper` 统一换算）、覆盖层（环带 median 净化矩形）与导出结构
+> （见 §4.4/§4.5）。本节保留原始分析作历史记录。
 
 三档能渲染三种画面了，但 **B 重排版 / C 衬底图「效果很差，没法用」**。
 
@@ -476,6 +668,60 @@ iOS 26 通路绕过了它，但**老系统仍然吃这个亏**。
 > `InkFigureDetectorTests`、`TextbookFixtureTests`。其中 1/2/4/5 四条测试
 > **在无修复时确实是红的**（已逐个还原验证过），第 3 条两种写法都过 —— 测试里注明了。
 
+### 6.9 已修：扫描保真六缺陷 + 取景边框不可见（2026-09-20，spec/scan-fidelity）
+
+> 规格与决策：`spec/scan-fidelity/spec.md`（FR-001~012 / SC-001~006）、
+> `plan.md`（D1~D8）；真机验收清单 `spec/scan-fidelity/device-acceptance.md`。
+
+用户反馈的六类扫描/还原缺陷，根因与修复：
+
+| # | 缺陷 | 根因 | 修复（任务） | 位置 |
+|---|---|---|---|---|
+| 1 🔴 | 混排行叠字（标题+正文同块互相压行） | 整块一个字号：块级字号取块内代表行高，大字行被压、小字行被撑，估算与渲染同源地错 | **字号行级化**：`lineFontPT`（行实测高 × 1.05 钳 [7,28]，行高退化回退块级），DOCX `w:sz` 与预览逐行同源（T006~T008） | `LayoutTypography` / `DocxExportService` / `LayoutCanvas` |
+| 2 🔴 | 对话行被拆散、填空空隙丢失 | `sameRow` 用 midY 单点比较，同排异高分段被拆成两行、再按 x 重排；分段间空隙在文本拼接时丢 | **y 跨度重叠率聚类**（overlap ≥ 0.5×min(h)）+ 行内 minX 序；`LineSegment` 模型 + 空隙**下划线占位**（DOCX 下划线空格 run / 预览基线矩形）（T010~T013） | `OnDeviceReadingOrder` / `DocxExportService` / `LayoutCanvas` |
+| 3 🟠 | 同页多次扫描结构不稳 | 聚类边界窄，±5% 几何抖动即翻车 | 判定带合取容差（y 重叠 + 高度比双条件）+ 三组固定种子微扰稳定测试（T015） | `OnDeviceReadingOrder` + 测试 |
+| 4 🟠 | 重建完成后全文搜索无结果 | 重建通路从不回填搜索 blob（只有手动 OCR 回填） | `recognizedTextBlob` + `onContentReady` 回调 → `applyOCRBlob`（与手动 OCR 同路径；blob 取 `displayText`，表格行列也可搜）（T016~T018） | `ReconstructViewModel` / `DocumentView` |
+| 5 🔴 | 取景框系统性偏窄甚至不可见 | overlay 映射锚在运行时探针（`layerRectConverted`），surface 尺寸 0 / 布局未就绪时静默退化为恒等 | **解析式映射** `OverlaySpaceMap`（照片→视频 `FOVLayout` 中心裁切逆换算 → 屏幕 aspectFill 解析放置，y-down 全链不翻转）；探针退役为诊断对照（`overlayProbeAnalytic` / `overlayProbeDelta` 日志）；视觉升级四角括号 + 框外压暗（T019~T022） | `OverlaySpaceMap` / `EdgeOverlayView` |
+| 6 🟡 | 提示只有「对准/寻找」，无方向感 | 无距离/姿态判定 | **四态引导** `GuidanceDirective`（suspicious 复用既有阈值且优先级最高；太远面积滞回 0.07 进 / 0.09 出防闪烁）+ `capture.hint.tooFar`（T024~T026） | `CaptureViewModel` / `CaptureView` |
+
+> **为什么探针是退役而不是修复**：探针本质是「问系统实际把视频帧放在哪」，依赖
+> 布局完成后回调不丢帧——任何时序窗口都会让边框短暂错位。解析式映射没有时序
+> 依赖，值是确定的；探针保留为诊断对照源（真机验收直接读 `overlayProbeDelta`
+> 逐轴偏差），不再参与渲染。`FrameMapper` 一并退出 overlay 渲染链（照片空间
+> 换算用途与测试保留）。
+
+**已知限制（FR-012，明确接受）**：OCR 字符级混淆（`I`/`l`/`1`、`O`/`0`、`rn`/`m`）
+**不做纠错**——本机 Vision 无字典/语言模型后处理，按「纯离线、不猜测」原则接受为
+已知限制：混淆字符保留 OCR 原样（结构/语序还原不受影响，搜索可用宽泛词规避）。
+若后续引入本地语言模型重排，必须作为独立开关（默认关）。
+
+> 回归网：新增 `LineTypographyPerLineTests` / `OnDeviceReadingOrderRowClusteringTests` /
+> `OverlaySpaceMapTests` / `GuidanceDirectiveTests`；更新 `DocxRestoredLayoutTests`
+>（w:sz 行级断言，T027）/ `ReconstructTests`（blob 回填）/ `CaptureFallbackTests`
+>（geometry 断言改全等）。基线 255 → 277 passed + 1 known issue + 0 failed（只增不减）。
+
+### 6.10 已修：取景整框不可见的最后一环 + 自动快门确认窗（2026-09-21，spec/overlay-frame-visibility）
+
+> 规格与决策：`spec/overlay-frame-visibility/spec.md`（US1~US5 / FR-001~010）、
+> `plan.md`（D1~D6）；真机重测协议 `spec/overlay-frame-visibility/device-acceptance.md`。
+
+scan-fidelity 把 overlay 映射改成解析链后，真机上整框**仍然不可见**——映射输出（屏幕点）
+是正确的，但消费端 `QuadShape` 还停留在「归一化输入」语义：`path(in:)` 把屏幕点当 [0,1]
+归一化值再乘 rect，路径被放大到屏幕外。同一文件里 `CornerBracketsShape`（T020 新写）
+用的是正确的屏幕点约定——**两个 Shape、两种坐标约定并存**，而契约从未成文，所以
+连改过这个文件的周期都没发现（教训已在 §4.2「overlay 映射与屏幕点契约」成文）。
+修复：`QuadShape` 统一到屏幕点契约，`EdgeOverlayRenderingTests` ×3 钉死。
+
+顺带补上自动快门的节奏缺陷：锁定后第一帧即拍，锁定视觉来不及呈现、用户来不及预知
+（折页错误锁定更是直接拍错）。新增 6 帧确认窗（≈0.4s@15fps；suspicious 冻结、解锁
+清零、手动快门不受限，语义见 §4.2），`AutoCaptureHoldWindowTests` ×4 穷举钉死。
+折页「错误锁定」因此变得**可见且可中止**（整框呈现 + 移开取消）；曲面检测本体不在
+本周期范围。
+
+> 回归网：新增 `EdgeOverlayRenderingTests` ×3 + `AutoCaptureHoldWindowTests` ×4；
+> 既有断言零修改（`CaptureFallbackTests/normalLockAutoCaptures` 默认窗下依旧第 15 帧拍）。
+> 基线 295 → 302 用例（301 passed + 1 known issue + 0 failed，只增不减）。
+
 ---
 
 ## 7. 后续优化方向
@@ -518,7 +764,7 @@ iOS 26 通路绕过了它，但**老系统仍然吃这个亏**。
 |---|---|
 | P2-1 | A 档补 `w:tblPr` 样式（边框、表头底纹），现在只有裸 `w:tbl` |
 | P2-2 | 表格 cell 对齐：数值列右对齐、表头加粗（`TableGridV2.headerRowIndices` 已算出但无消费者） |
-| P2-3 | `w:tblGrid`；合并单元格 `gridSpan` / `vMerge`（`RecognizeDocumentsRequest` 已给出 `rowRange`/`columnRange`，导出端还没接） |
+| P2-3 | ~~`w:tblGrid`~~（✅ 2026-09-19 布局引擎 D8 落地：实测列宽 + `trHeight` 封顶，见 §4.4）；合并单元格 `gridSpan` / `vMerge`（`RecognizeDocumentsRequest` 已给出 `rowRange`/`columnRange`，导出端还没接） |
 | P2-4 | C 档衬底改用**页面原图**（现在用的是「本页最大的 figure」，与预览不一致） |
 | P2-5 | PDF 文字层按 block 顺序写，避免 PDFKit 读出来乱序 |
 

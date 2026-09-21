@@ -15,6 +15,13 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
     private var configured = false
     private var flashAuto = false
     private var frameContinuation: AsyncStream<VideoFrame>.Continuation?
+    /// 几何测量值在多个队列间读写（帧队列写、快门回调写、sessionQueue 读），
+    /// 统一用一把小锁保护；每帧一次 lock/unlock 的开销可忽略。
+    private let geometryLock = NSLock()
+    /// 实际送达帧的尺寸（emit 已转竖屏）——检测输入空间的真实度量。
+    private var measuredFrameSize: CGSize?
+    /// activeFormat 推得的照片竖屏宽高比估计；快门时以实际交付尺寸复核并自校正。
+    private var photoAspectEstimate: Double?
 
     var frames: AsyncStream<VideoFrame> {
         AsyncStream { continuation in
@@ -77,7 +84,7 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
     }
 
     func capturePhoto() async throws -> CapturedPhoto {
-        try await withCheckedThrowingContinuation { continuation in
+        let photo: CapturedPhoto = try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async {
                 let settings = AVCapturePhotoSettings()
                 if self.photoOutput.supportedFlashModes.contains(.auto), self.flashAuto {
@@ -91,6 +98,60 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
                 self.photoOutput.capturePhoto(with: settings, delegate: self.photoDelegate)
             }
         }
+        crossCheckPhotoGeometry(pixelSize: photo.pixelSize)
+        return photo
+    }
+
+    // MARK: - 取景几何（plan D2 / FR-007）
+
+    /// 运行时测量的取景几何：视频宽高比取**实际送达帧**的尺寸，照片宽高比取
+    /// `activeFormat` 尺寸估计（快门时以 `CapturedPhoto.pixelSize` 复核）。
+    /// 不硬编码 16:9 / 4:3——模拟器与真机的组合差异正是本轮修复的对象。
+    /// 未配置会话 → `CaptureGeometry.identity`（协议契约：恒等换算，不崩溃不变形）。
+    func geometry() async -> CaptureGeometry {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                continuation.resume(returning: self.currentGeometry())
+            }
+        }
+    }
+
+    /// sessionQueue 上执行。
+    private func currentGeometry() -> CaptureGeometry {
+        guard configured else { return .identity }
+        geometryLock.lock()
+        let frameSize = measuredFrameSize
+        let photoEstimate = photoAspectEstimate
+        geometryLock.unlock()
+        let photoAspect = photoEstimate ?? 1
+        // 未收到帧时退回照片估计（真机 4:3 = 4:3 恒等；首帧到达后即被实测值取代）。
+        let videoAspect: Double
+        if let frameSize, frameSize.width > 0, frameSize.height > 0 {
+            // emit 交付的帧已统一转竖屏，宽高比 = 宽 ÷ 高。
+            videoAspect = Double(frameSize.width / frameSize.height)
+        } else {
+            videoAspect = photoAspect
+        }
+        return CaptureGeometry(videoAspect: videoAspect, photoAspect: photoAspect)
+    }
+
+    /// 快门复核（plan D2）：以实际交付照片尺寸校正照片宽高比估计，并记录差异日志。
+    private func crossCheckPhotoGeometry(pixelSize: CGSize) {
+        guard pixelSize.width > 0, pixelSize.height > 0 else { return }
+        // 照片尺寸以传感器横向朝向交付（4032×3024）；竖屏宽高比与方向无关，
+        // 取 min/max 即得（对竖向交付同样成立）。
+        let capturedAspect = Double(
+            min(pixelSize.width, pixelSize.height) / max(pixelSize.width, pixelSize.height)
+        )
+        geometryLock.lock()
+        let previousEstimate = photoAspectEstimate
+        photoAspectEstimate = capturedAspect
+        geometryLock.unlock()
+        let delta = previousEstimate.map { abs($0 - capturedAspect) } ?? 0
+        let estimated = previousEstimate.map { String(format: "%.4f", $0) } ?? "nil"
+        ZhixiaLog.capture.debug(
+            "photoGeometry capturedAspect=\(capturedAspect, format: .fixed(precision: 4), privacy: .public) estimated=\(estimated, privacy: .public) delta=\(delta, format: .fixed(precision: 4), privacy: .public)"
+        )
     }
 
     func setTorch(enabled: Bool) async throws {
@@ -130,6 +191,9 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        geometryLock.lock()
+        measuredFrameSize = CGSize(width: cgImage.width, height: cgImage.height)
+        geometryLock.unlock()
         continuation.yield(VideoFrame(cgImage: cgImage, timestamp: CACurrentMediaTime()))
     }
 
@@ -178,6 +242,16 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
         }
         session.commitConfiguration()
         configured = true
+        // 照片竖屏宽高比估计：activeFormat 尺寸在 .photo 预设下即照片输出FOV
+        //（4032×3024 横向 → 竖屏 0.75）。快门时以 CapturedPhoto.pixelSize 复核。
+        let dimensions = device.activeFormat.formatDescription.dimensions
+        let formatWidth = Double(dimensions.width)
+        let formatHeight = Double(dimensions.height)
+        if formatWidth > 0, formatHeight > 0 {
+            geometryLock.lock()
+            photoAspectEstimate = min(formatWidth, formatHeight) / max(formatWidth, formatHeight)
+            geometryLock.unlock()
+        }
     }
 }
 

@@ -7,15 +7,31 @@ actor OnDeviceDocumentParser: DocumentParsing {
     /// iOS 26 结构化识别。为 nil（或不支持 / 识别失败）时全程走几何管线。
     private let structureRecognizer: (any DocumentStructureRecognizing)?
     private let barcodeDetector: any BarcodeDetecting
+    /// 裁图落盘目录（pageID → 目录）。spec/layout-restore plan D2 / FR-010：
+    /// 默认保持旧 temporaryDirectory 路径（既有测试 / 未接线的调用方零改动），
+    /// App 侧由 `AppEnvironment.makeReconstructParser(documentID:)` 注入
+    /// PageFileStore 的文档级持久目录 —— 系统清理 temporaryDirectory 后
+    /// 「过一阵再导出」不再缺图。
+    private let cropDirectory: @Sendable (UUID) -> URL
+
+    /// 兼容默认：与迁移前完全一致的 tmp 路径。
+    static let legacyTemporaryCropDirectory: @Sendable (UUID) -> URL = { pageID in
+        FileManager.default.temporaryDirectory
+            .appending(path: "Zhixia", directoryHint: .isDirectory)
+            .appending(path: "reconstruct", directoryHint: .isDirectory)
+            .appending(path: pageID.uuidString, directoryHint: .isDirectory)
+    }
 
     init(
         recognizer: any TextRecognizing,
         structureRecognizer: (any DocumentStructureRecognizing)? = nil,
-        barcodeDetector: any BarcodeDetecting = VisionBarcodeDetector()
+        barcodeDetector: any BarcodeDetecting = VisionBarcodeDetector(),
+        cropDirectory: @escaping @Sendable (UUID) -> URL = OnDeviceDocumentParser.legacyTemporaryCropDirectory
     ) {
         self.recognizer = recognizer
         self.structureRecognizer = structureRecognizer
         self.barcodeDetector = barcodeDetector
+        self.cropDirectory = cropDirectory
     }
 
     func parse(imageURL: URL, pageID: UUID, scene: ReconstructScene) async throws -> ReconstructPage {
@@ -33,13 +49,39 @@ actor OnDeviceDocumentParser: DocumentParsing {
         // 几何通路下是聚类出的表格外接框 —— 两者判据一致（-0.02 容差），
         // 所以两条通路共用这一个过滤即可（原先 v2/v1 各有一份同公式的 contains）。
         let tableBoxes = inputs.tables.map(\.bbox)
-        let leftover = cleanedLines.filter { line in
+        let occupied = barcodes.map(\.bbox) + tableBoxes
+        let textBoxes = inputs.lines.map(\.boundingBox)
+        // 乱码区域判定（spec/layout-restore plan D4 / FR-003）：先取「被文字覆盖墨块」
+        // 空间证据（InkFigureDetector 第二输出），再对干净行做双门控判定 ——
+        // 低置信 ∧ 低质量 ∧ 墨块重叠的行聚类成 artwork 区域：文字行从文字层剔除
+        // （乱码不再混进正文），生成 .artwork 块保留原像素（预览/导出靠底座透出）。
+        // 判定保守：识别正确的行（质量分为正）与高置信行永不剔除（FR-004）。
+        let inkDetection = image.map { cgImage in
+            InkFigureDetector.detect(.init(
+                image: cgImage,
+                textBoxes: textBoxes,
+                occupied: occupied
+            ))
+        } ?? InkFigureDetector.Output(figures: [], textCoveredInkRegions: [])
+        let garbled = GarbledRegionDetector.detect(
+            lines: cleanedLines,
+            inkRegions: inkDetection.textCoveredInkRegions
+        )
+        ZhixiaLog.reconstructArtwork(
+            candidateLines: garbled.candidateLineCount,
+            inkEvidence: inkDetection.textCoveredInkRegions.count,
+            confirmedRegions: garbled.regions.count,
+            lowestConfidence: garbled.lowestConfidence
+        )
+        let leftover = cleanedLines.enumerated().filter { index, line in
+            // 乱码行不进文字层（FR-003：乱码文本不出现在还原结果与导出文档中）。
+            if garbled.isGarbled(index) { return false }
             let point = CGPoint(x: line.boundingBox.midX, y: line.boundingBox.midY)
             if tableBoxes.contains(where: { $0.insetBy(dx: -0.02, dy: -0.02).contains(point) }) {
                 return false
             }
             return !barcodes.contains { $0.bbox.insetBy(dx: -0.012, dy: -0.012).contains(point) }
-        }
+        }.map(\.element)
         // 分栏（2026-09-12 真机反馈）：教材 / 练习册是左右两栏，而段落聚类与最终排序
         // 都假设单栏 → 左右栏会**逐行交错**。按栏分别排阅读序，栏与栏之间按栏序拼。
         // 单栏页面 `split` 返回一栏，行为与改动前完全一致。
@@ -58,34 +100,54 @@ actor OnDeviceDocumentParser: DocumentParsing {
                 )
             )
         }
+        // 页级版面度量（spec/layout-engine plan D3 / T007）：`LayoutAnalyzer` 从此
+        // **页级常跑**（原先只在 figure 分支里算，算完即丢，`page.layout` 字段
+        // 一直悬空）。产物写入 `page.layout` —— 配图检测与后续区域布局引擎（US1）
+        // 消费同一份度量；无文本行时 analyze 返回 nil，page.layout 保持 nil。
+        let layout = LayoutAnalyzer.analyze(lines: inputs.lines)
+        // figure↔barcode 交叉去重与去重日志的计数（spec/layout-restore plan D5 / FR-007）。
+        // 图缺失时 figure 通道整体不跑，计数保持 0。
+        var figuresBeforeCrossDedup = 0
+        var figuresAfterCrossDedup = 0
         if let image {
-            let occupied = barcodes.map(\.bbox) + tableBoxes
-            // M3：先跑 `FigureRegionsV2`（题下 anchor + barcode anchor + v1 兜底），覆盖
-            // 营养表条码 / 练习册 A/B/C 题图两个长期 knownIssue。
+            // M3：先跑 `FigureRegionsV2`（题下 anchor + v1 兜底），覆盖练习册题图。
             // iOS 26 `RecognizeDocumentsRequest` **不提供配图区域**，所以配图两条通路都得靠它。
-            let layout = LayoutAnalyzer.analyze(lines: inputs.lines)
-            let textBoxes = inputs.lines.map(\.boundingBox)
-            // 几何通路：把文字盒当墙找「空白连通域」。它有个结构性盲区 ——
-            // **区分不了「照片」和「白纸」**：实测一页教材的空白连成了面积 0.905 的一整块，
-            // 插图的空白和页边距、行间距全部连通，于是那张照片从来没作为独立区域出现过。
-            // 所以再叠一路**读像素**的墨块检测（见 `InkFigureDetector`）。
-            let figureBoxes = Self.dedup(
+            // 墨块通路复用上方 `inkDetection`（一次检测双输出，不重复栅格化）。
+            // 条码不走 figure 通道（US3 / plan D5）：由 `.barcode` 块单份表示。
+            var figureBoxes = Self.dedup(
                 FigureRegionsV2.boxes(.init(
                     textBoxes: textBoxes,
                     layout: layout ?? LayoutAnalyzer.zeroLayout(),
                     occupied: occupied
-                )) + InkFigureDetector.boxes(.init(
-                    image: image,
-                    textBoxes: textBoxes,
-                    occupied: occupied
-                ))
+                )) + inkDetection.figures
             )
-            let directory = cropDirectory(pageID: pageID)
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            // artwork 判定优先（单份表示，plan D4）：同一区域同时是 figure 候选与
+            // 乱码判定区域时只留 artwork —— 乱码行已剔除、原像素靠底座透出，
+            // 再出一份 figure 裁图就成了同一区域的重复表示。
+            let artworkRects = garbled.regions.map(\.rect)
+            figureBoxes = figureBoxes.filter { box in
+                !artworkRects.contains { artwork in
+                    let intersection = artwork.intersection(box)
+                    guard !intersection.isNull else { return false }
+                    let smaller = min(artwork.width * artwork.height, box.width * box.height)
+                    return intersection.width * intersection.height / max(smaller, 0.0001) > 0.5
+                }
+            }
+            // figure↔barcode 交叉去重（plan D5 / FR-007 单份表示）：条码区域已有
+            // 权威的 `.barcode` 表示（裁图 + payload），与条码框重叠的 figure 一律丢弃。
+            figuresBeforeCrossDedup = figureBoxes.count
+            figureBoxes = Self.removingBarcodeOverlaps(figureBoxes, barcodes: barcodes.map(\.bbox))
+            figuresAfterCrossDedup = figureBoxes.count
+            let directory = cropDirectory(pageID)
+            // 同页重跑（切档不重跑 parse，但「重新扫描」会）：先清掉历史裁图，
+            // 防止上一次多检出的 figure 文件变成孤儿占磁盘（目录页级私有，可安全清空）。
+            try? FileManager.default.removeItem(at: directory)
             for (index, box) in figureBoxes.enumerated() {
-                guard let data = NormalizedImageCrop.png(from: image, visionBox: box) else { continue }
-                let url = directory.appending(path: "figure-\(index).png")
-                try? data.write(to: url, options: .atomic)
+                guard let url = NormalizedImageCrop.writePNG(
+                    from: image,
+                    visionBox: box,
+                    to: directory.appending(path: "figure-\(index).png")
+                ) else { continue }
                 blocks.append(
                     ReconstructBlock(
                         kind: .figure,
@@ -97,22 +159,43 @@ actor OnDeviceDocumentParser: DocumentParsing {
             }
             for (index, barcode) in barcodes.enumerated() {
                 let url = directory.appending(path: "barcode-\(index).png")
-                if let data = NormalizedImageCrop.png(from: image, visionBox: barcode.bbox, padding: 0.02) {
-                    try? data.write(to: url, options: .atomic)
-                }
+                let written = NormalizedImageCrop.writePNG(
+                    from: image,
+                    visionBox: barcode.bbox,
+                    to: url,
+                    padding: 0.02
+                )
                 blocks.append(
                     ReconstructBlock(
                         kind: .barcode,
                         bbox: barcode.bbox,
                         text: barcode.payload,
-                        figureRelativePath: FileManager.default.fileExists(atPath: url.path) ? url.path : nil,
+                        figureRelativePath: (written ?? url).path,
                         barcodePayload: barcode.payload
                     )
                 )
             }
         }
-        // 被降级的 URL / 二维码内容：单独成块，不混进正文段落。
+        // 被降级的 URL / 二维码内容（plan D5 / FR-007 单份表示）：
+        // 与已检条码 bbox 相交（横向 0.03 / 纵向 0.05 邻近容差 —— 印在码上/下的
+        // 说明行通常只隔一道小缝）的**并入该条码块的说明**，不另出块；
+        // 远离任何条码的才单独成块（不混进正文段落，行为与改造前一致）。
         for line in demotedLines {
+            let caption = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 只并入 Vision 检出的条码块（有裁图）；已降级块之间不互相合并。
+            if let index = blocks.firstIndex(where: { block in
+                block.kind == .barcode
+                    && block.figureRelativePath != nil
+                    && block.bbox.insetBy(dx: -0.03, dy: -0.05).intersects(line.boundingBox)
+            }) {
+                // payload 与 URL 文本一致时不重复追加（QR 的 payload 就是这个 URL）。
+                if !caption.isEmpty, blocks[index].barcodePayload != caption {
+                    blocks[index].text = blocks[index].text.isEmpty
+                        ? caption
+                        : blocks[index].text + "\n" + caption
+                }
+                continue
+            }
             blocks.append(
                 ReconstructBlock(
                     kind: .barcode,
@@ -123,16 +206,46 @@ actor OnDeviceDocumentParser: DocumentParsing {
                 )
             )
         }
+        ZhixiaLog.reconstructDedup(
+            beforeFigures: figuresBeforeCrossDedup,
+            beforeBarcodes: barcodes.count + demotedLines.count,
+            afterFigures: figuresAfterCrossDedup,
+            afterBarcodes: blocks.filter { $0.kind == .barcode }.count
+        )
+        // 乱码区域 → .artwork 块（无文本、无独立裁图；预览/导出靠底座原像素透出，
+        // 不进覆盖 mask —— LayoutMaskBuilder 按 kind 排除）。
+        for region in garbled.regions {
+            blocks.append(ReconstructBlock(kind: .artwork, bbox: region.rect, text: ""))
+        }
         blocks = Self.assemble(blocks, columns: columns.map(\.xRange))
         guard !blocks.isEmpty else {
             throw ZhixiaError.reconstructFailed
         }
+        // 区域布局引擎（spec/layout-engine plan D1 / FR-001/003/010/012）：装配产物
+        // 过一遍确定性消解（跨栏拆分 → 碰撞让位 → 页界夹取），布局后块集**只**写入
+        // restoredBlocks —— 结构化档恒读 blocks，拆分/位移对结构化档零扰动
+        // （双档隔离铁律）。无冲突页引擎恒等映射 → 与 blocks 相等 → 写 nil
+        // （等价旧产物，不为无变化页复制一份块集）。
+        let pageSize = image.map { CGSize(width: $0.width, height: $0.height) } ?? .zero
+        let resolution = RegionLayoutEngine.resolve(blocks: blocks, layout: layout, pageSize: pageSize)
+        // layout 类目日志（plan D10，debug 级）：事件驱动——零活动页不刷屏
+        if resolution.report.yieldCount > 0 {
+            ZhixiaLog.layoutYield(count: resolution.report.yieldCount, totalShift: resolution.report.totalShift)
+        }
+        if resolution.report.splitCount > 0 {
+            ZhixiaLog.layoutSplit(count: resolution.report.splitCount)
+        }
+        for shrink in resolution.report.figureShrinks {
+            ZhixiaLog.layoutFigureShrink(figureID: shrink.figureID, clipHeight: shrink.clipHeight)
+        }
         return ReconstructPage(
             pageID: pageID,
-            size: image.map { CGSize(width: $0.width, height: $0.height) } ?? .zero,
+            size: pageSize,
             scene: resolved,
             usedCloud: false,
-            blocks: blocks
+            blocks: blocks,
+            layout: layout,
+            restoredBlocks: resolution.blocks == blocks ? nil : resolution.blocks
         )
     }
 
@@ -153,6 +266,29 @@ actor OnDeviceDocumentParser: DocumentParsing {
             if !overlaps { result.append(box) }
         }
         return result
+    }
+
+    /// figure↔barcode 交叉去重（spec/layout-restore plan D5 / FR-007 单份表示）。
+    ///
+    /// 条码在产物里已有权威表示（`.barcode` 块：裁图 + payload）；figure 框与任一
+    /// 条码框 IoU > 0.5、或一方基本包含另一方时丢弃 figure —— 与 `dedup` 同一套
+    /// 重叠判据，只是跨到「figure × 条码」这一维。
+    ///
+    /// `FigureRegionsV2` 的条码通道移除后，ink / 几何通道都把条码框当墙，
+    /// 正常不会撞上 —— 这里是阈值边缘漏网的兜底。
+    static func removingBarcodeOverlaps(_ boxes: [CGRect], barcodes: [CGRect]) -> [CGRect] {
+        guard !barcodes.isEmpty else { return boxes }
+        return boxes.filter { box in
+            !barcodes.contains { barcode in
+                let intersection = barcode.intersection(box)
+                guard !intersection.isNull else { return false }
+                let union = barcode.union(box)
+                let iou = (intersection.width * intersection.height) / max(union.width * union.height, 0.0001)
+                return iou > 0.5
+                    || barcode.insetBy(dx: 0.01, dy: 0.01).contains(box)
+                    || box.insetBy(dx: 0.01, dy: 0.01).contains(barcode)
+            }
+        }
     }
 
     // MARK: - 装配（按栏排阅读序）
@@ -291,13 +427,6 @@ actor OnDeviceDocumentParser: DocumentParsing {
             }
         }
         return (clean, demoted)
-    }
-
-    private func cropDirectory(pageID: UUID) -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: "Zhixia", directoryHint: .isDirectory)
-            .appending(path: "reconstruct", directoryHint: .isDirectory)
-            .appending(path: pageID.uuidString, directoryHint: .isDirectory)
     }
 
     private func loadCGImage(at url: URL) -> CGImage? {

@@ -17,7 +17,11 @@ struct CaptureView: View {
                 .ignoresSafeArea()
             EdgeOverlayView(
                 imageQuad: viewModel.imageQuad,
-                imageSize: viewModel.frameSize,
+                geometry: viewModel.geometry,
+                // T022：预览层探针降级为诊断对照（SC-004 证据链），不再参与渲染。
+                diagnosticProbe: { size in
+                    environment.previewAttacher.overlayTransform(forViewSize: size)
+                },
                 isLocked: viewModel.overlayIsLocked,
                 mode: viewModel.mode
             )
@@ -97,13 +101,23 @@ struct CaptureView: View {
     }
 
     private var hintText: LocalizedStringResource {
+        // 证件模式：正/反面提示优先（模式语义，不参与四态引导）。
         if viewModel.mode == .idCard {
             return viewModel.idFace == .front ? "capture.hint.front" : "capture.hint.back"
         }
-        if viewModel.overlayIsLocked {
+        // US6（spec/scan-fidelity / FR-010）：文档模式四态方向引导——
+        // 太近/可疑后退 · 太远靠近 · 对准 · 寻找；面积滞回防闪烁
+        //（判定在 ViewModel 逐帧推导，可疑优先级最高）。
+        switch viewModel.directive {
+        case .backOff:
+            return "capture.hint.suspicious"
+        case .closer:
+            return "capture.hint.tooFar"
+        case .locked:
             return "capture.hint.locked"
+        case .searching:
+            return "capture.hint.search"
         }
-        return "capture.hint.search"
     }
 
     private var filmstrip: some View {

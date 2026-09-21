@@ -38,6 +38,23 @@ actor PageFileStore: PageFileStoring {
             .appending(path: Self.fileName(page: page, kind: kind))
     }
 
+    /// reconstruct 裁图持久目录（spec/layout-restore plan D2 / FR-010）：
+    /// `files/<document>/reconstruct/<page>/`。
+    ///
+    /// 结构化档的 figure/barcode 裁图此前落 `temporaryDirectory`，系统随时可能清理，
+    /// 「还原完成后过一阵再导出」就会缺图。迁到文档目录内之后：
+    /// - `removeDocument(document:)` 删整个文档目录 → 裁图随文档走；
+    /// - `sweep(knownDocumentIDs:)` 只保留已知文档目录 → 孤儿裁图自动回收。
+    ///
+    /// 注意：`PageFileStoring` 协议签名不变（plan D8）—— 这是具体类型上的新增方法，
+    /// 由 `AppEnvironment.makeReconstructParser(documentID:)` 在构造 parser 时闭包注入。
+    nonisolated func reconstructCropDirectory(document: UUID, page: UUID) -> URL {
+        filesDirectory
+            .appending(path: document.uuidString, directoryHint: .isDirectory)
+            .appending(path: "reconstruct", directoryHint: .isDirectory)
+            .appending(path: page.uuidString, directoryHint: .isDirectory)
+    }
+
     func commit(
         document: UUID,
         drafts: [PageDraft],

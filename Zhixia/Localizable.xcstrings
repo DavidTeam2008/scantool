@@ -148,6 +148,38 @@
         }
       }
     },
+    "capture.hint.suspicious" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move back a little to fit the whole page"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再往后移一点，把书拍完整"
+          }
+        }
+      }
+    },
+    "capture.hint.tooFar" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move closer"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "靠近一点"
+          }
+        }
+      }
+    },
     "capture.mode.document" : {
       "localizations" : {
         "en" : {
@@ -1317,20 +1349,65 @@
       }
     },
     "reconstruct.tier" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output format"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出档位"
+          }
+        }
+      }
+    },
+    "reconstruct.tier.restored" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored Layout"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版面还原"
+          }
+        }
+      }
+    },
+    "reconstruct.tier.structured" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Structured"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结构化"
+          }
+        }
+      }
     },
     "reconstruct.tierHint" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A: editable flow. B: keeps original positions on a blank page. C: keeps positions over the scanned image. Preview updates with your choice."
+            "value" : "Restored layout: rebuilds the page the way you shot it (default). Structured: editable text flow. Preview and export follow your choice."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A 结构化：可编辑的段落流。B 重排版：白底还原原始位置。C 衬底图：在扫描原图上还原位置。预览会随选择实时变化。"
+            "value" : "版面还原：按拍摄的原始版面原位还原（默认）。结构化：可编辑的段落流。预览与导出随选择切换。"
           }
         }
       }
@@ -1340,13 +1417,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Some pages have no stored image, so the C background layer falls back to a blank sheet."
+            "value" : "Some pages have no stored image, so the restored-layout base falls back to a blank sheet."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "部分页面没有留存原图，C 档衬底已退化为白底（版面位置仍然保留）。"
+            "value" : "部分页面没有留存原图，版面还原档底座已退化为白底（版面位置仍然保留）。"
           }
         }
       }

@@ -133,76 +133,10 @@ struct DocxExportServiceTests {
         #expect(utf8.contains("a:blip"))
     }
 
-    @Test("DOCX B 档用 wp:anchor 定位图")
-    func docxAnchoredTierUsesAnchor() async throws {
-        let png = try ReconstructTestFixtures.pngURL()
-        defer { try? FileManager.default.removeItem(at: png) }
-        let document = ReconstructDocument(
-            documentID: UUID(),
-            title: "题",
-            pages: [
-                ReconstructPage(
-                    pageID: UUID(),
-                    size: .zero,
-                    scene: .exam,
-                    usedCloud: false,
-                    blocks: [
-                        ReconstructBlock(
-                            kind: .figure,
-                            bbox: CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.3),
-                            text: "",
-                            figureRelativePath: png.path
-                        )
-                    ]
-                )
-            ]
-        )
-        let url = try await DocxExportService().makeDocx(document, fileName: "b-\(UUID().uuidString).docx", tier: .anchored)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let data = try Data(contentsOf: url)
-        let utf8 = String(decoding: data, as: UTF8.self)
-        #expect(utf8.contains("wp:anchor"))
-        #expect(utf8.contains("behindDoc=\"0\"") || utf8.contains("behindDoc=\"1\""))
-        #expect(utf8.contains("posOffset"))
-    }
-
-    @Test("DOCX C 档把 figure 作为 behindDoc 衬底")
-    func docxBackgroundTierUsesBehindDoc() async throws {
-        let png = try ReconstructTestFixtures.pngURL()
-        defer { try? FileManager.default.removeItem(at: png) }
-        let document = ReconstructDocument(
-            documentID: UUID(),
-            title: "衬底",
-            pages: [
-                ReconstructPage(
-                    pageID: UUID(),
-                    size: .zero,
-                    scene: .plain,
-                    usedCloud: false,
-                    blocks: [
-                        ReconstructBlock(
-                            kind: .figure,
-                            bbox: CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
-                            text: "",
-                            figureRelativePath: png.path
-                        ),
-                        ReconstructBlock(
-                            kind: .paragraph,
-                            bbox: .zero,
-                            text: "覆盖在衬底上的文字"
-                        )
-                    ]
-                )
-            ]
-        )
-        let url = try await DocxExportService().makeDocx(document, fileName: "c-\(UUID().uuidString).docx", tier: .background)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let data = try Data(contentsOf: url)
-        let utf8 = String(decoding: data, as: UTF8.self)
-        #expect(utf8.contains("behindDoc=\"1\""))
-        #expect(utf8.contains("覆盖在衬底上的文字"))
-        #expect(utf8.contains("wp:anchor"))
-    }
+    // 2026-09-18（spec/layout-restore D1）：原「DOCX B 档用 wp:anchor 定位图」「DOCX C 档把 figure
+    // 作为 behindDoc 衬底」两条用例随 `.anchored`/`.background` 档位删除而移除 ——
+    // wp:anchor / behindDoc / posOffset 的回归保护由 `DocxRestoredLayoutTests`
+    // 对 `.restored` 档的更强结构断言接手（浮动文本框 + srcRect 浮动图 + 逐页 sectPr）。
 }
 
 struct OnDeviceTableClusterTests {
@@ -361,5 +295,125 @@ struct ReconstructViewModelTests {
         await viewModel.reconstruct()
         #expect(viewModel.hasContent)
         #expect(viewModel.blocks.contains { $0.text.contains("房屋租赁合同") })
+    }
+
+    // MARK: - US4 全文回填（spec/scan-fidelity T018 / plan D4）
+
+    @Test("Recognized text blob aggregates block display text line by line")
+    func recognizedTextBlobAggregates() async {
+        let pageID = UUID()
+        let viewModel = makeViewModel(
+            parser: StubPageParser(pages: [pageID: Self.blobContentPage(pageID: pageID)]),
+            pageID: pageID
+        )
+        await viewModel.reconstruct()
+        #expect(viewModel.hasContent)
+        // 表格块取 displayText（行内 \t、行间 \n 拼接）；空文本 figure 不贡献行
+        #expect(viewModel.recognizedTextBlob == "房屋租赁合同\n甲方林秋白\n项目\t每100克\n能量\t1429 千焦")
+    }
+
+    @Test("onContentReady fires exactly once after a successful reconstruct")
+    func onContentReadyFiresOnceOnSuccess() async {
+        let pageID = UUID()
+        let viewModel = makeViewModel(
+            parser: StubPageParser(pages: [pageID: Self.blobContentPage(pageID: pageID)]),
+            pageID: pageID
+        )
+        var payloads: [String] = []
+        viewModel.onContentReady = { payloads.append($0) }
+        await viewModel.reconstruct()
+        #expect(payloads.count == 1)
+        #expect(payloads.first == viewModel.recognizedTextBlob)
+    }
+
+    @Test("onContentReady stays silent when reconstruct yields no content")
+    func onContentReadySilentWithoutContent() async {
+        let pageID = UUID()
+        // 空文本块：parser 端 hasContent=false → viewModel 兜底空页 → 文档无内容
+        let emptyPage = ReconstructPage(
+            pageID: pageID,
+            size: .zero,
+            scene: .plain,
+            usedCloud: false,
+            blocks: [ReconstructBlock(kind: .paragraph, bbox: .zero, text: "")]
+        )
+        let viewModel = makeViewModel(parser: StubPageParser(pages: [pageID: emptyPage]), pageID: pageID)
+        var fired = 0
+        viewModel.onContentReady = { _ in fired += 1 }
+        await viewModel.reconstruct()
+        #expect(!viewModel.hasContent)
+        #expect(viewModel.error != nil)
+        #expect(fired == 0)
+        #expect(viewModel.recognizedTextBlob.isEmpty)
+    }
+
+    private func makeViewModel(parser: DocumentParsing, pageID: UUID) -> ReconstructViewModel {
+        let document = ScanDocument(
+            id: UUID(),
+            title: "合同",
+            folderID: nil,
+            createdAt: Date(),
+            updatedAt: Date(),
+            isFavorite: false,
+            pageIDs: [pageID],
+            ocrSearchBlob: ""
+        )
+        let page = ScanPage(
+            id: pageID,
+            documentID: document.id,
+            index: 0,
+            quad: .fullImage,
+            enhancement: .original,
+            rotationTurns: 0,
+            originalRelativePath: "o",
+            renderedRelativePath: "r",
+            thumbnailRelativePath: "t"
+        )
+        return ReconstructViewModel(
+            document: document,
+            scanPages: [page],
+            fileStore: FakePagePaths(),
+            parser: parser,
+            docx: DocxExportService(),
+            searchablePDF: SearchablePDFExportService()
+        )
+    }
+
+    /// 标题 + 段落 + 表格 + 空文本 figure 的混排页：覆盖 blob 聚合的
+    /// displayText 分支（表格行列拼接）与空白块过滤。
+    private static func blobContentPage(pageID: UUID) -> ReconstructPage {
+        ReconstructPage(
+            pageID: pageID,
+            size: CGSize(width: 1000, height: 1400),
+            scene: .plain,
+            usedCloud: false,
+            blocks: [
+                ReconstructBlock(kind: .heading, bbox: .zero, text: "房屋租赁合同", style: .heading),
+                ReconstructBlock(kind: .paragraph, bbox: .zero, text: "甲方林秋白"),
+                ReconstructBlock(
+                    kind: .table,
+                    bbox: .zero,
+                    text: "",
+                    table: ReconstructTable(rows: [
+                        ["项目", "每100克"],
+                        ["能量", "1429 千焦"]
+                    ])
+                ),
+                ReconstructBlock(kind: .figure, bbox: .zero, text: "")
+            ]
+        )
+    }
+}
+
+/// US4（spec/scan-fidelity T018）：替身解析器 —— 按页返回预置 `ReconstructPage`，
+/// 让 blob 聚合 / 回填触发断言不依赖 OCR 几何管线。
+private struct StubPageParser: DocumentParsing {
+    let pages: [UUID: ReconstructPage]
+
+    func parse(imageURL: URL, pageID: UUID, scene: ReconstructScene) async throws -> ReconstructPage {
+        guard let page = pages[pageID] else {
+            throw ZhixiaError.reconstructFailed
+        }
+        return page
     }
 }

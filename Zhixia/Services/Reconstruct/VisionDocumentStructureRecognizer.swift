@@ -97,10 +97,11 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
     @available(iOS 26.0, *)
     private static func tables(from container: DocumentObservation.Container) -> [DetectedTable] {
         container.tables.compactMap { table in
-            let rows = rows(of: table)
+            let rawRows = rawRows(of: table)
+            let rows = flatten(rawRows)
             guard !rows.isEmpty else { return nil }
             return DetectedTable(
-                table: ReconstructTable(rows: rows),
+                table: ReconstructTable(rows: rows, columnRatios: columnRatios(rawRows)),
                 bbox: table.boundingRegion.boundingBox.cgRect
             )
         }
@@ -114,28 +115,30 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
         }
     }
 
-    /// 一个表格单元格的最小信息。抽出来是为了让**合并单元格的拉平逻辑可以单测** ——
-    /// `DocumentObservation.Container.Table` 没法在测试里构造。
+    /// 一个表格单元格的最小信息。抽出来是为了让**合并单元格的拉平逻辑**与
+    /// **列宽提取逻辑可以单测** —— `DocumentObservation.Container.Table` 没法在测试里构造。
     struct RawCell: Equatable, Sendable {
         var text: String
         var rowRange: ClosedRange<Int>
         var columnRange: ClosedRange<Int>
+        /// 单元格内容区域（Vision 归一化坐标，原点左下）。只有结构化通路（真机 API）
+        /// 填得上；合成测试夹具不填 → `columnRatios` 返回 nil，下游走均分兜底。
+        var frame: CGRect? = nil
     }
 
     @available(iOS 26.0, *)
-    private static func rows(of table: DocumentObservation.Container.Table) -> [[String]] {
-        flatten(
-            table.rows.map { row in
-                row.map { cell in
-                    RawCell(
-                        text: cell.content.text.transcript
-                            .trimmingCharacters(in: .whitespacesAndNewlines),
-                        rowRange: cell.rowRange,
-                        columnRange: cell.columnRange
-                    )
-                }
+    private static func rawRows(of table: DocumentObservation.Container.Table) -> [[RawCell]] {
+        table.rows.map { row in
+            row.map { cell in
+                RawCell(
+                    text: cell.content.text.transcript
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                    rowRange: cell.rowRange,
+                    columnRange: cell.columnRange,
+                    frame: cell.content.boundingRegion.boundingBox.cgRect
+                )
             }
-        )
+        }
     }
 
     /// 把「按视觉行分组的单元格」拉平成 `[[String]]` 网格。
@@ -168,5 +171,52 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
 
         let width = result.map(\.count).max() ?? 0
         return result.map { $0 + Array(repeating: "", count: width - $0.count) }
+    }
+
+    /// 从单元格内容区域提取**实测列宽比例**（和为 1；T006，plan D8）。
+    ///
+    /// 背景：老的拉平逻辑只保留文本，把列边界信息丢了 —— 下游 `tblGrid` 只能均分。
+    /// 真机上「项目 | 每100克 | NRV%」三列宽度差好几倍，均分会让窄列文字被压到
+    /// 字号下限、宽列留白（docs/09 §6.2）。
+    ///
+    /// 算法：
+    /// 1. 每个网格列取**单列单元格**（`columnRange.count == 1`）内容区域的并集
+    ///    —— 跨列单元格横跨多个列边界，对「列在哪」不提供信息，必须排除；
+    /// 2. 相邻列边界取两侧内容并集的中点（间隙对半分、重叠对半让）；
+    /// 3. 列宽 = 相邻边界之差，归一化到和为 1。
+    ///
+    /// 返回 nil 的情形（下游一律均分兜底，不做猜测）：合成输入没有 frame、
+    /// 某列只有跨列单元格、边界推出来非正、空表格或单列表格。
+    static func columnRatios(_ table: [[RawCell]]) -> [Double]? {
+        let cells = table.flatMap { $0 }
+        guard !cells.isEmpty else { return nil }
+
+        // 网格总列数：所有 cell 的 columnRange 上界决定。
+        let gridWidth = cells.map { $0.columnRange.upperBound + 1 }.max() ?? 0
+        guard gridWidth >= 2 else { return nil }
+
+        // 每列内容并集的左右沿。nil = 该列还没有任何可测的单列单元格。
+        var lows: [CGFloat?] = .init(repeating: nil, count: gridWidth)
+        var highs: [CGFloat?] = .init(repeating: nil, count: gridWidth)
+        for cell in cells where cell.columnRange.count == 1 {
+            guard let frame = cell.frame, frame.width > 0 else { continue }
+            let column = cell.columnRange.lowerBound
+            lows[column] = min(lows[column] ?? frame.minX, frame.minX)
+            highs[column] = max(highs[column] ?? frame.maxX, frame.maxX)
+        }
+        guard zip(lows, highs).allSatisfy({ $0 != nil && $1 != nil }) else { return nil }
+
+        // 边界：最左/最右沿来自首末列内容，内部边界取相邻列内容的中点。
+        var bounds: [CGFloat] = [lows[0]!]
+        for column in 1..<gridWidth {
+            bounds.append((highs[column - 1]! + lows[column]!) / 2)
+        }
+        bounds.append(highs[gridWidth - 1]!)
+
+        let widths = zip(bounds, bounds.dropFirst()).map { $1 - $0 }
+        guard widths.allSatisfy({ $0 > 0 }) else { return nil }
+        let total = widths.reduce(0, +)
+        guard total > 0 else { return nil }
+        return widths.map { Double($0 / total) }
     }
 }

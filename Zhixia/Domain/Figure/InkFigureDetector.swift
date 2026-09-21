@@ -52,8 +52,31 @@ enum InkFigureDetector {
         var occupied: [CGRect] = []
     }
 
+    /// 双通道输出（spec/layout-restore plan D4）。
+    struct Output {
+        /// 合格配图（判据与历史版本**完全一致**，含 `maxTextCoverage = 0.35`）。
+        var figures: [CGRect]
+        /// **被文字覆盖墨块**（第二输出）：通过了面积 / 高度 / 长宽比 / 密度 / 细节全部闸门、
+        /// 但因 `textCoverage > maxTextCoverage` 被 figures 拒收的墨块区域。
+        ///
+        /// 这正是「艺术字 / 图章 / 手绘字」的空间证据 —— 它们本来是一块图，
+        /// 却被 OCR 文字盒覆盖（识别成了乱码文本行），于是既进不了图片通道、
+        /// 又以乱码混进正文。**仅作 `GarbledRegionDetector` 的第二门控证据**，
+        /// 不直接产出任何块：正常密集文本块也会出现在这里（文字也是墨），
+        /// 必须与低置信门控相交才算乱码区域。
+        var textCoveredInkRegions: [CGRect]
+    }
+
+    /// 既有入口不变：只取合格配图通道。
     static func boxes(_ input: Input) -> [CGRect] {
-        guard let grid = rasterize(input.image) else { return [] }
+        detect(input).figures
+    }
+
+    /// 双通道检测：figures（配图）+ textCoveredInkRegions（被文字覆盖的墨块证据）。
+    static func detect(_ input: Input) -> Output {
+        guard let grid = rasterize(input.image) else {
+            return Output(figures: [], textCoveredInkRegions: [])
+        }
         let columns = grid.columns
         let rows = grid.rows
 
@@ -66,7 +89,8 @@ enum InkFigureDetector {
         }
 
         var visited = [Bool](repeating: false, count: columns * rows)
-        var results: [CGRect] = []
+        var figures: [CGRect] = []
+        var textCovered: [CGRect] = []
 
         for start in 0..<(columns * rows) where isInk[start] && !visited[start] {
             var stack = [start]
@@ -115,13 +139,17 @@ enum InkFigureDetector {
                 width: boxWidth,
                 height: boxHeight
             )
-            guard textCoverage(of: box, textBoxes: input.textBoxes) <= maxTextCoverage else { continue }
+            // 已占用区域（表格 / 条码）两个通道都不碰 —— 它们已有权威表示。
             guard !input.occupied.contains(where: { $0.intersects(box) }) else { continue }
-
-            results.append(box)
+            if textCoverage(of: box, textBoxes: input.textBoxes) > maxTextCoverage {
+                // 第二输出：被文字覆盖的墨块（乱码区域的空间证据，判据本身不动）。
+                textCovered.append(box)
+                continue
+            }
+            figures.append(box)
         }
 
-        return merge(results)
+        return Output(figures: merge(figures), textCoveredInkRegions: merge(textCovered))
     }
 
     // MARK: - 栅格化

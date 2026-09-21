@@ -19,6 +19,9 @@ final class PreviewCamera: CameraCapturing, @unchecked Sendable {
     var frames: AsyncStream<VideoFrame> {
         AsyncStream { $0.finish() }
     }
+    /// 预览/测试环境无真实会话可测量：恒等几何（协议契约）→ FOVLayout 换算为 no-op，
+    /// 既有测试语义保持不变。
+    func geometry() async -> CaptureGeometry { .identity }
 }
 
 actor PreviewDetector: EdgeDetecting {

@@ -125,4 +125,47 @@ struct InkFigureDetectorTests {
         let boxes = InkFigureDetector.boxes(.init(image: image, textBoxes: [], occupied: [photo]))
         #expect(boxes.allSatisfy { $0.intersects(photo) == false })
     }
+
+    // MARK: - 第二输出：被文字覆盖墨块（spec/layout-restore plan D4）
+
+    /// 照片区域对应的 Vision 归一化框（pageWithPhotoDeterministic 里右侧那块噪点图）。
+    private func photoBox(width: Int = 300, height: Int = 425) -> CGRect {
+        CGRect(
+            x: 150.0 / CGFloat(width),
+            y: 1 - 250.0 / CGFloat(height),
+            width: 130.0 / CGFloat(width),
+            height: 190.0 / CGFloat(height)
+        )
+    }
+
+    @Test("被文字盒覆盖的墨块进第二输出、不进 figures；既有入口 boxes() 行为不变")
+    func textCoveredInkBlobGoesToSecondOutput() throws {
+        let image = try #require(pageWithPhotoDeterministic())
+        let covered = photoBox().insetBy(dx: -0.02, dy: -0.02)
+        let output = InkFigureDetector.detect(.init(image: image, textBoxes: [covered]))
+
+        // 照片被文字盒覆盖 → 不再是配图
+        #expect(
+            output.figures.allSatisfy { $0.intersects(covered) == false },
+            "被文字盒覆盖的墨块不应出现在 figures：\(output.figures)"
+        )
+        // 但要作为「被文字覆盖墨块」证据出现在第二输出里
+        #expect(
+            output.textCoveredInkRegions.contains { $0.intersects(covered) },
+            "被文字盒覆盖的墨块没有进入第二输出：\(output.textCoveredInkRegions)"
+        )
+        // 既有入口只暴露 figures 通道
+        #expect(InkFigureDetector.boxes(.init(image: image, textBoxes: [covered])) == output.figures)
+    }
+
+    @Test("已占用区域也不进第二输出（表格/条码已有权威表示）")
+    func occupiedRegionIsSkippedInSecondOutput() throws {
+        let image = try #require(pageWithPhotoDeterministic())
+        let covered = photoBox().insetBy(dx: -0.02, dy: -0.02)
+        let occupied = CGRect(x: 0.45, y: 0.3, width: 0.55, height: 0.55)
+        let output = InkFigureDetector.detect(
+            .init(image: image, textBoxes: [covered], occupied: [occupied])
+        )
+        #expect(output.textCoveredInkRegions.allSatisfy { $0.intersects(occupied) == false })
+    }
 }

@@ -4,6 +4,12 @@ import UIKit
 struct ReconstructView: View {
     @Bindable var viewModel: ReconstructViewModel
 
+    /// US4 / R3（spec/scan-fidelity plan D4）：重建成功后的全文回填回调，
+    /// 透传给 `viewModel.onContentReady` —— `DocumentView` 用它把 blob 送进
+    /// `DocumentViewModel.applyOCRBlob`（与手动 OCR 同一条落库路径）。
+    /// 默认 nil：既有调用点 / SwiftUI 预览零破坏。
+    var onContentReady: ((String) -> Void)? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("reconstruct.localHint")
@@ -39,6 +45,9 @@ struct ReconstructView: View {
             }
         }
         .task {
+            // US4：先接线再重建 —— 回调必须在首次 `reconstruct()` 成功前就位；
+            // 失败重试（reconstruct.retry）路径复用已接线的回调。
+            viewModel.onContentReady = onContentReady
             if viewModel.reconstructed == nil, !viewModel.isWorking {
                 await viewModel.reconstruct()
             }
@@ -54,12 +63,11 @@ struct ReconstructView: View {
         }
     }
 
-    /// 预览**随档位变化**（2026-09-12 修复）。
-    /// 之前三档共用同一个块流渲染，用户切 A/B/C 画面纹丝不动，反馈「选了没反应」。
-    /// 现在：
-    /// - A 结构化：段落流（可编辑、可复制，Word 里是 inline）
-    /// - B 重排版：白底 + 块按 bbox 落回原位（Word 里是 wp:anchor）
-    /// - C 衬底图：页面原图作底 + 块浮在原位（Word 里是 behindDoc 衬底）
+    /// 预览**随档位变化**。
+    /// - `restored` 版面还原：`LayoutCanvas` 三层渲染 —— 整页底座（页面 rendered 图，
+    ///   下采样 aspect-fit）→ LayoutMask 净化覆盖层 → 元素原位层（figure/barcode/artwork
+    ///   不绘制，底座原像素透出）
+    /// - `structured` 结构化：段落流（可编辑、可复制，Word 里是段落 + inline 图）
     private var preview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -72,15 +80,7 @@ struct ReconstructView: View {
                         .background(Color(hex: 0xEFE8DC), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 switch viewModel.outputTier {
-                case .structured:
-                    ForEach(viewModel.blocks) { block in
-                        blockView(block)
-                    }
-                case .anchored:
-                    ForEach(viewModel.pages, id: \.pageID) { page in
-                        LayoutCanvas(page: page, backgroundImageURL: nil)
-                    }
-                case .background:
+                case .restored:
                     ForEach(viewModel.pages, id: \.pageID) { page in
                         LayoutCanvas(
                             page: page,
@@ -91,6 +91,10 @@ struct ReconstructView: View {
                         Text("reconstruct.tierBackgroundMissingImage")
                             .font(.caption2)
                             .foregroundStyle(Tokens.muted)
+                    }
+                case .structured:
+                    ForEach(viewModel.blocks) { block in
+                        blockView(block)
                     }
                 }
             }
@@ -117,7 +121,7 @@ struct ReconstructView: View {
         case .figure, .barcode:
             VStack(alignment: .leading, spacing: 6) {
                 if let path = block.figureRelativePath,
-                   let image = UIImage(contentsOfFile: path) {
+                    let image = UIImage(contentsOfFile: path) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
@@ -131,6 +135,10 @@ struct ReconstructView: View {
                         .foregroundStyle(Tokens.muted)
                 }
             }
+        case .artwork:
+            // 结构化档忽略 artwork 块（plan D9）：无独立裁图、无文本
+            // （乱码行已在解析层剔除）；原像素只在版面还原档经底座呈现。
+            EmptyView()
         default:
             Text(block.text)
                 .font(.system(size: 16))
@@ -186,12 +194,11 @@ struct ReconstructView: View {
         .background(Tokens.paper)
     }
 
-    /// M4 档位选择器：A 结构化 / B 重排版 / C 衬底图。
+    /// 档位选择器：版面还原（默认）/ 结构化。
     /// 切档会走 `viewModel.setTier`，把已导出的 docx 作废，提示用户重新导出。
     ///
-    /// 2026-09-12：可选项收缩到 `R2OutputTier.selectable`（当前只有 A 档）。
-    /// B/C 因效果不可用被下架，只剩一个选项时选择器本身没有意义，直接不渲染 ——
-    /// 也让同屏的两个导出按钮上移，少占一行。恢复 B/C 只需改 `R2OutputTier.selectable`。
+    /// 2026-09-18：`R2OutputTier.selectable` 恢复为两项（spec/layout-restore D1/FR-006），
+    /// 选择器恢复渲染；旧 B/C 档（重排版/衬底图）已从枚举中删除。
     @ViewBuilder
     private var tierPicker: some View {
         if R2OutputTier.selectable.count > 1 {
@@ -250,116 +257,6 @@ struct ReconstructView: View {
     }
 }
 
-// MARK: - B / C 档版面预览
-
-/// 把块按 `bbox` 落回原始视觉位置，用于 B（重排版）和 C（衬底图）。
-///
-/// 坐标换算要点：`ReconstructBlock.bbox` 是 **Vision 归一化坐标**（原点左下、y 向上），
-/// SwiftUI 是原点左上、y 向下 —— y 必须翻转，否则整页上下颠倒。
-private struct LayoutCanvas: View {
-    let page: ReconstructPage
-    /// C 档传入页面原图；B 档传 nil（用纸色底）。
-    let backgroundImageURL: URL?
-
-    private var aspect: CGFloat {
-        guard page.size.width > 0, page.size.height > 0 else { return 3.0 / 4.0 }
-        return page.size.width / page.size.height
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let height = width / aspect
-            ZStack(alignment: .topLeading) {
-                if let url = backgroundImageURL, let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: width, height: height)
-                        .clipped()
-                } else {
-                    Tokens.paper
-                }
-                ForEach(page.blocks) { block in
-                    canvasBlock(block, width: width, height: height)
-                }
-            }
-        }
-        .aspectRatio(aspect, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Tokens.line, lineWidth: 0.5)
-        )
-    }
-
-    @ViewBuilder
-    private func canvasBlock(_ block: ReconstructBlock, width: CGFloat, height: CGFloat) -> some View {
-        let box = block.bbox
-        let x = box.minX * width
-        let y = (1 - box.maxY) * height
-        let boxWidth = max(box.width * width, 12)
-        let boxHeight = max(box.height * height, 14)
-        // 字号跟着块高走，视觉位置才对得上；再夹一层防止极端值炸掉
-        let font = max(8, min(20, box.height * height * 0.78))
-        let overImage = backgroundImageURL != nil
-        let isImageBlock = block.kind == .figure || block.kind == .barcode
-
-        Group {
-            switch block.kind {
-            case .figure, .barcode:
-                if let path = block.figureRelativePath,
-                   let image = UIImage(contentsOfFile: path) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: boxWidth, height: boxHeight)
-                }
-            case .table:
-                if let table = block.table, !table.rows.isEmpty {
-                    canvasTable(table, fontSize: font)
-                } else {
-                    Text(block.displayText)
-                        .font(.system(size: font))
-                        .foregroundStyle(Tokens.ink)
-                }
-            case .heading:
-                Text(block.text)
-                    .font(.system(size: font, weight: .bold))
-                    .foregroundStyle(Tokens.ink)
-            default:
-                Text(block.text)
-                    .font(.system(size: font))
-                    .foregroundStyle(Tokens.ink)
-            }
-        }
-        .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
-        // C 档文字压在扫描图上，不垫一层半透明纸底基本没法读
-        .background {
-            if overImage, !isImageBlock {
-                Tokens.paper.opacity(0.72)
-            }
-        }
-        .position(x: x + boxWidth / 2, y: y + boxHeight / 2)
-    }
-
-    private func canvasTable(_ table: ReconstructTable, fontSize: CGFloat) -> some View {
-        let columns = max(table.columnCount, 1)
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                let padded = row + Array(repeating: "", count: max(0, columns - row.count))
-                HStack(spacing: 0) {
-                    ForEach(0..<columns, id: \.self) { index in
-                        Text(padded[index])
-                            .font(.system(size: max(7, fontSize * 0.8)))
-                            .foregroundStyle(Tokens.ink)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(2)
-                            .border(Tokens.line, width: 0.5)
-                    }
-                }
-            }
-        }
-    }
-}
+// 版面还原档的预览画布已重写为独立文件 `LayoutCanvas.swift`（三层渲染，
+// spec/layout-restore plan D6）：底座下采样 aspect-fit → LayoutMask 覆盖层 →
+// 元素原位层，坐标经 PageLayoutMapper；对外接口 `LayoutCanvas(page:backgroundImageURL:)` 不变。

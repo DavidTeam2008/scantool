@@ -9,21 +9,34 @@ final class ReconstructViewModel {
     var docxURL: URL?
     var pdfURL: URL?
     var isExporting = false
-    /// M4：当前选中的导出档位（A / B / C）。默认 A（结构化）。
+    /// 当前选中的导出档位（版面还原 / 结构化，spec/layout-restore plan D1/FR-001）。
+    /// **默认版面还原** —— 用户拍的是「版面」，默认产物就该与拍摄的原始版面同构。
     ///
     /// 档位**同时**影响两件事：① 导出的 Word 产物；② 页面预览的渲染方式。
-    /// 早期版本档位只作用于 ①，预览永远是结构化块流 —— 用户切 A/B/C 看到画面纹丝不动，
-    /// 直接反馈「选了没反应」。现在 `ReconstructView.preview` 按档位分三种渲染。
-    var outputTier: R2OutputTier = .structured
+    /// 早期版本档位只作用于 ①，预览永远是结构化块流 —— 用户切档看到画面纹丝不动，
+    /// 直接反馈「选了没反应」。现在 `ReconstructView.preview` 按档位分两种渲染。
+    var outputTier: R2OutputTier = .restored
 
     /// 切换档位。必须走这个方法而不是直接赋值：
     /// 切档后旧产物即失效 —— 若不清 `docxURL`，导出按钮会一直是 ShareLink，
     /// 点了分享的是上一次的老文件，用户就会觉得「切了档但没变化」。
+    ///
+    /// 切档**不重跑 parse**（plan D9）：两个档共用同一次解析产物（含底座路径），
+    /// 切档只是换渲染方式与导出分支。
     func setTier(_ tier: R2OutputTier) {
         guard tier != outputTier else { return }
         outputTier = tier
         docxURL = nil
+        ZhixiaLog.reconstructTier(tier, isDefault: tier == .restored)
     }
+
+    /// US4 / R3（spec/scan-fidelity plan D4）：重建成功后的全文回填回调。
+    /// `reconstruct()` 成功且 `hasContent` 时触发**一次**；失败 / 空产物不触发。
+    /// `ReconstructView.task` 在调用 `reconstruct()` 之前接线（T017），由
+    /// `DocumentView` 接到 `DocumentViewModel.applyOCRBlob` —— 与手动 OCR 同一条
+    /// 落库路径（含「标题含『扫描』才改写」防覆盖语义），重建完成的文档
+    /// 直接可全文检索、标题自动更新。
+    var onContentReady: ((String) -> Void)?
 
     private let document: ScanDocument
     private let scanPages: [ScanPage]
@@ -58,10 +71,33 @@ final class ReconstructViewModel {
         reconstructed?.pages ?? []
     }
 
-    /// C 档（衬底图）需要页面原图。
-    /// 取 `.rendered` 而不是 `.original` —— 与 OCR 同源（见 2026-09-08 真机回归 R1：
-    /// 版面坐标是相对 rendered 图算的，拿 original 会对不上）。
+    /// 识别全文 blob（US4 / plan D4）：pages 各块文本聚合，按 "\n" 分行 ——
+    /// 供 `DocumentViewModel.applyOCRBlob` 做全文检索回填。
+    ///
+    /// 取 `displayText` 而非 `text`（对 D4 字面「各块 text」的偏差，已记录在
+    /// T016 日志）：表格块的行列内容只在 `displayText`（`text` 恒空串），取
+    /// `text` 会把表格页聚合成空 blob，搜索失效——与 US4「重建后内容可搜」
+    /// 的目标冲突。空白块（figure 无文字等）不贡献行。
+    var recognizedTextBlob: String {
+        let chunks = reconstructed?.pages.flatMap { page in
+            page.blocks.compactMap { block -> String? in
+                let text = block.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+        } ?? []
+        return chunks.joined(separator: "\n")
+    }
+
+    /// 版面还原档的画布底座。parse 产物注入的 `baseImageRelativePath` 优先 ——
+    /// 它就是**坐标参照系**那张图（rendered 优先、original 兜底，与 parse 用图一致），
+    /// 预览对位才准（见 2026-09-08 真机回归 R1）。旧产物 / 替身产物没带底座时
+    /// 退回 fileStore 的 rendered 图。
     func pageImageURL(for pageID: UUID) -> URL? {
+        if let base = reconstructed?.pages.first(where: { $0.pageID == pageID })?.baseImageRelativePath,
+           !base.isEmpty,
+           FileManager.default.fileExists(atPath: base) {
+            return URL(fileURLWithPath: base)
+        }
         guard scanPages.contains(where: { $0.id == pageID }) else { return nil }
         let url = fileStore.url(document: document.id, page: pageID, kind: .rendered)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -80,6 +116,7 @@ final class ReconstructViewModel {
         guard !isWorking else { return }
         isWorking = true
         error = nil
+        ZhixiaLog.reconstructTier(outputTier, isDefault: outputTier == .restored)
         defer { isWorking = false }
         var pages: [ReconstructPage] = []
         for page in scanPages {
@@ -97,7 +134,15 @@ final class ReconstructViewModel {
             // 自然返回 nil，交给下一候选即可（顺带兼容「页面本身无文字」的情况）。
             var parsedPage: ReconstructPage?
             for candidate in [rendered, original] {
-                if let parsed = await parse(url: candidate, pageID: page.id) {
+                if var parsed = await parse(url: candidate, pageID: page.id) {
+                    // 底座注入（spec/layout-restore plan D2/D9）：底座 = parse 实际用的那张图
+                    // （坐标参照系），文件真实存在才注入 —— 双档共用同一次产物，切档只重渲染。
+                    parsed.baseImageRelativePath = fileExists(candidate) ? candidate.path : nil
+                    ZhixiaLog.reconstructBaseImage(
+                        path: parsed.baseImageRelativePath,
+                        pixelWidth: Int(parsed.size.width),
+                        pixelHeight: Int(parsed.size.height)
+                    )
                     parsedPage = parsed
                     break
                 }
@@ -105,6 +150,7 @@ final class ReconstructViewModel {
             if let parsedPage {
                 pages.append(parsedPage)
             } else {
+                ZhixiaLog.reconstructBaseImage(path: nil, pixelWidth: 0, pixelHeight: 0)
                 pages.append(
                     ReconstructPage(pageID: page.id, size: .zero, scene: .plain, usedCloud: false, blocks: [])
                 )
@@ -114,6 +160,10 @@ final class ReconstructViewModel {
         reconstructed = result
         if !result.hasContent {
             error = .reconstructFailed
+        } else {
+            // US4 / plan D4：成功且 hasContent 才回填全文 blob（本次重建恰一次）；
+            // 失败 / 空产物不触发 —— 避免「离开即写、失败态误写半截内容」。
+            onContentReady?(recognizedTextBlob)
         }
     }
 

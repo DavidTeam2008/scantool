@@ -145,6 +145,40 @@ struct Quad: Equatable, Sendable, Codable, Hashable {
     }
 }
 
+// MARK: - 扫描框边精度扩展（spec/scan-edge-accuracy，plan D5/D8）
+//
+// 纯函数扩展：不改动既有成员与持久化语义（照片空间归一化，FR-012）。
+
+extension Quad {
+    /// 自动快门门禁（plan D8 / FR-008）：判定锁定框是否「可疑」——
+    /// 任一边距图像边缘 < `edgeMargin`（书可能被画面裁切/触边），或面积 ≥ `maxArea`
+    /// （近满幅，取景大概率切到书）。可疑时 ViewModel 抑制自动快门并提示后移。
+    ///
+    /// - Parameters:
+    ///   - edgeMargin: 边距阈值（归一化比例），默认 0.015（1.5%）。
+    ///   - maxArea: 面积阈值（归一化），默认 0.95。
+    /// - Returns: 可疑 → `true`（不得自动拍）；正常 → `false`（照旧自动拍）。
+    func isSuspiciousForAutoCapture(edgeMargin: Double = 0.015, maxArea: Double = 0.95) -> Bool {
+        if area >= maxArea { return true }
+        let rect = boundingRect
+        let minimumMargin = min(rect.minX, rect.minY, 1 - rect.maxX, 1 - rect.maxY)
+        return minimumMargin < edgeMargin
+    }
+
+    /// 包含度（plan D5 / FR-003）：自身包围盒被 `other` 包围盒覆盖的比例
+    /// （交集面积 ÷ 自身包围盒面积）。供候选「内部矩形降权」判定。
+    /// 自身包围盒退化（宽或高为 0）或无交集时返回 0。
+    func containment(in other: Quad) -> Double {
+        let own = boundingRect
+        guard own.width > 0, own.height > 0 else { return 0 }
+        let intersection = own.intersection(other.boundingRect)
+        guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else {
+            return 0
+        }
+        return (intersection.width * intersection.height) / (own.width * own.height)
+    }
+}
+
 private func lerp(_ a: CGPoint, _ b: CGPoint, _ t: Double) -> CGPoint {
     CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
 }

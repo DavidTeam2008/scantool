@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import Zhixia
@@ -105,4 +106,536 @@ struct ReviewViewModelTests {
         viewModel.rotate()
         #expect(viewModel.isAdjustingCrop == false)
     }
+
+    @Test("Auto refine never overwrites a user-adjusted quad")
+    func autoRefineSkipsUserAdjustedQuad() async throws {
+        // US4（spec/live-edge-crop，FR-005）：用户拖过角的页语义不回退——
+        // appear() 触发的自动 refine 必须跳过 userAdjustedQuad = true 的页。
+        let root = FileManager.default.temporaryDirectory.appending(path: "rev-refine-\(UUID().uuidString)")
+        let files = PageFileStore(root: root)
+        let session = UUID()
+        let userPage = UUID()
+        let autoPage = UUID()
+        _ = try await files.writeOriginal(session: session, page: userPage, data: PreviewImages.jpeg())
+        _ = try await files.writeOriginal(session: session, page: autoPage, data: PreviewImages.jpeg())
+
+        let userQuad = Quad(
+            topLeft: CGPoint(x: 0.05, y: 0.06),
+            topRight: CGPoint(x: 0.95, y: 0.04),
+            bottomRight: CGPoint(x: 0.94, y: 0.96),
+            bottomLeft: CGPoint(x: 0.06, y: 0.95)
+        )
+        // PreviewDetector 的 still 固定框（refine 会写入未手动调过的页）。
+        let refinedQuad = Quad(
+            topLeft: CGPoint(x: 0.1, y: 0.1),
+            topRight: CGPoint(x: 0.9, y: 0.12),
+            bottomRight: CGPoint(x: 0.88, y: 0.9),
+            bottomLeft: CGPoint(x: 0.08, y: 0.88)
+        )
+        #expect(refinedQuad != userQuad)
+        #expect(refinedQuad != Quad.fullImage)
+
+        let defaults = UserDefaults(suiteName: "zhixia.review.refine.\(UUID().uuidString)") ?? .standard
+        let viewModel = ReviewViewModel(
+            drafts: [
+                PageDraft(id: userPage, sessionID: session, quad: userQuad, enhancement: .original, userAdjustedQuad: true),
+                PageDraft(id: autoPage, sessionID: session, quad: .fullImage, enhancement: .original)
+            ],
+            sessionID: session,
+            appendToDocumentID: nil,
+            renderer: ImagePipeline(),
+            detector: PreviewDetector(),
+            fileStore: files,
+            documentStore: InMemoryDocumentStore(),
+            preferences: PreferencesStore(defaults: defaults)
+        )
+
+        // appear() → refineQuads() → renderSelected()：以预览渲染完成为信号
+        // 等待后台任务跑完（refine 在渲染之前同步执行）。
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.previewImage != nil })
+
+        // 用户调过的框原样保留（不被自动 refine 覆盖）。
+        #expect(viewModel.drafts.first { $0.id == userPage }?.quad == userQuad)
+        #expect(viewModel.drafts.first { $0.id == userPage }?.userAdjustedQuad == true)
+        // 对照组：未手动调过的全幅页被 refine 更新——证明 refine 确实执行，
+        // 上一条的「跳过」不是 refine 空转的假绿。
+        #expect(viewModel.drafts.first { $0.id == autoPage }?.quad == refinedQuad)
+    }
+
+    private func waitUntil(
+        _ condition: @escaping () -> Bool,
+        timeout: TimeInterval = 3
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+}
+
+// MARK: - US3 快门回退链三分支（spec/live-edge-crop，plan D5 / FR-004）
+
+/// `capture()` 的 `detected ?? imageQuad ?? .fullImage` 回退链以替身钉死三分支：
+/// ① still 重检成功 → 成片用重检框（精度优先）；
+/// ② still 失败、live 有框 → 成片用 live 框（三级兜底填上的中间层）；
+/// ③ 双失败 → 全幅（US4 兜底：预览页手动调框接手）。
+/// 本套件**零源码改动**——纯测试锚定既有语义，防未来回归（D5 设计意图）。
+@MainActor
+struct CaptureFallbackChainTests {
+    @Test("Still re-detect success: the page is cropped with the re-detected quad")
+    func stillRedetectWins() async throws {
+        let detector = ChainDetector(liveQuad: ChainQuads.live, stillQuad: ChainQuads.still)
+        let viewModel = makeViewModel(detector: detector)
+
+        await viewModel.start()
+        #expect(await waitUntil { viewModel.imageQuad != nil })
+        await viewModel.capture()
+
+        // 分支 ①：精度优先，still 重检框胜出（与 live 框的细微差异已被用户接受）。
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.first?.quad == ChainQuads.still)
+    }
+
+    @Test("Still re-detect failure: the page falls back to the live quad")
+    func stillFailureFallsBackToLiveQuad() async throws {
+        let detector = ChainDetector(liveQuad: ChainQuads.live, stillQuad: nil)
+        let viewModel = makeViewModel(detector: detector)
+
+        await viewModel.start()
+        #expect(await waitUntil { viewModel.imageQuad != nil })
+        let liveQuad = try #require(viewModel.imageQuad)
+        await viewModel.capture()
+
+        // 分支 ②：快门重检失败 → 回退 live 框（恒等几何下原样入库）。
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.first?.quad == liveQuad)
+        #expect(viewModel.drafts.first?.quad == ChainQuads.live)
+    }
+
+    @Test("Both live and still detection fail: the page keeps the full image")
+    func doubleFailureFallsBackToFullImage() async throws {
+        let detector = ChainDetector(liveQuad: nil, stillQuad: nil)
+        let viewModel = makeViewModel(detector: detector)
+
+        await viewModel.start()
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        // 三级检测后仍完全无框（极端曲面/光照场景）——live 中间层为空。
+        #expect(viewModel.imageQuad == nil)
+        await viewModel.capture()
+
+        // 分支 ③：手动快门照拍全幅，预览页四角调框兜底（FR-005）。
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.first?.quad == .fullImage)
+    }
+
+    // MARK: - Helpers
+
+    private func makeViewModel(detector: any EdgeDetecting) -> CaptureViewModel {
+        let defaults = UserDefaults(suiteName: "zhixia.chain.\(UUID().uuidString)") ?? .standard
+        let preferences = PreferencesStore(defaults: defaults)
+        // 与自动快门解耦：回退链由手动快门触发（autoCapture 默认开，须显式关）。
+        preferences.autoCapture = false
+        return CaptureViewModel(
+            launch: .fresh,
+            camera: ChainCamera(),
+            detector: detector,
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "chain-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: preferences
+        )
+    }
+
+    private func waitUntil(
+        _ condition: @escaping () -> Bool,
+        timeout: TimeInterval = 3
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+}
+
+// MARK: - 快门链替身（文件私有，与 CaptureFallbackTests 的脚手架互不影响）
+
+/// 恒等几何 + 两帧脚本相机：live 帧驱动 `imageQuad`，快门返回固定 JPEG。
+private final class ChainCamera: CameraCapturing, @unchecked Sendable {
+    func start() async throws {}
+    func stop() async {}
+
+    func capturePhoto() async throws -> CapturedPhoto {
+        CapturedPhoto(
+            jpegData: PreviewImages.jpeg(),
+            pixelSize: CGSize(width: 80, height: 100)
+        )
+    }
+
+    func setTorch(enabled: Bool) async throws {}
+    func setFlashAuto(_ enabled: Bool) async {}
+
+    var frames: AsyncStream<VideoFrame> {
+        AsyncStream { continuation in
+            let image = ChainCamera.plainImage
+            for index in 0..<2 {
+                continuation.yield(VideoFrame(cgImage: image, timestamp: TimeInterval(index) / 15.0))
+            }
+            continuation.finish()
+        }
+    }
+
+    func geometry() async -> CaptureGeometry { .identity }
+
+    private static let plainImage: CGImage = {
+        let width = 8
+        let height = 14
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }()
+}
+
+/// 可注入 live/still 结果的快门链检测器替身。
+private actor ChainDetector: EdgeDetecting {
+    private let liveQuad: Quad?
+    private let stillQuad: Quad?
+
+    init(liveQuad: Quad?, stillQuad: Quad?) {
+        self.liveQuad = liveQuad
+        self.stillQuad = stillQuad
+    }
+
+    func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? { liveQuad }
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { stillQuad }
+}
+
+private enum ChainQuads {
+    /// live 框（恒等几何下视频空间 = 照片空间）。
+    static let live = Quad(
+        topLeft: CGPoint(x: 0.15, y: 0.1),
+        topRight: CGPoint(x: 0.85, y: 0.12),
+        bottomRight: CGPoint(x: 0.83, y: 0.9),
+        bottomLeft: CGPoint(x: 0.17, y: 0.88)
+    )
+
+    /// 快门 still 重检框（与 live 框刻意不同，暴露回退层级）。
+    static let still = Quad(
+        topLeft: CGPoint(x: 0.1, y: 0.08),
+        topRight: CGPoint(x: 0.9, y: 0.1),
+        bottomRight: CGPoint(x: 0.88, y: 0.92),
+        bottomLeft: CGPoint(x: 0.12, y: 0.9)
+    )
+}
+
+// MARK: - US2 自动快门锁定确认窗（spec/overlay-frame-visibility，plan D2 / FR-005~007）
+
+/// 确认窗节奏行为穷举：fake camera/detector 逐帧驱动（锁定需 ~9 稳定帧——
+/// QuadSmoother lockDuration 0.55s / frameDt 1/15：帧 1 初始化平滑框、帧 2~10
+/// 累计 9×1/15s = 0.6s ≥ 0.55s → 第 10 帧锁定）；阈值经 init 注入小值穷举
+/// 边界。以检测器 live 计数为帧消费同步点，相位之间断言钉死四条语义：
+/// 阈值前不拍 / 窗内解锁取消且重锁重计 / suspicious 帧冻结 / 手动快门不受限。
+@MainActor
+struct AutoCaptureHoldWindowTests {
+    @Test("Auto-capture waits for the full hold window of locked frames before firing")
+    func autoCaptureWaitsForHoldFramesBeforeCapture() async throws {
+        let (viewModel, camera, detector) = makeFixture(holdFrames: 3)
+
+        await viewModel.start()
+        // 恒定正常框 ×10 → 第 10 帧锁定，确认窗计数 1。
+        await feed(10, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 锁定后第 2 帧（累计 2 < 3）：确认窗未满——不得拍摄。
+        await feed(1, camera: camera, detector: detector)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 锁定后第 3 帧（累计 3 ≥ 阈值）：确认窗计满，自动拍摄。
+        await feed(1, camera: camera, detector: detector)
+        #expect(await waitUntil { viewModel.drafts.count == 1 })
+    }
+
+    @Test("Unlock inside the hold window cancels the shot; relocking restarts the window")
+    func holdWindowResetsOnUnlock() async throws {
+        let (viewModel, camera, detector) = makeFixture(holdFrames: 4)
+
+        await viewModel.start()
+        await feed(10, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 失锁（3 帧无检测）：前 2 帧 smoother 仍报锁定（短暂遮挡保持语义），
+        // 第 3 帧进入 searching——窗内解锁即取消本次拍摄；计数最高 3 < 4 未拍。
+        await detector.setLiveQuad(nil)
+        await feed(3, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked == false)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 重新锁定（10 帧后）+ 2 帧锁定：计数从 0 重新起算，累计 3 < 4——
+        // 不得拍摄（若解锁时未清零，重锁首帧即 3+1=4 达阈而抢先拍摄）。
+        await detector.setLiveQuad(HoldWindowQuads.document)
+        await feed(12, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 计满 4 帧非可疑锁定 → 自动拍摄（重新锁定重新计时后正常完成）。
+        await feed(1, camera: camera, detector: detector)
+        #expect(await waitUntil { viewModel.drafts.count == 1 })
+    }
+
+    @Test("Suspicious locked frames freeze the hold count instead of advancing it")
+    func suspiciousLockFreezesHoldCount() async throws {
+        // 门限附近微移对（HoldWindowQuads）：锁定态内翻转可疑性且**不解锁**
+        //（均值顶点距离 0.01 < epsilon 0.012）——冻结语义唯一的可观测路径。
+        let (viewModel, camera, detector) = makeFixture(
+            holdFrames: 4,
+            liveQuad: HoldWindowQuads.marginallyNormal
+        )
+
+        await viewModel.start()
+        await feed(10, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 切入可疑输入的第 1 帧：平滑框仍在门限内侧（非可疑），计数 +1 → 2。
+        await detector.setLiveQuad(HoldWindowQuads.marginallySuspicious)
+        await feed(1, camera: camera, detector: detector)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 可疑锁定帧 ×3：计数冻结（不增不清零），抑制提示置位。
+        await feed(3, camera: camera, detector: detector)
+        #expect(viewModel.isAutoCaptureSuppressed)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 切回正常输入的第 1 帧：平滑框仍可疑（左移余量 0.0147 < 0.015）→
+        // 快门门禁拦截，计数维持冻结。
+        await detector.setLiveQuad(HoldWindowQuads.marginallyNormal)
+        await feed(1, camera: camera, detector: detector)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 清除后的第 1 个非可疑锁定帧：计数 3 < 4，仍不拍——冻结语义锚点
+        //（若可疑帧被错误计入，此处计数早已 ≥ 阈值而抢先拍摄）。
+        await feed(1, camera: camera, detector: detector)
+        #expect(viewModel.isAutoCaptureSuppressed == false)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 满 4 帧非可疑锁定（锁定帧、切入帧、清除后 ×2）→ 自动拍摄。
+        await feed(1, camera: camera, detector: detector)
+        #expect(await waitUntil { viewModel.drafts.count == 1 })
+    }
+
+    @Test("Manual shutter works immediately inside the hold window and resets the count")
+    func manualCaptureDuringHoldWindowWorks() async throws {
+        let (viewModel, camera, detector) = makeFixture(holdFrames: 3)
+
+        await viewModel.start()
+        // 锁定 + 1 帧（累计 2 < 3）：确认窗开着，自动快门在等待。
+        await feed(11, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.drafts.isEmpty)
+
+        // 窗内手动快门：立即拍摄，不受确认窗限制（FR-007）。
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+
+        // 拍后复位：重新锁定（10 帧）+ 1 帧，窗口从 0 起算仅累计 2 < 3——
+        // 不得自动补拍（若 capture() 未清零，重锁首帧即 2+1=3 达阈而补拍）。
+        await feed(11, camera: camera, detector: detector)
+        #expect(viewModel.drafts.count == 1)
+
+        // 再累计满窗（第 3 帧非可疑锁定）→ 自动快门恢复正常。
+        await feed(1, camera: camera, detector: detector)
+        #expect(await waitUntil { viewModel.drafts.count == 2 })
+    }
+
+    // MARK: - Helpers
+
+    private func makeFixture(
+        holdFrames: Int,
+        liveQuad: Quad? = HoldWindowQuads.document
+    ) -> (viewModel: CaptureViewModel, camera: HoldWindowCamera, detector: HoldWindowDetector) {
+        let defaults = UserDefaults(suiteName: "zhixia.holdwindow.\(UUID().uuidString)") ?? .standard
+        let preferences = PreferencesStore(defaults: defaults)
+        preferences.autoCapture = true
+        let camera = HoldWindowCamera()
+        let detector = HoldWindowDetector(liveQuad: liveQuad)
+        let viewModel = CaptureViewModel(
+            launch: .fresh,
+            camera: camera,
+            detector: detector,
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "holdwindow-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: preferences,
+            autoCaptureHoldFrames: holdFrames
+        )
+        return (viewModel, camera, detector)
+    }
+
+    /// 喂 N 帧并等待全部被 ViewModel 消费（以检测器 live 计数为同步点），
+    /// 再留一小段稳定时间让 consume 的检测后段（计数/快门判定）跑完。
+    private func feed(
+        _ count: Int,
+        camera: HoldWindowCamera,
+        detector: HoldWindowDetector
+    ) async {
+        let before = await detector.liveDetectCount
+        for _ in 0..<count {
+            await camera.yieldFrame()
+        }
+        let target = before + count
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if await detector.liveDetectCount >= target { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+    }
+
+    private func waitUntil(
+        _ condition: @escaping () -> Bool,
+        timeout: TimeInterval = 3
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+}
+
+// MARK: - 确认窗替身（文件私有，与其他脚手架互不影响）
+
+/// 可逐帧喂投的确认窗相机：测试按相位手动 `yieldFrame()`，帧流经
+/// continuation 长驻供给——与 ScriptedCamera 的预载帧流不同，手动快门
+/// 用例需要「先拍、后继续喂帧」的分段控制。
+private final class HoldWindowCamera: CameraCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<VideoFrame>.Continuation?
+    private var frameIndex = 0
+
+    func start() async throws {}
+    func stop() async {}
+
+    func capturePhoto() async throws -> CapturedPhoto {
+        CapturedPhoto(
+            jpegData: PreviewImages.jpeg(),
+            pixelSize: CGSize(width: 80, height: 100)
+        )
+    }
+
+    func setTorch(enabled: Bool) async throws {}
+    func setFlashAuto(_ enabled: Bool) async {}
+
+    var frames: AsyncStream<VideoFrame> {
+        AsyncStream { continuation in
+            self.lock.withLock {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func geometry() async -> CaptureGeometry { .identity }
+
+    /// 喂一帧（时间戳按 1/15s 递增，与 fake 时钟口径一致）。帧流尚未被
+    /// 消费端建立时（listenToFrames 的 Task 调度窗口）稍候重试。
+    func yieldFrame() async {
+        let image = Self.plainImage
+        while true {
+            let continuation = lock.withLock { self.continuation }
+            if let continuation {
+                frameIndex += 1
+                continuation.yield(VideoFrame(cgImage: image, timestamp: TimeInterval(frameIndex) / 15.0))
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private static let plainImage: CGImage = {
+        let width = 8
+        let height = 14
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }()
+}
+
+/// 确认窗检测器：live 结果可切换（正常/可疑/失锁）；live 检测计数即
+/// 「已被 ViewModel 消费的帧数」，用作喂帧同步点。still 恒失败 → 快门
+/// 回退链走 live 框分支（与 CaptureFallbackChainTests 分支 ② 同语义）。
+private actor HoldWindowDetector: EdgeDetecting {
+    private var liveQuad: Quad?
+    private(set) var liveDetectCount = 0
+
+    init(liveQuad: Quad?) {
+        self.liveQuad = liveQuad
+    }
+
+    func setLiveQuad(_ quad: Quad?) {
+        liveQuad = quad
+    }
+
+    func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? {
+        liveDetectCount += 1
+        return liveQuad
+    }
+
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { nil }
+}
+
+private enum HoldWindowQuads {
+    /// 常规文档框（非可疑）：边距 ≥ 8%，面积 ≈ 0.65（与
+    /// CaptureFallbackTests.TestQuads.document 同形态，恒等几何专用）。
+    static let document = Quad(
+        topLeft: CGPoint(x: 0.1, y: 0.12),
+        topRight: CGPoint(x: 0.9, y: 0.1),
+        bottomRight: CGPoint(x: 0.88, y: 0.9),
+        bottomLeft: CGPoint(x: 0.08, y: 0.88)
+    )
+
+    /// 门限附近微移对（suspicious 冻结用例专用）：两者仅整体左移 1%，
+    /// 均值顶点距离 0.01 < epsilon（0.012）——锁定态内切换**不解锁**；
+    /// normal 左边距 2% > 1.5%（非可疑），suspicious 左边距 1% < 1.5%
+    ///（可疑，minMargin 0.01 < edgeMargin 0.015）。可疑性作用于 smoother
+    /// 输出的**平滑框**，切换有 1 帧收敛滞后——用例帧预算已按轨迹核算。
+    static let marginallyNormal = Quad(
+        topLeft: CGPoint(x: 0.02, y: 0.1),
+        topRight: CGPoint(x: 0.98, y: 0.1),
+        bottomRight: CGPoint(x: 0.98, y: 0.9),
+        bottomLeft: CGPoint(x: 0.02, y: 0.9)
+    )
+
+    static let marginallySuspicious = Quad(
+        topLeft: CGPoint(x: 0.01, y: 0.1),
+        topRight: CGPoint(x: 0.97, y: 0.1),
+        bottomRight: CGPoint(x: 0.97, y: 0.9),
+        bottomLeft: CGPoint(x: 0.01, y: 0.9)
+    )
 }

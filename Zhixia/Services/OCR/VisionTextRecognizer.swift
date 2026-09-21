@@ -122,12 +122,19 @@ actor VisionTextRecognizer: TextRecognizing {
         try handler.perform([request])
 
         return (request.results ?? []).compactMap { observation in
-            guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty
-            else {
+            guard let candidate = observation.topCandidates(1).first else {
                 return nil
             }
-            return OCRLine(text: text, boundingBox: observation.boundingBox)
+            // 透传 Vision 的行级置信度（spec/layout-restore plan D4）：
+            // 乱码区域判定的第一道门控靠它；两轮识别「择优」路径自然选中
+            // 哪一轮的行，就透传那一轮候选的 confidence。
+            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return OCRLine(
+                text: text,
+                boundingBox: observation.boundingBox,
+                confidence: Double(candidate.confidence)
+            )
         }
         .sorted { lhs, rhs in
             if abs(lhs.boundingBox.minY - rhs.boundingBox.minY) > 0.02 {

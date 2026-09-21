@@ -133,7 +133,12 @@ struct DocumentView: View {
         }
         .navigationDestination(isPresented: $showReconstruct) {
             if let reconstructViewModel {
-                ReconstructView(viewModel: reconstructViewModel)
+                // US4 / R3（spec/scan-fidelity plan D4）：重建成功即回填全文 blob ——
+                // 与手动 OCR（openOCR）同走 `applyOCRBlob`，重建完成的文档立即可
+                // 全文检索、标题自动更新；失败不触发（ReconstructViewModel 保证）。
+                ReconstructView(viewModel: reconstructViewModel) { blob in
+                    Task { await viewModel.applyOCRBlob(blob) }
+                }
             }
         }
     }
@@ -175,7 +180,9 @@ struct DocumentView: View {
             document: document,
             scanPages: viewModel.pages,
             fileStore: environment.fileStore,
-            parser: environment.parser,
+            // 文档作用域解析器：figure/barcode 裁图落文档持久目录（plan D2 / FR-010），
+            // 避免系统清理 temporaryDirectory 后导出缺图。
+            parser: environment.makeReconstructParser(documentID: document.id),
             docx: environment.docx,
             searchablePDF: environment.searchablePDF
         )

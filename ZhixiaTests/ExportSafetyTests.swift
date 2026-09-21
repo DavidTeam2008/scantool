@@ -163,104 +163,13 @@ struct ExportSafetyTests {
         #expect(parser.parse(), "document.xml 不是合法 XML：\(parser.parserError?.localizedDescription ?? "")")
     }
 
-    // MARK: - ④ B 档 anchor 单位
-
-    @Test("B 档 anchor 的位置与尺寸必须是 EMU 量级（误用 twips 会缩到 1/635）")
-    func docxAnchoredUsesEMUUnits() async throws {
-        let png = try ReconstructTestFixtures.pngURL()
-        defer { try? FileManager.default.removeItem(at: png) }
-
-        let document = ReconstructDocument(
-            documentID: UUID(),
-            title: "B",
-            pages: [
-                ReconstructPage(
-                    pageID: UUID(),
-                    size: .zero,
-                    scene: .plain,
-                    usedCloud: false,
-                    blocks: [
-                        ReconstructBlock(
-                            kind: .figure,
-                            bbox: CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.3),
-                            text: "",
-                            figureRelativePath: png.path
-                        )
-                    ]
-                )
-            ]
-        )
-        let url = try await DocxExportService().makeDocx(
-            document,
-            fileName: "b-\(UUID().uuidString).docx",
-            tier: .anchored
-        )
-        defer { try? FileManager.default.removeItem(at: url) }
-        let xml = try DocxProbe.documentXML(from: url)
-
-        // wp:posOffset 出现两次（positionH / positionV）
-        let offsets = DocxProbe.occurrences(of: "<wp:posOffset>", in: xml)
-        #expect(offsets.count == 2, "应有横向与纵向两个 posOffset")
-
-        // A4 宽 11906 twips = 7,560,310 EMU。x=0.2 → 1,512,062 EMU。
-        // 误用 twips 时这里只有 2381，比正确值小 635 倍。
-        #expect(offsets[0] > 1_000_000, "横向 posOffset 太小，疑似又用回了 twips：\(offsets[0])")
-        #expect(offsets[1] > 1_000_000, "纵向 posOffset 太小，疑似又用回了 twips：\(offsets[1])")
-
-        // wp:extent 同样必须是 EMU。40×30 的 PNG → cx = 40 × 9525 = 381,000 EMU。
-        // 误用 twips 时 sizeX 会被 min() 压到 4762。
-        let extents = DocxProbe.occurrences(of: "<wp:extent cx=\"", in: xml)
-        #expect(extents.isEmpty == false, "B 档应有 wp:extent")
-        #expect(extents[0] > 100_000, "wp:extent 太小，疑似又用回了 twips：\(extents[0])")
-    }
-
-    // MARK: - ⑤ C 档衬底逐页
-
-    @Test("C 档衬底必须逐页插入，不能全堆在第 1 页")
-    func docxBackgroundIsPerPage() async throws {
-        let png = try ReconstructTestFixtures.pngURL()
-        defer { try? FileManager.default.removeItem(at: png) }
-
-        func page(_ text: String) -> ReconstructPage {
-            ReconstructPage(
-                pageID: UUID(),
-                size: .zero,
-                scene: .plain,
-                usedCloud: false,
-                blocks: [
-                    ReconstructBlock(
-                        kind: .figure,
-                        bbox: CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
-                        text: "",
-                        figureRelativePath: png.path
-                    ),
-                    ReconstructBlock(kind: .paragraph, bbox: .zero, text: text)
-                ]
-            )
-        }
-
-        let document = ReconstructDocument(
-            documentID: UUID(),
-            title: "C",
-            pages: [page("第一页正文"), page("第二页正文")]
-        )
-        let url = try await DocxExportService().makeDocx(
-            document,
-            fileName: "c-\(UUID().uuidString).docx",
-            tier: .background
-        )
-        defer { try? FileManager.default.removeItem(at: url) }
-        let xml = try DocxProbe.documentXML(from: url)
-
-        #expect(DocxProbe.count(of: "behindDoc=\"1\"", in: xml) == 2, "两页应各有一张衬底")
-
-        // 关键：第 1 页正文与第 2 页正文之间必须夹着第 2 页的衬底。
-        // 修复前所有衬底堆在 body 最前面，这段区间里一个 behindDoc 都没有。
-        let first = try #require(xml.range(of: "第一页正文"))
-        let second = try #require(xml.range(of: "第二页正文"))
-        let between = String(xml[first.upperBound..<second.lowerBound])
-        #expect(between.contains("behindDoc=\"1\""), "第 2 页的衬底没有落在第 2 页正文之前")
-    }
+    // MARK: - ④/⑤ 原 B/C 档 anchor 单位与逐页衬底（已迁移）
+    //
+    // 2026-09-18（spec/layout-restore D1）：`.anchored`/`.background` 档位删除后，
+    // 「B 档 anchor 的 EMU 量级」「C 档衬底逐页插入」两条用例随之移除。
+    // 它们守护的两类事故（posOffset 误用 twips 缩到 1/635、多页衬底堆在第 1 页）
+    // 由 `DocxRestoredLayoutTests` 对 `.restored` 档的断言接手：
+    // 浮动元素 posOffset 的 EMU 量级 + 每页独立 sectPr/底图逐页归属。
 
     // MARK: - ⑥ 中文字体声明
 
