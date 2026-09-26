@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-09-21 · 对应代码 102 个 Swift 文件 / 约 13.5k 行 / 全量 301 passed + 1 known issue + 0 failed
+> 最后更新：2026-09-24 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 357 用例 = 356 passed + 1 known issue + 0 failed（基线 317 → 357，§6.12）
 
 ---
 
@@ -16,19 +16,19 @@
 
 **现状一句话**：**扫描主链路（拍、框、拉正、增强、OCR、导出图片 PDF）已经可用**；
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
-实测样张读出 7 行 × 3 列），**在 iOS 18~25 上仍走几何兜底、真机依旧出不了表**——见 §6。
+实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12），**在 iOS 18~25 上仍走几何兜底、真机依旧出不了表**——见 §6。
 
 ### 仓库地图
 
 ```
 scantool/
-├── Zhixia/                  主工程（90 个 .swift）
+├── Zhixia/                  主工程（107 个 .swift）
 │   ├── App/                 入口、DI 容器（AppEnvironment）、路由
 │   ├── Features/            按页面拆：Capture / Edit / Document / Reconstruct / Library / OCR / Settings …
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             36 个测试文件 / 302 个 @Test（含端到端断言 + 真实双栏样张）
+├── ZhixiaTests/             40 个测试文件 / 357 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
 ├── docs/                    本文 + 专题文档（01~09）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
@@ -65,7 +65,7 @@ RootView
 ├── LibraryView          文档库：文件夹 / 搜索 / 收藏 / 新建
 │   └── DocumentView     文档详情（页缩略胶片）
 │       ├── 文本   → OCRView         纯文本 OCR 结果
-│       ├── 还原   → ReconstructView 版面还原 + A/B/C 档位 + 导出
+│       ├── 还原   → ReconstructView 版面还原 + 流式（默认）/高保真 档位 + 导出
 │       ├── 分享   → ExportSheet     PDF 导出 / 系统分享
 │       └── 加页   → CaptureView
 ├── CaptureView          取景 + 实时框 + 连拍
@@ -172,7 +172,7 @@ AVCaptureSession 帧流
   ├─ iOS 26：VisionDocumentStructureRecognizer（RecognizeDocumentsRequest）
   │    → 直接拿 lines / tables（行列结构）/ barcodes
   └─ 回退：VisionTextRecognizer → OCRPageText [(text, bbox)]
-            + TableGridV2Detector（锚点驱动，失败回退 v1）
+            + TableGridV2Detector（锚点驱动；v1 聚类器已退役——几何通路不再产表，§6.12）
   两条通路都归一成 StructuredDocumentPage，下游完全共用 ↓
   → PageBarcodeDetector  → 条码框（与结构化结果**取并集**）
   → ReconstructSceneRouter.route → scene (plain/exam/table/packaging)
@@ -180,7 +180,7 @@ AVCaptureSession 帧流
   → OnDeviceReadingOrder  → 段落块流
   → FigureRegionsV2       → 配图 / 条码裁切
   → [ReconstructPage] → ReconstructDocument
-  → DocxExportService (A/B/C) 或 SearchablePDFExportService
+  → DocxExportService（流式默认 / 高保真可选）或 SearchablePDFExportService
 ```
 
 > **两条通路的接缝就是 `StructuredDocumentPage`**（Services/Reconstruct/）。
@@ -289,6 +289,21 @@ refine 都经 `detect(imageData:)` 单点受益。
 （手动拍后同样清零计数）。行为由 `CaptureViewModelTests.AutoCaptureHoldWindowTests` ×4
 穷举钉死（等窗拍 / 解锁重计 / 可疑冻结 / 窗内手动拍）。
 
+**WYSIWYG 裁切契约（spec/wysiwyg-crop）**：**屏幕呈现框 = 成片裁切基准**。文档模式
+快门时刻，`CaptureViewModel.capture()` 先快照呈现框（`imageQuad`），静帧重检结果经
+`CropConsistencyGate.resolve`（Domain 纯函数）仲裁：
+- IoU ≥ 0.70（一致精修）→ 静帧胜：EdgeSnapper 贴边精修保留，平整文档精度不回归；
+- IoU < 0.70（分歧，如折页场景静帧选整书外轮廓）→ 呈现框胜：所见即所得；
+- 搜索态（无呈现框）→ 静帧自由检测照旧；呈现框与静帧双缺 → 全幅兜底。
+例外路径走旧链零改动：证件模式（`detected ?? imageQuad ?? .fullImage`）与相册导入。
+live 文档路径另加**候选粘滞**（`CandidateSticky`，`VisionEdgeDetector` actor 内状态）：
+逐帧择优后与上次择优相似（IoU ≥ 0.60）的候选优先延续（同候选小幅漂移跟随更新，
+跳变帧改选池中锚点相似候选的最高分者），连续 3 帧无相似候选（含检测间隙）逃逸清锚
+——摊开书从中线取景时右页/整书双候选振荡由此止跳（先稳者胜），用户明显改变取景
+仍能快速跟随切换（≈0.2s@15fps）不粘死。仲裁与改写均落日志：`cropGate`
+（displayedArea/stillArea/iou/acceptedStill，文档模式每次快门一行，证件/导入无此行）
+与 `stickyOverride`（粘滞改写帧）。
+
 **overlay 映射与屏幕点契约（渲染真值 = `OverlaySpaceMap` 解析链）**：照片空间 quad 经
 `OverlaySpaceMap.screenQuad`（照片→视频 `FOVLayout` 中心裁切逆换算 → 屏幕 aspectFill
 解析放置）映射为**屏幕点**；旧探针（`layerRectConverted`）与 `FrameMapper` 均已退役为
@@ -310,8 +325,11 @@ refine 都经 `detect(imageData:)` 单点受益。
 SC-004 证据链）、`detectionTier`（候选层级）、`suspiciousLock`
 （门禁抑制原因）、`relaxedLiveProbe`（live 文档模式每帧一行：`triggered` 是否触发放宽矩形
 重跑（严格+分割双落空）、`candidates` 放宽档命中数——**触发率 = triggered=true 行数 ÷
-本日志总行数**，与 `detectionTier`（面积兜底档位）语义正交）。真机验收步骤见
-`spec/scan-edge-accuracy/device-acceptance.md` 与 `spec/live-edge-crop/device-acceptance.md`。
+本日志总行数**，与 `detectionTier`（面积兜底档位）语义正交）、`cropGate`（快门门禁：
+呈现框/静帧面积、IoU 与 acceptedStill 采纳方向，文档模式每次拍摄一行，`iou=-1` 表示
+无可测对）、`stickyOverride`（live 粘滞改写帧，双候选振荡止跳证据）。真机验收步骤见
+`spec/scan-edge-accuracy/device-acceptance.md`、`spec/live-edge-crop/device-acceptance.md`
+与 `spec/wysiwyg-crop/device-acceptance.md`。
 
 - `QuadSmoother` 对连续帧的四边形做平滑，避免实时框抖动（未动）。
 - 证件模式（`ScanMode.idCard`）用一个固定比例窗约束检测（语义未动）。
@@ -449,12 +467,16 @@ atLeast 增长** + `tableGrowthUpgrade` 日志，文字不截断——预览 `ca
 word/_rels/document.xml.rels · word/media/imageN.{png,jpg}
 ```
 两档产物（旧 A/B/C 三档已删除——B 的 twips 定位事故、C 的多页衬底事故见 §6.7；
-替代者 `.restored` 从坐标链路起重建，spec/layout-restore）：
+替代者 `.restored` 从坐标链路起重建，spec/layout-restore）。**默认档已翻转为流式**
+（spec/wps-parity-layout，2026-09-24）：用户面 `ExportTier` **flow（流式，默认）/
+highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，选择经
+`@AppStorage(ExportTier.preferenceKey)` 持久化（启动即恢复）、预览与导出读**同一**
+档位源（`ReconstructViewModel.setTier`）：
 
 | 档 | 实现 | 说明 |
 |---|---|---|
-| **结构化** `.structured` | `wp:inline` | 段落流 + `w:tbl` + 内联图，A4 固定页 |
-| **版面还原** `.restored`（预览默认） | 浮动对象 + 原生浮动表格 | 与预览同构（FR-009） |
+| **流式** = `.structured`（默认） | `wp:inline` | 段落流 + `w:tbl` + 内联图，A4 固定页 |
+| **高保真** = `.restored`（可选） | 浮动对象 + 原生浮动表格 | 与预览同构（FR-009） |
 
 `.restored` 的每页 Word 结构（z 层自下而上）：
 
@@ -474,6 +496,27 @@ word/_rels/document.xml.rels · word/media/imageN.{png,jpg}
 页面 sectPr 宽高随原图（EMU ÷ 635 = twips）且零边距；多页各配独立 section。
 全部定位（posOffset EMU / tblpX·tblpY twips）都出自 `PageLayoutMapper`——
 「导出定位 = 预览定位」有链路级测试钉死（`DocxRestoredLayoutTests` 夹具端到端）。
+
+**版面对标契约**（spec/wps-parity-layout，2026-09-24；周期全貌与已知限制见 §6.12）：
+
+1. **默认档 = 流式**：未选择时导出与预览均为 flow；`.restored` 降级为可选「高保真」。
+   切档作废已生成 docx（PDF 不受影响）；预览渲染与导出**同源**——`ReconstructView`
+   档位选择器写 `@AppStorage` 并同步 `ReconstructViewModel.setTier`，导出读同一档位。
+2. **零假表**：几何通路 v1 表格聚类器（`OnDeviceTableCluster`）**退役**——散排编号
+   文本不再被聚成假表；表只来自 iOS 26 结构化识别或锚点驱动的 `TableGridV2`
+   （宁缺毋假）。休眠类与直连单测保留作回归钉。
+3. **丢字哨兵 `textSentinel`**：导出（docx 与 PDF 公共漏斗）前逐页执行墨迹-文本对账
+   ——`InkRegionProvider`（原始墨迹连通域，不做 figures 质量闸门）→ `InkTextReconciler`
+   纯函数 → debug 日志；缺口四分类 `figureOverlap` / `structureSwallow` / `edgeBand` /
+   `likelyMissed`，**只记不阻断**（FR-006）。配套解析期 containment 不变量：被表格/
+   条码 bbox 剔除的行必须被结构文本携带，未覆盖行保留回文字层、违规计数进日志。
+4. **通路可观测 `reconstructPath`**：每页解析恰好一条决策线——五分类
+   `structuredSuccess` / `apiUnavailable` / `lowVersionFallback` / `requestFailed` /
+   `invalidResult`（debug 级 + privacy.public）；真机抓取走 Console.app（步骤见
+   `spec/wps-parity-layout/device-acceptance.md` §0）。
+5. **段落收敛**：流式档导出侧 `FlowParagraphSplitter` 纯函数切段——三判据（条目号
+   领头 / 行首回撤 ≥ 0.012 / 句末标点）+ 三不变量（恒等 / 回退 / 零丢失）；解析块
+   粒度不动（scan-fidelity 红线），文本段落收敛金标准 42 段 ±30%（实测 32 段）。
 
 **可检索 PDF**（`SearchablePDFExportService`）—— 原图渲染 + 不可见文字层（可被 `PDFKit` 选中/搜索）。
 
@@ -499,11 +542,12 @@ word/_rels/document.xml.rels · word/media/imageN.{png,jpg}
 | 还原 · 基础 | 段落阅读序、标题判定、列表判定 → DOCX / 可检索 PDF | ✅ |
 | 还原 · IR v2 | `PageLayout`（band/region/column/anchor）、语义标签、confidence | ✅ |
 | 还原 · 表格（iOS 26） | `RecognizeDocumentsRequest` 直接给行列结构 | ✅ 新增，模拟器实测样张 7×3 表（§6.2） |
-| 还原 · 表格（iOS 18~25） | `TableGridV2` 锚点驱动 + v1 兜底 | ⚠️ 样张通过，**真机不过**（§6.2） |
+| 还原 · 表格（iOS 18~25） | `TableGridV2` 锚点驱动（v1 聚类器已退役：散排编号不再产假表） | ⚠️ 锚点命中才出表，真机烂图仍不过（§6.2） |
 | 还原 · 配图 | `FigureRegionsV2` 空白连通域 + barcode 通道 + v1 兜底 | ⚠️ 能出图，真机质量差 |
 | 还原 · 噪声过滤 | 状态栏 / UI chrome / QR URL | ✅ |
 | OCR · 预处理档 | `OCRPreprocessor`：去阴影 + 灰度 + 锐化，质量不达标时自动重跑 | ✅ 新增（§4.3） |
-| 还原 · 双档 | `.structured` 流式 + `.restored` 版面还原（预览默认；底座/覆盖/原位/浮动表格，导出同构） | ✅ 重做（spec/layout-restore，§4.4/§4.5） |
+| 还原 · 双档 | 流式 `.structured`（**默认**）+ 高保真 `.restored`（可选；底座/覆盖/原位/浮动表格，导出同构）；@AppStorage 持久化、预览/导出同源 | ✅ 重做 + 默认档翻转（spec/layout-restore、spec/wps-parity-layout，§4.5/§6.12） |
+| 还原 · 丢字防护 | containment 不变量 + 页眉规则收紧 + 墨迹-文本对账哨兵 `textSentinel`（只记不阻断） | ✅ 新增（spec/wps-parity-layout，§6.12） |
 | 还原 · 乱码治理 | `GarbledRegionDetector` 双门控 → `.artwork` 原像素保留 | ✅ 新增 |
 | 还原 · 条码单份 | figure↔barcode 交叉去重 + URL 并入 | ✅ 新增 |
 | 云解析 | TextIn | ❌ **stub**：无密钥、无网络实现，`parse` 直接 throw |
@@ -511,13 +555,20 @@ word/_rels/document.xml.rels · word/media/imageN.{png,jpg}
 
 ### 5.1 测试现状
 
-- 35 个测试文件 / 295 个 `@Test`，全量 **294 passed + 0 failed + 1 expected failure**
+- 40 个测试文件 / 357 个 `@Test`，全量 **356 passed + 0 failed + 1 expected failure**
   （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的
   `needsRelaxedRectangles` 门控穷举与放宽候选进池择优 + `CaptureFallbackChainTests`
   （快门回退链三分支替身锚定）+ `ReviewViewModelTests.autoRefineSkipsUserAdjustedQuad`
   （用户调框不被自动 refine 覆盖）；基线 280 → 295 只增不减。
+  overlay-frame-visibility 续推 295 → 302（`EdgeOverlayRenderingTests` ×3 +
+  `AutoCaptureHoldWindowTests` ×4，§6.10）；wysiwyg-crop 续推 302 → 317
+  （`CropConsistencyGateTests` ×5 + `CandidateStickyTests` ×5 + `CropGateAtShutterTests` ×5，
+  §6.11）；wps-parity-layout 续推 317 → 357（新建 `GoldenWorksheetEndToEndTests` ×10 +
+  `InkTextReconcilerTests` ×12，append `OnDeviceReadingOrderRowClusteringTests` +7 /
+  `ReconstructTierTests` +4 / `OCRNoiseFilterTests` +4 / `DocumentStructureTests` +3，
+  §6.12）。
    版面还原链路新增套件：`PageLayoutMapperTests` / `LayoutMaskBuilderTests` /
    `GarbledRegionDetectorTests` / `BarcodeDedupTests` / `DocxRestoredLayoutTests`
    （OOXML 结构断言 + 真实样张端到端）；
@@ -724,6 +775,83 @@ scan-fidelity 把 overlay 映射改成解析链后，真机上整框**仍然不�
 
 ---
 
+### 6.11 已修：所见非所得 + 双候选振荡——快门裁切门禁与候选粘滞（2026-09-21，spec/wysiwyg-crop）
+
+> 规格与决策：`spec/wysiwyg-crop/spec.md`（US1~US5 / FR-001~010）、
+> `plan.md`（D1~D6）；真机重测协议 `spec/wysiwyg-crop/device-acceptance.md`。
+
+overlay-frame-visibility 验收时 SC-001 失败 2 例，取证出两个新根因：**R4（主因）**
+快门回退链 `detected ?? imageQuad ?? .fullImage` 对静帧重检无条件优先——折页/摊开书
+场景静帧选出**整书外轮廓**，直接覆盖屏幕上正确的锁定框，成片含折起部分（所见与
+所得割裂，R3「错误锁定可中止」的缓解前提也随之失效）；**R5（次因）**摊开书从中线
+取景时右页与整书两候选逐帧交替取胜（面积比 ≈2:1，超 smoother areaJump 重置阈值），
+实线框持续跳动、永不锁定。
+
+修复双管齐下：① 快门时刻 `CropConsistencyGate`（Domain 纯函数）——文档模式以
+**呈现框快照为裁切基准**，静帧重检仅在与呈现框 IoU ≥ 0.70（一致精修）时胜出，
+否则呈现框胜（所见即所得）；② live 文档路径 `CandidateSticky`（`VisionEdgeDetector`
+actor 内状态）——与上次择优相似（IoU ≥ 0.60）的候选优先延续（先稳者胜），连续 3 帧
+无相似候选即逃逸清锚（不粘死）。证件模式与相册导入走旧链不参与，既有语义零改动。
+契约细节见 §4.2「WYSIWYG 裁切契约」。
+
+> 回归网：新增 `CropConsistencyGateTests` ×5 + `CandidateStickyTests` ×5 +
+> `CropGateAtShutterTests` ×5（快门集成替身：锁定分歧/一致、跟踪态手动拍呈现框、
+> 搜索态静帧自由检测、idCard 旧链锁定）；既有断言零修改
+> （`CaptureFallbackTests/stillRedetectWins` 的 IoU ≈0.83 ≥ 0.70 语义兼容，静帧照旧胜出）。
+> 基线 302 → 317 用例（316 passed + 1 known issue + 0 failed，只增不减）。
+
+---
+
+### 6.12 已修：默认导出对标 WPS——流式档、假表与静默丢字、段落收敛（2026-09-24，spec/wps-parity-layout）
+
+> 规格与决策：`spec/wps-parity-layout/spec.md`（US1~US5 / FR-001~010）、
+> `plan.md`（R&D-D1~D11）；真机重测协议 `spec/wps-parity-layout/device-acceptance.md`；
+> 金标准 fixture：`docs/fixtures/images/grammar-worksheet.jpg`（解析器确切输入）+
+> `docs/fixtures/golden-wps-reading-order.txt`（42 段阅读流，均从用户 2026-09-21
+> 导出的 docx 解包提取）；调研输入 `docs/11-wps-parity-research.md`。
+
+起因：用户拿 WPS 拍同页语法练习对照本 App 导出，三个可证差距——① 默认导出是
+`.restored` 像素合成档（WPS 是干净流式文档）；② 旧 v1 聚类器把散排编号文本聚成
+14 行**假表格**并吞掉 "(9)…" 正文；③ 疑似静默丢字（"wrong bus!"）。契约细节见
+§4.5「版面对标契约」，周期结论：
+
+| # | 差距 | 根因 | 修复 | 回归钉 |
+|---|---|---|---|---|
+| 1 🔴 | 默认档不对标 | `.restored` 是默认档 | **默认档翻转**：flow（=`.structured`）默认、`.restored` 降级可选「高保真」；@AppStorage 持久化 + 预览/导出同源 + 切档作废 docx | `ReconstructTierTests` ×11 |
+| 2 🔴 | 散排编号 → 假表吞字 | v1 聚类器无锚点门控 | **v1 退役**：几何通路不再产表（宁缺毋假）；休眠类保留直连单测作回归钉 | 金标准 e2e 零假表 + v1 回归钉 |
+| 3 🔴 | 通路决策黑箱 | 结构化通路真机疑似静默回退（iOS 26.7 真机导出取证），无日志可查 | **`reconstructPath` 五分类决策线**（每页恰好一条，debug + privacy.public） | 通路决策替身测试 |
+| 4 🟠 | 静默丢字风险 | 剔行无去处 / 页眉规则误剔 / 漏识无证据 | **三层防护**：containment 不变量（违规计数不静默）+ 页眉窄带收紧（minY > 0.93 整行 + 8 字符先 trim + 句末标点守卫）+ 墨迹-文本对账哨兵 `textSentinel`（四分类，只记不阻断） | `InkTextReconcilerTests` ×12 + `DocumentStructureTests` +3 + `OCRNoiseFilterTests` +4 |
+| 5 🟡 | 段落碎片化 | 大块整段合并（41 行一块 vs 金标准 42 段） | **导出侧 `FlowParagraphSplitter`**：三判据（条目号领头 / 行首回撤 ≥ 0.012 / 句末标点）+ 三不变量（恒等 / 回退 / 零丢失）；解析块粒度不动（scan-fidelity 红线，块序是 assemble 输入） | 金标准 32 段 ∈ 42 ±30% + 阅读序锚点链 |
+| 6 🟡 | 图形完整性 | 漫画条是否拆碎/漏检 | 默认通路单一细长 figure 内联于金标准 [image]① 原位（cy=3.56M EMU 全高） | `GoldenWorksheetEndToEndTests` 漫画条 ×2 |
+
+取证修正（重要）：**"wrong bus!" 从未丢失**——OCR 原行 `wrong bus！`（全角 ！）一直在
+故事块内，2026-09-21 的「丢失」是拿 ASCII `!` 检索全角输出的假阴性；但防护机制照建
+（假表吞字等风险真实存在），断言做全角/半角归一 +「真丢报得出、没丢不误报」双向钉。
+
+已知限制（记录不修）：① 几何回退通路（iOS 18~25）漫画条未检出为 figure——哨兵
+likelyMissed 如实报证；为回退档强推检测需放宽文字覆盖判据，文字误并的回归风险大于
+修图收益。② 右侧大图按 maxY 降序装配排在故事块前、金标准在后——assemble 既有语义
+对纵贯故事区的背景插画前后均通，不属本周期验收范围。③ 结构化通路**真机**接通性仍未
+验证（调研 L1 疑案：iOS 26.7 真机疑似静默回退，模拟器 iOS 26.4.1 不复现、
+structuredSuccess）——真机取证步骤见 `spec/wps-parity-layout/device-acceptance.md`。
+
+测试基建修复（顺带，零生产代码）：金标准套件的 `GoldenParseCache` actor 有重入竞态——
+Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 parse，双通路共用 pageID
+的裁图目录（每次 parse 先清空重写）交错 wipe/写产生悬空图片引用 → 漫画图被导出静默
+丢弃（comicStrip 用例批量假阳性的根因）；修复 = 在飞 Task 去重（失败清槽带 generation
+防误删新任务，保留重试语义）+ 双通路独立固定 pageID（…0001 / …0002）。
+
+> 回归网：新建 `GoldenWorksheetEndToEndTests` ×10（真实 Vision 链路端到端：零假表 /
+> 通路决策 / "wrong bus!" / 漫画条 / 段落收敛 / 阅读序锚点）+ `InkTextReconcilerTests`
+> ×12（四分类穷举）；append `OnDeviceReadingOrderRowClusteringTests` +7（页眉规则 +
+> 切分判据回归锚，含 `leadRetreatThreshold == 0.012` 常量钉）、`ReconstructTierTests`
+> +4（默认档 / 持久化 / 预览导出同源）、`OCRNoiseFilterTests` +4、`DocumentStructureTests`
+> +3（containment）。既有断言零修改（唯一例外 D8：`ReconstructTierTests` 两条直断旧
+> 默认档的用例按计划翻转方向，逐条记录于 tasks.md T006）。基线 317 → 357 用例
+> （+40，各局部套件全绿；全量跑批由周期验证阶段核实，只增不减）。
+
+---
+
 ## 7. 后续优化方向
 
 > 2026-09-12 更新：原 P0/P1/P3 大部分已完成（见 §6.7 与下方「已完成」）。
@@ -745,7 +873,7 @@ scan-fidelity 把 overlay 映射改成解析链后，真机上整框**仍然不�
 
 | # | 任务 | 说明 |
 |---|---|---|
-| P0-1 | **真机跑 iOS 26 结构化通路** | 模拟器已验证结构（7×3），但模拟器 ≠ 真机。拿营养表 / 练习册各拍一张，导出 Word 看 `w:tbl` 与单元格内容 |
+| P0-1 | **真机跑 iOS 26 结构化通路** | 模拟器已验证结构（7×3），但模拟器 ≠ 真机。拿营养表 / 练习册各拍一张，导出 Word 看 `w:tbl` 与单元格内容——已并入 `spec/wps-parity-layout/device-acceptance.md` §A/§B（带 `reconstructPath` 取证步骤，§6.12 已知限制 ③） |
 | P0-2 | 真机验 OCR 预处理档 | 拍一张**有阴影**的纸，对比开/关预处理档的「文本」结果 |
 | P0-3 | 真机验条码 | 模拟器上 `VNDetectBarcodesRequest` 恒为 0，条码裁图只能真机验 |
 
@@ -753,9 +881,9 @@ scan-fidelity 把 overlay 映射改成解析链后，真机上整框**仍然不�
 
 | # | 任务 | 说明 |
 |---|---|---|
-| P1-1 | 表格降级阶梯 | iOS 18~25 仍出不了真机表。anchor → 通用数字列（≥3 行 × ≥2 列 + 数字密度）→ v1，任何一级成功就出表 |
+| P1-1 | 表格降级阶梯 | iOS 18~25 仍出不了真机表。anchor → 通用数字列（≥3 行 × ≥2 列 + 数字密度），任何一级成功就出表（v1 聚类器已退役、不再参与阶梯，§6.12） |
 | P1-2 | 列/行切分改 x/y 投影找 gutter | 摆脱「每 cell 一个 OCR line」假设 |
-| P1-3 | 结构化通路的**段落级**输出 | 目前刻意用 `text.lines`（行级）以对齐下游；Vision 自己的 `paragraphs` 分组可能更好，值得 A/B |
+| P1-3 | ~~结构化通路的**段落级**输出~~（✅ 2026-09-24） | wps-parity 周期以导出侧 `FlowParagraphSplitter` 达成段落收敛：32 段 ∈ 金标准 42 ±30%、阅读序锚点链一致（§4.5/§6.12）；Vision 自带 `paragraphs` 分组的 A/B 仍可后续试 |
 | P1-4 | 文档区域二次分割 | 用 `VNDetectDocumentSegmentationRequest` 挡掉截图的状态栏 / UI chrome（`DocumentMaskQuad` 已预埋但无调用者） |
 
 ### P2 · 导出层

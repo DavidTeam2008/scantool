@@ -346,6 +346,115 @@ struct DocumentStructureTests {
         ]
         #expect(VisionDocumentStructureRecognizer.columnRatios(singleColumn) == nil)
     }
+
+    // MARK: - wps-parity-layout T014（FR-004 containment 不变量，T009 落地）
+
+    /// splitCarriedLines 的「救回」分支：行落在表格 bbox 里，但文字不在任何
+    /// 单元格里（识别端把表格外一行圈进了表框 / 表格行被结构端丢弃）——
+    /// 依 FR-004 不得静默丢弃，必须保留回文字层；表格块本身照常产出。
+    /// （「被携带 → 剔除」方向由 `tableRowsDoNotLeakIntoParagraphs` 钉住，
+    /// 这里钉的是没被携带时不能赌「结构丢了它」。）
+    @Test("表格 bbox 内未被单元格携带的行必须救回文字层（FR-004 不静默丢字）")
+    func uncoveredLineInsideTableBBoxIsRescued() async throws {
+        let structured = StructuredDocumentPage(
+            lines: [
+                // 落在表格 bbox 内、但文字不在任何单元格 → 救回
+                OCRLine(text: "这行文字不在任何单元格里", boundingBox: CGRect(x: 0.15, y: 0.62, width: 0.5, height: 0.03)),
+                OCRLine(text: "配料：饮用水", boundingBox: CGRect(x: 0.1, y: 0.9, width: 0.7, height: 0.04))
+            ],
+            tables: [
+                DetectedTable(
+                    table: ReconstructTable(rows: [["项目", "每100克"], ["能量", "1429千焦"]]),
+                    bbox: CGRect(x: 0.1, y: 0.5, width: 0.8, height: 0.2)
+                )
+            ],
+            barcodes: [],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+
+        let paragraphText = page.blocks
+            .filter { $0.kind != .table }
+            .map(\.text)
+            .joined(separator: "\n")
+        #expect(paragraphText.contains("这行文字不在任何单元格里"), "表格 bbox 内未被携带的文字必须救回文字层")
+        #expect(paragraphText.contains("配料"))
+        // 表格块本身不受救回影响
+        let tables = page.blocks.filter { $0.kind == .table }
+        #expect(tables.count == 1)
+        #expect(tables.first?.table?.rows.first == ["项目", "每100克"])
+    }
+
+    /// 条码 bbox 内未被 payload 携带的行（二维码旁的中文说明）必须救回文字层；
+    /// 条码块与 payload 照常产出。注意与「URL 降级文本并入条码块」
+    /// （`BarcodeDedupTests`，OCRNoiseFilter `.demoteToBarcode` 通路）区分：
+    /// 这里的说明行不是 URL、不降级，走的是 containment 覆盖判定。
+    @Test("条码 bbox 内非 payload 的说明行救回文字层，条码块照常")
+    func barcodeCaptionNotMatchingPayloadIsRescued() async throws {
+        // 条码块产出在 `if let image` 门内（要裁码图）→ 这里必须给可解码页图，
+        // /dev/null 会让 .barcode 块整体不发。图内容不重要（白底 + 黑块），
+        // 真条码检测器在模拟器上恒为空，条码来自 structured.barcodes。
+        let image = try #require(PageImageFixture.write())
+        defer { try? FileManager.default.removeItem(at: image) }
+
+        let structured = StructuredDocumentPage(
+            lines: [
+                // 中心 (0.75, 0.23) 落在条码 bbox (0.55..0.95, 0.05..0.35) 内
+                OCRLine(text: "扫码查看完整答案", boundingBox: CGRect(x: 0.60, y: 0.20, width: 0.30, height: 0.06)),
+                OCRLine(text: "参考答案见下期", boundingBox: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.04))
+            ],
+            tables: [],
+            barcodes: [
+                DetectedBarcode(payload: "https://example.com/answer-key", bbox: CGRect(x: 0.55, y: 0.05, width: 0.4, height: 0.3))
+            ],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured)
+        )
+        let page = try await parser.parse(imageURL: image, pageID: UUID(), scene: .auto)
+
+        let paragraphText = page.blocks
+            .filter { $0.kind != .barcode }
+            .map(\.text)
+            .joined(separator: "\n")
+        #expect(paragraphText.contains("扫码查看完整答案"), "条码 bbox 内非 payload 文字必须救回文字层")
+        #expect(paragraphText.contains("参考答案见下期"))
+        let payloads = page.blocks.filter { $0.kind == .barcode }.compactMap(\.barcodePayload)
+        #expect(payloads.contains("https://example.com/answer-key"), "条码块与 payload 照常产出")
+    }
+
+    /// 空 payload 的码（未解码）判不了覆盖 —— 落在它 bbox 里的行必须救回，
+    /// 不能赌「码里就是这行字」。
+    @Test("未解码（空 payload）的码不能认领覆盖，行救回文字层")
+    func undecodedBarcodeCannotClaimCoverage() async throws {
+        let structured = StructuredDocumentPage(
+            lines: [
+                OCRLine(text: "未解码二维码上方的文字", boundingBox: CGRect(x: 0.60, y: 0.20, width: 0.30, height: 0.06))
+            ],
+            tables: [],
+            barcodes: [
+                DetectedBarcode(payload: "", bbox: CGRect(x: 0.55, y: 0.05, width: 0.4, height: 0.3))
+            ],
+            source: .documentRequest
+        )
+        let parser = OnDeviceDocumentParser(
+            recognizer: PreviewRecognizer(),
+            structureRecognizer: StubStructureRecognizer(result: structured)
+        )
+        let page = try await parser.parse(imageURL: URL(fileURLWithPath: "/dev/null"), pageID: UUID(), scene: .auto)
+
+        let paragraphText = page.blocks
+            .filter { $0.kind != .barcode }
+            .map(\.text)
+            .joined(separator: "\n")
+        #expect(paragraphText.contains("未解码二维码上方的文字"), "空 payload 判不了覆盖，行必须救回文字层")
+    }
 }
 
 /// 可控的结构化识别替身。

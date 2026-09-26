@@ -9,15 +9,24 @@ enum OnDeviceReadingOrder {
         // HeaderFooterClassifier 是按 band 维度判（5 行带太厚过不了 height 检查），
         // 这里在行级兜底：若首段第一行非常短、且后面有更长的行 → 把首行丢掉。
         // 适配 workbook 右上「Test 4」+ 标题「Test 4 Questions 1~5（...）」的情形。
+        //
+        // wps-parity-layout T010 / FR-005 收紧（"wrong bus!" = 10 字符踩线教训）：
+        // - 位置约束从「上缘擦过 0.93」（maxY > 0.93）收紧为**整行落页顶窄带**
+        //   （minY > 0.93）—— 内容标题可能上缘擦过 0.93，但正文行极少整体挤进
+        //   顶部 7%（「Test 4」页眉 minY 0.962 仍稳定命中）；
+        // - 字符边界复核：阈值 10 → 8，且句末带标点的短行按正文处理 ——
+        //   页眉标签（"Test 4"）不带句末标点，正文短句（"wrong bus!"）带。
         let filtered: [OCRLine] = {
             guard usable.count > 1 else { return usable }
             let sorted = usable.sorted { $0.boundingBox.minY > $1.boundingBox.minY }
             guard let first = sorted.first, let second = sorted.dropFirst().first else { return usable }
-            let firstIsAtTop = first.boundingBox.maxY > 0.93
-            let firstIsShortLine = first.text.count < 10
+            let trimmedFirst = first.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let firstSitsInTopBand = first.boundingBox.minY > 0.93
+            let firstIsShortLine = trimmedFirst.count < 8
+                && !OCRNoiseFilter.endsWithSentencePunctuation(trimmedFirst)
                 && first.boundingBox.height < medianH * 1.8
             let secondIsLonger = second.text.count > first.text.count * 2
-            if firstIsAtTop && firstIsShortLine && secondIsLonger {
+            if firstSitsInTopBand && firstIsShortLine && secondIsLonger {
                 return Array(sorted.dropFirst())
             }
             return usable

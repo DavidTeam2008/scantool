@@ -141,6 +141,13 @@ final class CaptureViewModel {
 
     func capture() async {
         guard phase != .capturing else { return }
+        // WYSIWYG 门禁呈现框快照（spec/wysiwyg-crop，plan D2 / FR-001）：入口
+        // 读取 `imageQuad`——必须在任何复位段之前（capture() 末尾会清空）。
+        // `imageQuad` 即 overlay 渲染源（照片空间：跟踪 = smoother 输出 /
+        // 锁定 = 锁定框 / 搜索 = nil），与屏幕所见同源；`consume()` 的
+        // `phase != .capturing` 闸在 capturing 期间冻结帧消费 → 快照 =
+        // 快门时刻屏幕所见，瞬时检测缺口不会使其回退静帧自由检测。
+        let displayed = imageQuad
         phase = .capturing
         isFlashVisible = true
         do {
@@ -154,7 +161,24 @@ final class CaptureViewModel {
                 imageData: photo.jpegData,
                 idCardWindow: mode == .idCard ? Quad.idCardWindow : nil
             )
-            let quad = detected ?? imageQuad ?? .fullImage
+            let quad: Quad
+            if mode == .idCard {
+                // idCard 路径行为不变（FR-005）：固定窗口链保持现状，无门禁。
+                quad = detected ?? imageQuad ?? .fullImage
+            } else {
+                // 文档模式：静帧重检结果经一致性门禁（plan D1/D2，FR-001~004）——
+                // 一致（IoU ≥ 0.70）才采纳高分辨率精修，否则呈现框优先
+                // （消除 Case A「锁的是右页、裁的是整书」）；搜索态（呈现框
+                // nil）静帧自由检测照旧；双落空回退全幅。
+                let decision = CropConsistencyGate.resolve(displayed: displayed, still: detected)
+                ZhixiaLog.cropGate(
+                    displayedArea: displayed?.area ?? 0,
+                    stillArea: detected?.area ?? 0,
+                    iou: decision.consistency ?? -1,
+                    acceptedStill: decision.usedStillRefinement
+                )
+                quad = decision.quad ?? .fullImage
+            }
             let draft = PageDraft(
                 id: pageID,
                 sessionID: sessionID,

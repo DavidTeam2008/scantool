@@ -98,4 +98,42 @@ struct OCRNoiseFilterTests {
             }
         }
     }
+
+    // MARK: - wps-parity-layout T010（FR-005 页缘 chrome 收紧）
+
+    @Test("拉丁界面词整词匹配：含 chrome 词的正文词不被误杀")
+    func latinChromeWordsMatchWholeWordOnly() {
+        // 旧子串规则："homework" 含 "home"、"saved" 含 "save" → 靠边短行被误杀。
+        // `\b` 整词边界下它们是正文，不是 UI 按钮。
+        #expect(isKept("homework", top: true))
+        #expect(isKept("saved", bottom: true))
+        #expect(isKept("homework.", top: true), "句末标点再兜一层")
+    }
+
+    @Test("句末标点守卫：带标点的靠边短行按正文处理")
+    func punctuatedShortEdgeLineIsContent() {
+        // "wrong bus!" = 10 字符踩线教训的一致化：界面按钮文案不带句末标点，
+        // 正文短句带。旧规则下这两条都会被当 UI chrome 丢掉。
+        #expect(isKept("Done!", top: true))
+        #expect(isKept("保存成功。", bottom: true))
+    }
+
+    @Test("真 UI chrome 仍然被丢：无标点的短标签")
+    func realChromeStillDropped() {
+        #expect(isKept("done", top: true) == false)
+        #expect(isKept("back", top: true) == false)
+        // CJK 保持子串语义（「文本分享加页」式拼接文案）
+        #expect(isKept("分享好物", bottom: true) == false)
+    }
+
+    @Test("句末标点判定（页眉规则与 chrome 规则共用的判据）")
+    func sentencePunctuationDetector() {
+        #expect(OCRNoiseFilter.endsWithSentencePunctuation("wrong bus!"))
+        #expect(OCRNoiseFilter.endsWithSentencePunctuation("稍等。"))
+        #expect(OCRNoiseFilter.endsWithSentencePunctuation("wait? "), "尾随空白先 trim")
+        #expect(OCRNoiseFilter.endsWithSentencePunctuation("真的吗…"))
+        #expect(!OCRNoiseFilter.endsWithSentencePunctuation("Test 4"))
+        #expect(!OCRNoiseFilter.endsWithSentencePunctuation("done"))
+        #expect(!OCRNoiseFilter.endsWithSentencePunctuation(""))
+    }
 }

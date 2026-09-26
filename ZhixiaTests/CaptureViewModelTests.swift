@@ -639,3 +639,308 @@ private enum HoldWindowQuads {
         bottomLeft: CGPoint(x: 0.01, y: 0.9)
     )
 }
+
+// MARK: - US1/US2 快门裁切一致性门禁（spec/wysiwyg-crop，plan D1~D3 / FR-001~005）
+
+/// 快门门禁集成：`capture()` 入口快照 `imageQuad`（呈现框），文档模式经
+/// `CropConsistencyGate.resolve` 替换旧回退链。锁定组钉死 Case A 单测对应
+/// （锁定右页 + 静帧检出整书 → 成片 = 锁定框）与 US4 语义（静帧一致 →
+/// 精修保留）；跟踪/搜索/idCard 组（US2）钉死全状态统一与例外路径。
+/// 替身与 HoldWindow* 同模式：手动喂帧相机 + live 序列/still 结果可注入
+/// 检测器，live 检测计数即「已被 ViewModel 消费的帧数」同步点。
+@MainActor
+struct CropGateAtShutterTests {
+    // MARK: - US1 锁定组：锁定框即裁切框
+
+    @Test("锁定 + 静帧分歧（右页 vs 整书）→ 成片 = 锁定框（Case A 单测对应）")
+    func lockedDivergingStillCropsLockedFrame() async throws {
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: Array(repeating: CropGateQuads.rightPage, count: 12),
+            stillQuad: CropGateQuads.wholeSpread
+        )
+
+        await viewModel.start()
+        // 恒定右页框 ×12 → 第 10 帧锁定（帧 2~10 累计 9×1/15s = 0.6s ≥ 0.55s），
+        // 恒等几何下呈现框 = 右页框本身（插值恒等）。
+        await feed(12, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        #expect(viewModel.imageQuad == CropGateQuads.rightPage)
+
+        // 手动快门：静帧重检出整书外轮廓（含左页，IoU ≈ 0.4262 < 0.70）→
+        // 门禁弃用静帧，成片 = 屏幕所见的锁定右页框——不含左页/折起部分。
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.rightPage)
+        #expect(viewModel.drafts.last?.quad != CropGateQuads.wholeSpread)
+    }
+
+    @Test("锁定 + 静帧一致 → 静帧精修采纳（平整精度不回归，US4 语义）")
+    func lockedConsistentStillRefines() async throws {
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: Array(repeating: CropGateQuads.rightPage, count: 12),
+            stillQuad: CropGateQuads.refined
+        )
+
+        await viewModel.start()
+        await feed(12, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+
+        // 手动快门：静帧精修框（贴边吸附级外扩，IoU ≈ 0.8746 ≥ 0.70）→
+        // 采纳静帧精修——平整文档高分辨率裁切精度与修复前一致（SC-003）。
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.refined)
+    }
+
+    // MARK: - US2 组：呈现框即裁切框·全状态统一
+
+    @Test("跟踪态手动拍 → 成片 = 呈现框（末帧平滑输出，Case B 抢拍对应）")
+    func trackingManualCaptureCropsDisplayedFrame() async throws {
+        // 帧 1 右页 → smoother 初始化；帧 2 右页微移（顶点距离 0.028 > epsilon
+        // 0.012 → 不锁定；面积不变 → 不触发 areaJump 复位）——呈现框 = 两帧间
+        // 的平滑插值（≠ 原始末帧检测），证明门禁基准是 smoother 输出而非原始检测。
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: [CropGateQuads.rightPage, CropGateQuads.trackingShifted],
+            stillQuad: CropGateQuads.wholeSpread
+        )
+
+        await viewModel.start()
+        await feed(2, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked == false, "前置：仍在跟踪态（未满锁定时长）")
+        let displayed = try #require(viewModel.imageQuad)
+        #expect(displayed != CropGateQuads.trackingShifted, "呈现框 = 平滑插值，非原始末帧检测")
+
+        // 跟随态手动快门：静帧检出整书外轮廓（IoU ≈ 0.43 < 0.70）→ 门禁弃用，
+        // 成片 = 屏幕此刻呈现的平滑框——抢拍不再裁出整书（Case B 手动拍形态）。
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.last?.quad == displayed)
+        #expect(viewModel.drafts.last?.quad != CropGateQuads.wholeSpread)
+    }
+
+    @Test("搜索态（无呈现框）手动拍 → 静帧自由检测照旧")
+    func searchingManualCaptureUsesStillDetection() async throws {
+        // live 恒无检出 → smoother 连续 miss 复位 → searching，imageQuad = nil
+        //（搜索态无「所见」可违背，FR-004：静帧检测维持现状自由择框）。
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: [],
+            stillQuad: CropGateQuads.wholeSpread
+        )
+
+        await viewModel.start()
+        await feed(3, camera: camera, detector: detector)
+        #expect(viewModel.imageQuad == nil, "前置：搜索态，屏幕无取景框")
+
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.wholeSpread)
+    }
+
+    @Test("idCard 模式拍摄行为不变：静帧检测（即使与窗口分歧）照旧胜出")
+    func idCardCaptureKeepsLegacyChain() async throws {
+        // 旧链钉死（FR-005 例外路径）：`detected ?? imageQuad ?? .fullImage`，
+        // 无门禁。静帧检出框与 idCardWindow 刻意分歧（IoU ≈ 0.29 < 0.70）——
+        // 若门禁被误用于 idCard 模式，这里会退回窗口而假失败（最大判别度）。
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: [],
+            stillQuad: CropGateQuads.idCardDetected
+        )
+
+        await viewModel.start()
+        viewModel.setMode(.idCard)
+        #expect(viewModel.imageQuad == Quad.idCardWindow)
+        // idCard 模式 live 无检出 → searching 分支 imageQuad = 窗口（既有语义）。
+        await feed(2, camera: camera, detector: detector)
+        #expect(viewModel.imageQuad == Quad.idCardWindow)
+
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.idCardDetected)
+        #expect(viewModel.drafts.last?.quad != Quad.idCardWindow)
+    }
+
+    // MARK: - Helpers
+
+    private func makeFixture(
+        liveSequence: [Quad?],
+        stillQuad: Quad?
+    ) -> (viewModel: CaptureViewModel, camera: CropGateCamera, detector: CropGateDetector) {
+        let defaults = UserDefaults(suiteName: "zhixia.cropgate.\(UUID().uuidString)") ?? .standard
+        let preferences = PreferencesStore(defaults: defaults)
+        // 与自动快门解耦：门禁语义由手动快门触发（autoCapture 默认开，须显式关）。
+        preferences.autoCapture = false
+        let camera = CropGateCamera()
+        let detector = CropGateDetector(liveSequence: liveSequence, stillQuad: stillQuad)
+        let viewModel = CaptureViewModel(
+            launch: .fresh,
+            camera: camera,
+            detector: detector,
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "cropgate-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: preferences
+        )
+        return (viewModel, camera, detector)
+    }
+
+    /// 喂 N 帧并等待全部被 ViewModel 消费（以检测器 live 计数为同步点），
+    /// 再留一小段稳定时间让 consume 的检测后段（相位/引导/计数）跑完。
+    private func feed(
+        _ count: Int,
+        camera: CropGateCamera,
+        detector: CropGateDetector
+    ) async {
+        let before = await detector.liveDetectCount
+        for _ in 0..<count {
+            await camera.yieldFrame()
+        }
+        let target = before + count
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if await detector.liveDetectCount >= target { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+    }
+}
+
+// MARK: - 快门门禁替身（文件私有，与其他脚手架互不影响）
+
+/// 可逐帧喂投的门禁相机：与 HoldWindowCamera 同模式（continuation 长驻供给，
+/// 测试按相位手动 `yieldFrame()`——快门用例需要「先喂帧锁定、后快门」分段控制）。
+private final class CropGateCamera: CameraCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<VideoFrame>.Continuation?
+    private var frameIndex = 0
+
+    func start() async throws {}
+    func stop() async {}
+
+    func capturePhoto() async throws -> CapturedPhoto {
+        CapturedPhoto(
+            jpegData: PreviewImages.jpeg(),
+            pixelSize: CGSize(width: 80, height: 100)
+        )
+    }
+
+    func setTorch(enabled: Bool) async throws {}
+    func setFlashAuto(_ enabled: Bool) async {}
+
+    var frames: AsyncStream<VideoFrame> {
+        AsyncStream { continuation in
+            self.lock.withLock {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func geometry() async -> CaptureGeometry { .identity }
+
+    /// 喂一帧（时间戳按 1/15s 递增，与 fake 时钟口径一致）。帧流尚未被
+    /// 消费端建立时（listenToFrames 的 Task 调度窗口）稍候重试。
+    func yieldFrame() async {
+        let image = Self.plainImage
+        while true {
+            let continuation = lock.withLock { self.continuation }
+            if let continuation {
+                frameIndex += 1
+                continuation.yield(VideoFrame(cgImage: image, timestamp: TimeInterval(frameIndex) / 15.0))
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private static let plainImage: CGImage = {
+        let width = 8
+        let height = 14
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }()
+}
+
+/// 快门门禁检测器：live 结果按注入序列逐帧取值（序列耗尽后保持末值，
+/// 空序列恒 nil），still 结果固定注入——锁定/跟踪/搜索三态与静帧
+/// 分歧/一致组合由此穷举。live 检测计数即「已被 ViewModel 消费的帧数」。
+private actor CropGateDetector: EdgeDetecting {
+    private var liveSequence: [Quad?]
+    private var liveIndex = 0
+    private let stillQuad: Quad?
+    private(set) var liveDetectCount = 0
+
+    init(liveSequence: [Quad?], stillQuad: Quad?) {
+        self.liveSequence = liveSequence
+        self.stillQuad = stillQuad
+    }
+
+    func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? {
+        liveDetectCount += 1
+        guard !liveSequence.isEmpty else { return nil }
+        let quad = liveSequence[min(liveIndex, liveSequence.count - 1)]
+        if liveIndex < liveSequence.count {
+            liveIndex += 1
+        }
+        return quad
+    }
+
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { stillQuad }
+}
+
+private enum CropGateQuads {
+    /// 呈现框（右页，恒等几何）：0.45×0.8，面积 0.36——非可疑（边距 ≥ 5%）。
+    static let rightPage = Quad(
+        topLeft: CGPoint(x: 0.5, y: 0.1),
+        topRight: CGPoint(x: 0.95, y: 0.1),
+        bottomRight: CGPoint(x: 0.95, y: 0.9),
+        bottomLeft: CGPoint(x: 0.5, y: 0.9)
+    )
+
+    /// 静帧分歧框（整书外轮廓，含左页）：0.96×0.88 = 0.8448；
+    /// IoU(rightPage) = 0.36/0.8448 ≈ 0.4262 < 0.70（Case A 形态）。
+    static let wholeSpread = Quad(
+        topLeft: CGPoint(x: 0.02, y: 0.06),
+        topRight: CGPoint(x: 0.98, y: 0.06),
+        bottomRight: CGPoint(x: 0.98, y: 0.94),
+        bottomLeft: CGPoint(x: 0.02, y: 0.94)
+    )
+
+    /// 静帧一致精修框（贴边吸附级外扩）：0.49×0.84 = 0.4116；
+    /// IoU(rightPage) = 0.36/0.4116 ≈ 0.8746 ≥ 0.70（US4 形态）。
+    static let refined = Quad(
+        topLeft: CGPoint(x: 0.48, y: 0.08),
+        topRight: CGPoint(x: 0.97, y: 0.08),
+        bottomRight: CGPoint(x: 0.97, y: 0.92),
+        bottomLeft: CGPoint(x: 0.48, y: 0.92)
+    )
+
+    /// 跟随态帧 2（右页微移 +0.02）：与 rightPage 顶点距离 ≈ 0.028 > epsilon
+    /// 0.012（不锁定）、面积不变（不触发 areaJump 复位）→ smoother 输出为
+    /// 两帧间的平滑插值（跟踪态呈现框 ≠ 原始末帧检测）。
+    static let trackingShifted = Quad(
+        topLeft: CGPoint(x: 0.52, y: 0.12),
+        topRight: CGPoint(x: 0.97, y: 0.12),
+        bottomRight: CGPoint(x: 0.97, y: 0.92),
+        bottomLeft: CGPoint(x: 0.52, y: 0.92)
+    )
+
+    /// idCard 模式静帧检出框（与窗口刻意分歧）：0.4×0.2 = 0.08；
+    /// IoU(idCardWindow) = 0.08/0.2736 ≈ 0.2924 < 0.70——若门禁被误用于
+    /// idCard 路径会退回窗口，本框胜出即证明旧链保持（FR-005）。
+    static let idCardDetected = Quad(
+        topLeft: CGPoint(x: 0.3, y: 0.4),
+        topRight: CGPoint(x: 0.7, y: 0.4),
+        bottomRight: CGPoint(x: 0.7, y: 0.6),
+        bottomLeft: CGPoint(x: 0.3, y: 0.6)
+    )
+}

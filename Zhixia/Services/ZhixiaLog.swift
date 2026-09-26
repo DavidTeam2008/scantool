@@ -186,4 +186,95 @@ enum ZhixiaLog {
             "suspiciousLock area=\(area, format: .fixed(precision: 4), privacy: .public) minMargin=\(minMargin, format: .fixed(precision: 4), privacy: .public) autoCapture=suppressed"
         )
     }
+
+    // MARK: - 所见即所得裁切结构化诊断（spec/wysiwyg-crop，plan D4 / FR-009）
+    //
+    // 门禁与止跳的决策证据链：门禁决策每次文档模式快门一条（采纳/弃用静帧 +
+    // 一致性度量值），粘滞仅在改写逐帧择优时一条。Console.app 按 subsystem
+    // `com.david.Zhixia` + category `capture` 过滤（需勾选 Include Debug Messages），
+    // 验收期间**实时抓取**（SC-005，上轮事后取证丢失 debug 日志的教训固化为流程）。
+
+    /// 快门裁切一致性门禁决策：呈现框/静帧框面积 + 一致性 IoU + 静帧是否被采纳。
+    /// `iou` 为 -1 表示无可度量对（呈现框或静帧框缺失，门禁走了直通分支）。
+    /// 文档模式每次快门一条，摊开书/折页书验收时与成片对照读。
+    static func cropGate(displayedArea: Double, stillArea: Double, iou: Double, acceptedStill: Bool) {
+        capture.debug(
+            "cropGate displayedArea=\(displayedArea, format: .fixed(precision: 4), privacy: .public) stillArea=\(stillArea, format: .fixed(precision: 4), privacy: .public) iou=\(iou, format: .fixed(precision: 4), privacy: .public) acceptedStill=\(acceptedStill, privacy: .public)"
+        )
+    }
+
+    /// 候选粘滞改写逐帧择优：粘滞候选替换当前最优时的相似度 IoU
+    /// （新选择与被替换选择的 bbox IoU——摊开书双候选振荡场景的止跳证据）。
+    static func stickyOverride(iou: Double) {
+        capture.debug(
+            "stickyOverride iou=\(iou, format: .fixed(precision: 4), privacy: .public)"
+        )
+    }
+
+    // MARK: - 版面还原对标 WPS 结构化诊断（spec/wps-parity-layout，plan D5/D9 / FR-002、FR-006）
+    //
+    // 两个可观测通道，真机验收（SC-002/SC-006）用 Console.app 检索：
+    // - `reconstructPath`：每页解析的通路决策（结构化 vs 几何回退 + 原因分类）；
+    // - `textSentinel`：导出前墨迹-文本对账的缺口汇总（四分类计数，只记不阻断）。
+    // 均为 debug 级 + privacy.public，与 `detectionTier`/`cropGate` 模式一致
+    // （需勾选 Include Debug Messages）。
+
+    /// 每页解析的通路决策结果（plan D9）。
+    enum ReconstructPath: String, Sendable {
+        /// iOS 26 `RecognizeDocumentsRequest` 结构化识别生效
+        case structured
+        /// Vision OCR + 几何管线回退
+        case geometric
+    }
+
+    /// 通路决策原因分类（plan D9：API 不可用/请求异常/结果无效/结构化成功/低版本回退）。
+    enum ReconstructPathReason: String, Sendable {
+        /// 结构化识别成功生效（structured 通路）
+        case structuredSuccess
+        /// 结构化识别器未注入（这条通路在当前构建/环境里不存在）
+        case apiUnavailable
+        /// `RecognizeDocumentsRequest` 请求抛错
+        case requestFailed
+        /// 识别返回但结果无效（无 container / 无可用内容）
+        case invalidResult
+        /// iOS < 26，`RecognizeDocumentsRequest` 不存在，直接走几何回退
+        case lowVersionFallback
+    }
+
+    /// 通路决策日志：每页解析恰一条。发射点 = `OnDeviceDocumentParser.resolveInputs`
+    /// 决策出口与 `VisionDocumentStructureRecognizer` 失败捕获点。
+    /// 页标识用 pageID（`DocumentParsing` 协议签名冻结，解析层拿不到页索引；
+    /// 与 `reconstructBaseImage` 的像素尺寸行按 pageID 对账）。
+    static func reconstructPath(pageID: UUID, path: ReconstructPath, reason: ReconstructPathReason) {
+        reconstruct.debug(
+            "reconstructPath page=\(pageID.uuidString, privacy: .public) path=\(path.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
+        )
+    }
+
+    /// 丢字哨兵日志（FR-006）：导出前墨迹-文本对账汇总，每页一条。
+    /// 四分类计数来自 `MissingTextReport`：figureOverlap（图形区属预期）/
+    /// structureSwallow（结构吞噬违规）/ edgeBand（页缘带）/ likelyMissed（疑似
+    /// OCR 漏识）。只记日志不阻断导出；gaps = 总缺口数（四分类之和）。
+    static func textSentinel(
+        page: Int,
+        gaps: Int,
+        figureOverlap: Int,
+        structureSwallow: Int,
+        edgeBand: Int,
+        likelyMissed: Int
+    ) {
+        reconstruct.debug(
+            "textSentinel page=\(page) gaps=\(gaps) figureOverlap=\(figureOverlap) structureSwallow=\(structureSwallow) edgeBand=\(edgeBand) likelyMissed=\(likelyMissed)"
+        )
+    }
+
+    /// containment 不变量（FR-004）：本页被表格/条码 bbox 剔除的行数（removed）
+    /// 与其中「结构未携带其文字、保留回文字层」的救回数（rescued）。
+    /// rescued > 0 = 有行的文字不在结构输出里 —— 静默丢字被拦截的第一手计数，
+    /// 真机排查丢字时先看这条。
+    static func reconstructContainment(removed: Int, rescued: Int) {
+        reconstruct.debug(
+            "containment removed=\(removed) rescued=\(rescued, privacy: .public)"
+        )
+    }
 }

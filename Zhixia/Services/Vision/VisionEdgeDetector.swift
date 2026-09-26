@@ -122,6 +122,9 @@ enum DetectionStrategy {
 }
 
 actor VisionEdgeDetector: EdgeDetecting {
+    /// 候选粘滞状态（仅 live 文档路径使用；actor 串行访问保证状态安全）。
+    private var sticky = CandidateSticky()
+
     func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? {
         detect(
             cgImage: frame.cgImage,
@@ -193,13 +196,30 @@ actor VisionEdgeDetector: EdgeDetecting {
         }
         let rawCandidates = [segmented].compactMap { $0 } + rectangles + relaxedRectangles
         let selection = DetectionStrategy.select(rawCandidates: rawCandidates, idCardWindow: idCardWindow)
+        // US3 候选粘滞（spec/wysiwyg-crop，plan D3，FR-006~007）：仅 live 文档
+        // 路径（`!stillImage && idCardWindow == nil`）在逐帧独立择优后应用——
+        // 摊开书从中线取景时右页与整书外轮廓逐帧交替胜出（面积比 ≈2:1，超
+        // smoother 的 areaJump 重置阈值），取景框因此持续跳动、永不锁定；
+        // 粘滞让与上次择优相似（IoU ≥ 0.60）的候选优先延续（先稳者胜），
+        // 连续 3 帧无相似候选即逃逸清锚（不粘死）。still（快门重检）与证件
+        // 模式路径不参与——still 是单帧无振荡问题，证件有比例窗语义。
+        let effective: DetectionStrategy.Selection?
+        if !stillImage, idCardWindow == nil {
+            let gated = sticky.apply(selection: selection, pool: rawCandidates)
+            if let selection, let gated, gated.quad != selection.quad {
+                ZhixiaLog.stickyOverride(iou: gated.quad.iou(with: selection.quad))
+            }
+            effective = gated
+        } else {
+            effective = selection
+        }
         ZhixiaLog.detectionTier(
             still: stillImage,
-            tier: selection?.tier ?? 0,
+            tier: effective?.tier ?? 0,
             candidates: rawCandidates.count,
-            selectedArea: selection?.quad.area ?? 0
+            selectedArea: effective?.quad.area ?? 0
         )
-        guard var quad = selection?.quad else { return nil }
+        guard var quad = effective?.quad else { return nil }
         // US6（plan D7）：still 路径择优后贴边吸附——检出框普遍内缩 1~3%，
         // 沿外法线恢复真实边缘。证件模式比例窗保持语义不变；live 路径不动。
         // 快门检测与整理页 refine 都经由本方法，单点接入全部受益。

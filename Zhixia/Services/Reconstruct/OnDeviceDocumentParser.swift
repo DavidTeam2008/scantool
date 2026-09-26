@@ -45,8 +45,8 @@ actor OnDeviceDocumentParser: DocumentParsing {
         // 状态栏 / App 导航栏 / 底部工具栏直接丢；URL、二维码内容降级成链接块，
         // 不再混进正文段落（练习册产物里 3 个 qrcode.5rs.me 链接的由来）。
         let (cleanedLines, demotedLines) = Self.filterNoise(inputs.lines)
-        // 「表格行不进段落」。iOS 26 通路下这里的 bbox 是 Apple 给的表格区域，
-        // 几何通路下是聚类出的表格外接框 —— 两者判据一致（-0.02 容差），
+        // 「表格行不进段落」的 bbox 基准。iOS 26 通路下是 Apple 给的表格区域，
+        // 几何通路下是锚点检测的外接框 —— 两者判据一致（-0.02 容差），
         // 所以两条通路共用这一个过滤即可（原先 v2/v1 各有一份同公式的 contains）。
         let tableBoxes = inputs.tables.map(\.bbox)
         let occupied = barcodes.map(\.bbox) + tableBoxes
@@ -73,15 +73,20 @@ actor OnDeviceDocumentParser: DocumentParsing {
             confirmedRegions: garbled.regions.count,
             lowestConfidence: garbled.lowestConfidence
         )
-        let leftover = cleanedLines.enumerated().filter { index, line in
-            // 乱码行不进文字层（FR-003：乱码文本不出现在还原结果与导出文档中）。
-            if garbled.isGarbled(index) { return false }
-            let point = CGPoint(x: line.boundingBox.midX, y: line.boundingBox.midY)
-            if tableBoxes.contains(where: { $0.insetBy(dx: -0.02, dy: -0.02).contains(point) }) {
-                return false
-            }
-            return !barcodes.contains { $0.bbox.insetBy(dx: -0.012, dy: -0.012).contains(point) }
-        }.map(\.element)
+        // containment 不变量（wps-parity-layout FR-004 / plan D4-②）：被表格/条码
+        // bbox 剔除的行必须被携带文本的结构覆盖 —— 表格行可在对应表格的单元格文本
+        // 里检索到，条码行与对应条码 payload 互为包含（QR 印的 URL 常被整行识别）。
+        // 未覆盖行不再静默丢弃（2026-09-21 "wrong bus!" 类丢字教训：结构吞了墨迹
+        // 却没带走文字）：保留进文字层继续走段落聚类，违规计数进日志。
+        let (leftover, removedByStructure, rescuedLines) = Self.splitCarriedLines(
+            cleanedLines,
+            garbled: garbled,
+            tables: inputs.tables,
+            barcodes: barcodes
+        )
+        if removedByStructure > 0 {
+            ZhixiaLog.reconstructContainment(removed: removedByStructure, rescued: rescuedLines)
+        }
         // 分栏（2026-09-12 真机反馈）：教材 / 练习册是左右两栏，而段落聚类与最终排序
         // 都假设单栏 → 左右栏会**逐行交错**。按栏分别排阅读序，栏与栏之间按栏序拼。
         // 单栏页面 `split` 返回一栏，行为与改动前完全一致。
@@ -291,6 +296,87 @@ actor OnDeviceDocumentParser: DocumentParsing {
         }
     }
 
+    // MARK: - containment 不变量（wps-parity-layout FR-004 / plan D4-②）
+
+    /// 「表格/条码行不进段落」过滤 + containment 不变量执行。
+    ///
+    /// 返回 (leftover, removed, rescued)：
+    /// - leftover：进段落聚类的文字层（乱码行除外，见 `GarbledRegionDetector`）；
+    /// - removed：被表格/条码 bbox 剔除、且文字确被对应结构携带的行数；
+    /// - rescued：落在结构 bbox 里但结构**没有**携带其文字、依 FR-004 保留回
+    ///   文字层的行数（= 被拦截的静默丢字数，进 `containment` 日志）。
+    private static func splitCarriedLines(
+        _ lines: [OCRLine],
+        garbled: GarbledRegionJudgement,
+        tables: [DetectedTable],
+        barcodes: [DetectedBarcode]
+    ) -> (leftover: [OCRLine], removed: Int, rescued: Int) {
+        var leftover: [OCRLine] = []
+        var removed = 0
+        var rescued = 0
+        for (index, line) in lines.enumerated() {
+            // 乱码行不进文字层（spec/layout-restore FR-003：乱码文本不出现在
+            // 还原结果与导出文档中，原像素由 .artwork 块透出）—— 与 containment 无关。
+            if garbled.isGarbled(index) { continue }
+            let point = CGPoint(x: line.boundingBox.midX, y: line.boundingBox.midY)
+            let carryingTables = tables.filter {
+                $0.bbox.insetBy(dx: -0.02, dy: -0.02).contains(point)
+            }
+            let carryingBarcodes = barcodes.filter {
+                $0.bbox.insetBy(dx: -0.012, dy: -0.012).contains(point)
+            }
+            if carryingTables.isEmpty && carryingBarcodes.isEmpty {
+                leftover.append(line)
+                continue
+            }
+            if Self.isCarried(line.text, tables: carryingTables, barcodes: carryingBarcodes) {
+                removed += 1
+            } else {
+                rescued += 1
+                leftover.append(line)
+            }
+        }
+        return (leftover, removed, rescued)
+    }
+
+    /// 行文字是否被剔除它的结构携带。
+    ///
+    /// 宽松方向刻意选「多判覆盖」：**去全部空白**后做包含比较 —— v2 建格用
+    /// 「trim + 空格拼接」、Apple 单元格文本自带首尾空白，单元格边界处的空白
+    /// 不构成文字差异（「能量1429千焦17%」与单元格 ["能量","1429千焦","17%"]
+    /// 必须判覆盖）。反过来，文字真的不在结构里时（条码说明不是 payload、
+    /// 表格行被识别端丢弃），宁可保留回文字层也不赌「结构丢了它」。
+    private static func isCarried(
+        _ text: String,
+        tables: [DetectedTable],
+        barcodes: [DetectedBarcode]
+    ) -> Bool {
+        let normalized = Self.squeezed(text)
+        // 空白行没有可丢的文字 —— 结构吞了也不构成丢字。
+        if normalized.isEmpty { return true }
+        for table in tables {
+            let cells = table.table.rows
+                .flatMap { $0 }
+                .map(Self.squeezed)
+                .joined()
+            if cells.contains(normalized) { return true }
+        }
+        for barcode in barcodes {
+            let payload = Self.squeezed(barcode.payload)
+            // 空 payload（未解码的码）判不了覆盖 —— 交给下一个结构或救回。
+            guard !payload.isEmpty else { continue }
+            if payload.contains(normalized) || normalized.contains(payload) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 去全部空白（含全角空格/换行），供 containment 覆盖判定做宽松包含比较。
+    private static func squeezed(_ text: String) -> String {
+        String(text.filter { !$0.isWhitespace })
+    }
+
     // MARK: - 装配（按栏排阅读序）
 
     /// 把块按栏装配成阅读序。
@@ -354,9 +440,20 @@ actor OnDeviceDocumentParser: DocumentParsing {
         pageID: UUID,
         image: CGImage?
     ) async throws -> StructuredDocumentPage {
-        if let structureRecognizer,
-           let structured = await structureRecognizer.recognize(imageURL: imageURL, pageID: pageID),
-           structured.hasContent {
+        guard let structureRecognizer else {
+            // 没有可用的结构化识别器（低版本注入 nil / 测试几何通路）→ 唯一通路是几何。
+            ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .apiUnavailable)
+            return try await geometricInputs(imageURL: imageURL, pageID: pageID, image: image)
+        }
+        if let structured = await structureRecognizer.recognize(imageURL: imageURL, pageID: pageID) {
+            // 真实识别器在「识别失败」的捕获点已经发过一条带具体原因的线（每页一条，不在这里重复）；
+            // 走到这里说明拿到了非 nil 结果。真实识别器对空结果返回 nil，非 nil 却无内容
+            // 只可能出现在替身违反契约时 —— 补一条 invalidResult 兜底，保证决策线不缺。
+            guard structured.hasContent else {
+                ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .invalidResult)
+                return try await geometricInputs(imageURL: imageURL, pageID: pageID, image: image)
+            }
+            ZhixiaLog.reconstructPath(pageID: pageID, path: .structured, reason: .structuredSuccess)
             return mergingBarcodes(structured, image: image)
         }
         return try await geometricInputs(imageURL: imageURL, pageID: pageID, image: image)
@@ -384,20 +481,21 @@ actor OnDeviceDocumentParser: DocumentParsing {
         return merged
     }
 
-    /// 几何回退：Vision OCR + `TableGridV2Detector`（锚点驱动）/ `OnDeviceTableCluster`（v1 兜底）。
+    /// 几何回退：Vision OCR + `TableGridV2Detector`（锚点驱动）。
     private func geometricInputs(imageURL: URL, pageID: UUID, image: CGImage?) async throws -> StructuredDocumentPage {
         let ocr = try await recognizer.recognize(imageURL: imageURL, pageID: pageID)
         guard ocr.hasText else {
             throw ZhixiaError.ocrFailed
         }
         let barcodes = image.map { barcodeDetector.detect(in: $0) } ?? []
-        // M2：先用 `TableGridV2Detector`（锚点驱动）尝试；
-        //    失败再回退 v1 `OnDeviceTableCluster`（ad-hoc 表，无表标题）。
+        // 表格只信两种来源（FR-003）：结构化识别通路（resolveInputs 优先）或
+        // 锚点驱动的 `TableGridV2Detector`。v1 `OnDeviceTableCluster` 的
+        // 「按 midX 聚类推列」启发式已退役（wps-parity-layout FR-003 / D2）：
+        // 在真机 OCR 上被证伪 —— Vision 只给 line 级 bbox，整行单元格会被
+        // 合并成一个 line，聚类推不出列 → 产出假表/漏表。类与直连单测休眠保留。
         var tables: [DetectedTable] = []
         if let v2 = TableGridV2Detector.detect(from: ocr.lines, profile: .nutrition) {
             tables = [DetectedTable(table: v2.table, bbox: v2.bbox)]
-        } else if let v1 = OnDeviceTableCluster.detect(from: ocr.lines) {
-            tables = [v1]
         }
         return StructuredDocumentPage(
             lines: ocr.lines,

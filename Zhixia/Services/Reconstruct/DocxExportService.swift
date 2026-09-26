@@ -139,7 +139,13 @@ actor DocxExportService: DocxRendering {
                     // （乱码行已在解析层剔除），段落流里没有可表示的内容。
                     continue
                 default:
-                    body += paragraphXML(block.text, style: "Normal", bold: block.style.isBold, size: 24)
+                    // 流式档段落粒度（wps-parity-layout US4 / T018）：块内行按
+                    // 阅读段边界切成多段发射（条目号 / 行首回撤 / 前句完结，
+                    // `FlowParagraphSplitter`）；块粒度与块序不动（对话区
+                    // 聚类钉 + 阅读序装配不变），无行几何的块恒等单段。
+                    for paragraph in FlowParagraphSplitter.paragraphTexts(in: block) {
+                        body += paragraphXML(paragraph, style: "Normal", bold: block.style.isBold, size: 24)
+                    }
                 }
             }
         }

@@ -1,0 +1,50 @@
+# Golden reading order: WPS 扫描产物（docs/Word_WPS_GrammarPast_simple_2026-09-21.docx）
+# 提取自 word/document.xml 段落流（2026-09-22，spec/wps-parity-layout T001 / R&D-D2）。
+# 对照输入 = docs/fixtures/images/grammar-worksheet.jpg（1683x2200，即解析器确切输入）。
+# 结构：42 个非空文本段 + 2 个纯图段（[image ...] 行）= 44 行；阅读序 = 文档序。
+# 用途：段落粒度对照（US4，段落数 ±30%）与阅读序锚点断言（US1/US2/US4）；
+#       "wrong    bus!" 为 US2 丢字追踪的锚点（保留 WPS 原始空格形态，检索时需折叠空白）。
+Grammar
+Past simple
+Complete the dialogues with the correct past simple form of the verbs in the box.You need to use some of the verbs more than once.
+do  earn  go   have   make   meet  spend  take
+1    A: Yesterdayl                       three hours doing those physics exercises for homework.
+B:I. … … … … … … … … … … .me a long time,too.
+………… you  …………………………the maths problems? A:No,|………………………………………(not)time.
+2    A:  My sister…                     a music degree at university and now she plays in an orchestra.
+B: … … … … … .she … … … … … … … … … …   a lot  of money when she started?
+A:  No, but she………………………fun.
+3     A:    ……………………… to a summer camp last July. B:………… you………………………many friends?
+A:   Yes, … … … … … … … … … … …  people    from    lots    of   different countries.
+4 A:                                                  (not)very   well   in  the   exam   last week.I  know                    … … … ….a lot of mistakes.
+B:That's because you……………………………………(not)much time  revising.
+A:I   know. I thought……………………………a good memory, but I was wrong!
+Past simple,past continuous and used to  Choose the correct option in italics.
+1    I used to enjoy/was enjoying history when I was in primary school but now it's very difficult.
+2   He gave/was giving a presentation in the
+communication skills class when the computer stopped/was stopping working.
+3   Did you spend/Were you spending a lot of money when you were on holiday last year?
+4   It was raining/used to rain  when we left the house but later the sun came/was coming out.
+5    I played /was playing on my phone when I received/ was receiving a text.
+6  My  parents didn't use to let/weren't letting me go out on school days.
+7    The children  made/were   making   so  much  noise in the playground   that   they  didn't  hear/weren't  hearing  the  bell.
+8   We decided /were  deciding to have a cup of coffee while we used to shop/ were shopping in the  city   centre.
+[image]
+Complete the text with the past simple or past
+continuous form of the verbs in brackets.
+A terrible trip!
+On  the  day  of the  school  trip  I(1)……………………………………… (wake up)as usual at 8 o'clock to go to school.
+I(2)……………………………………… (leave)the   house   when
+I   realisedI(3)  …………… …………………………(not have)my
+sandwiches,soI(4) … … … … … … …          …………………(run)back  inside.   I(5)… …………………………… (set  off)again  and   I
+(6) ……………………………………(walk)along the road when  suddenly it(7)…………………………………………(start)to rain.At that   moment,my   friend   Alice   (8)………………………………………… (come)past in her mother's car and they
+(9) …  …………………………………(stop)to pick me up.The
+excursion  (10) …………………………………………(be)to the wildlife park  about   15  minutes   from   our  town.When  we
+(11)……………………………………………… (arrive)at   school, the   bus   was  waiting  outside,so  we (12) ……  ………………………… (get on)and sat down.
+Alice andI(13) … … … … … … … … … … … … … …  (talk),so     we
+(14)………  …………………………(not notice)the other students  on  the  bus.Half  an   hour  later  we
+(15) …………………………………………(look)out of the window.
+We(16) ………………………………………(be)at     the      museum,not   in  the  park! We looked at the other people  around  us and    we (17) ………………………………… (see)they  were  from another class.It(18)……………………………………………(be)the
+wrong    bus!
+[image]
+2 At school

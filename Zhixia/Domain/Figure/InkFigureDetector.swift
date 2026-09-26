@@ -72,6 +72,66 @@ enum InkFigureDetector {
         detect(input).figures
     }
 
+    // MARK: - 原始墨迹连通域（wps-parity-layout plan D5 / T011）
+
+    /// 原始墨迹连通域：**不做任何「像不像配图」的质量闸门**
+    /// （minArea / minHeight / aspect / fill / detail / textCoverage 全不参与），
+    /// 只做栅格化 + 墨迹连通域 + 归一化外接框，也不做相邻合并（行级墨迹
+    /// 必须保持独立，合并会把它并回段落块）。
+    ///
+    /// 供墨迹-文本对账哨兵（`InkRegionProvider` → `InkTextReconciler`）作
+    /// 「原页哪里有墨」的证据：**行级漏识的墨（如 "wrong bus!"）高度只有
+    /// 1~2% 页高，过不了 figures 通道的 minHeight/minArea 闸门** —— 对账
+    /// 若从 figures 出发，likelyMissed 分类在结构上不可能出现。
+    /// 唯一的过滤是 ≥ `rawInkMinCells` 个墨格（挡栅格级噪点）。
+    static let rawInkMinCells = 4
+
+    static func rawInkRegions(in image: CGImage) -> [CGRect] {
+        guard let grid = rasterize(image) else { return [] }
+        let columns = grid.columns
+        let rows = grid.rows
+        var isInk = [Bool](repeating: false, count: columns * rows)
+        for index in 0..<(columns * rows) {
+            isInk[index] = grid.darkFraction[index] >= 0.25
+        }
+        var visited = [Bool](repeating: false, count: columns * rows)
+        var regions: [CGRect] = []
+        for start in 0..<(columns * rows) where isInk[start] && !visited[start] {
+            var stack = [start]
+            visited[start] = true
+            var cells = 0
+            var minColumn = columns, maxColumn = 0, minRow = rows, maxRow = 0
+            while let current = stack.popLast() {
+                let column = current % columns
+                let row = current / columns
+                cells += 1
+                minColumn = min(minColumn, column); maxColumn = max(maxColumn, column)
+                minRow = min(minRow, row); maxRow = max(maxRow, row)
+                for (dc, dr) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nc = column + dc
+                    let nr = row + dr
+                    guard nc >= 0, nc < columns, nr >= 0, nr < rows else { continue }
+                    let next = nr * columns + nc
+                    if isInk[next], !visited[next] {
+                        visited[next] = true
+                        stack.append(next)
+                    }
+                }
+            }
+            // 栅格级噪声过滤：单格/两三格的孤立暗点不是「墨迹区域」
+            // （一行 10 字符的墨 ≈ 20+ 格，真墨迹远在门槛之上）。
+            guard cells >= rawInkMinCells else { continue }
+            // 网格坐标（原点左上）→ Vision 归一化（原点左下），与 figures 通道同款换算。
+            regions.append(CGRect(
+                x: CGFloat(minColumn) / CGFloat(columns),
+                y: 1 - CGFloat(maxRow + 1) / CGFloat(rows),
+                width: CGFloat(maxColumn - minColumn + 1) / CGFloat(columns),
+                height: CGFloat(maxRow - minRow + 1) / CGFloat(rows)
+            ))
+        }
+        return regions
+    }
+
     /// 双通道检测：figures（配图）+ textCoveredInkRegions（被文字覆盖的墨块证据）。
     static func detect(_ input: Input) -> Output {
         guard let grid = rasterize(input.image) else {

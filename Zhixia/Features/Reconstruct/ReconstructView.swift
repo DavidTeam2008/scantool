@@ -4,6 +4,13 @@ import UIKit
 struct ReconstructView: View {
     @Bindable var viewModel: ReconstructViewModel
 
+    /// US5（wps-parity-layout T020）：用户档位选择持久化（FR-009）。键与
+    /// 还原语义都在 `ExportTier`（`preferenceKey` / `init(persistedRawValue:)`，
+    /// 未设置/非法值回退默认档 flow）—— 首次进入页面时在 `.task` 里同步进
+    /// `viewModel.outputTier`，切换时在 `tierBinding.set` 里写回：预览渲染与
+    /// 导出产物从同一次重建起就反映用户选择（预览/导出同源）。
+    @AppStorage(ExportTier.preferenceKey) private var persistedTierRawValue: String = ""
+
     /// US4 / R3（spec/scan-fidelity plan D4）：重建成功后的全文回填回调，
     /// 透传给 `viewModel.onContentReady` —— `DocumentView` 用它把 blob 送进
     /// `DocumentViewModel.applyOCRBlob`（与手动 OCR 同一条落库路径）。
@@ -48,6 +55,10 @@ struct ReconstructView: View {
             // US4：先接线再重建 —— 回调必须在首次 `reconstruct()` 成功前就位；
             // 失败重试（reconstruct.retry）路径复用已接线的回调。
             viewModel.onContentReady = onContentReady
+            // US5（T020）：持久化档位先于首次重建同步 —— 未设置/非法值回退
+            // 默认档 flow（`ExportTier(persistedRawValue:)` 内建），预览与导出
+            // 从第一次渲染起就是用户选的档。同档 no-op（`setTier` guard）。
+            viewModel.setTier(ExportTier(persistedRawValue: persistedTierRawValue).outputTier)
             if viewModel.reconstructed == nil, !viewModel.isWorking {
                 await viewModel.reconstruct()
             }
@@ -194,18 +205,23 @@ struct ReconstructView: View {
         .background(Tokens.paper)
     }
 
-    /// 档位选择器：版面还原（默认）/ 结构化。
-    /// 切档会走 `viewModel.setTier`，把已导出的 docx 作废，提示用户重新导出。
+    /// 档位选择器：流式（默认）/ 高保真。
+    /// 切档走 `viewModel.setTier`（作废已导出的 docx，提示重新导出）+ 写回
+    /// `@AppStorage`（US5 / T020：选择持久化，下次进入页面保持）。
     ///
-    /// 2026-09-18：`R2OutputTier.selectable` 恢复为两项（spec/layout-restore D1/FR-006），
+    /// 选项迭代 `ExportTier.allCases`（用户档位，flow 在前 = 默认档居首），
+    /// `tag` 落到内部导出档位 `R2OutputTier` —— selection 与 `viewModel.outputTier`
+    /// 同型，预览/导出消费同一来源（FR-009 同源）。显示名走
+    /// `ExportTier.displayName`（reconstruct.tier.flow / .highFidelity，双语）。
+    /// 2026-09-18：`R2OutputTier.selectable` 恢复两项（spec/layout-restore D1/FR-006），
     /// 选择器恢复渲染；旧 B/C 档（重排版/衬底图）已从枚举中删除。
     @ViewBuilder
     private var tierPicker: some View {
         if R2OutputTier.selectable.count > 1 {
             VStack(alignment: .leading, spacing: 4) {
                 Picker("reconstruct.tier", selection: tierBinding) {
-                    ForEach(R2OutputTier.selectable, id: \.self) { tier in
-                        Text(tier.displayName).tag(tier)
+                    ForEach(ExportTier.allCases, id: \.self) { tier in
+                        Text(tier.displayName).tag(tier.outputTier)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -220,7 +236,12 @@ struct ReconstructView: View {
     private var tierBinding: Binding<R2OutputTier> {
         Binding(
             get: { viewModel.outputTier },
-            set: { viewModel.setTier($0) }
+            set: { newValue in
+                // US5（T020）：选择即时持久化 + 推进 VM —— @AppStorage 写回用户
+                // 档位（flow/highFidelity），`setTier` 作废既有导出并让预览随档切换。
+                persistedTierRawValue = ExportTier(outputTier: newValue).rawValue
+                viewModel.setTier(newValue)
+            }
         )
     }
 

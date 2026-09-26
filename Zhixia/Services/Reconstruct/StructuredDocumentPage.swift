@@ -5,9 +5,9 @@ import Foundation
 ///
 /// 存在的理由：把这三件事从 `OnDeviceDocumentParser` 里抽出来，让
 /// **iOS 26 的 `RecognizeDocumentsRequest`**（`VisionDocumentStructureRecognizer`）
-/// 与**几何回退管线**（Vision OCR + `TableGridV2Detector` / `OnDeviceTableCluster`）
-/// 产出**同样的形状**。这样下游 —— 噪声过滤 / 阅读序 / 配图 / 块排序 / 三档导出 ——
-/// 一行都不用改，两条通路的差异被关在这一个类型里。
+/// 与**几何回退管线**（Vision OCR + `TableGridV2Detector`；v1 `OnDeviceTableCluster`
+/// 已退役休眠）产出**同样的形状**。这样下游 —— 噪声过滤 / 阅读序 / 配图 / 块排序 /
+/// 三档导出 —— 一行都不用改，两条通路的差异被关在这一个类型里。
 ///
 /// 坐标一律是 **Vision 归一化坐标（原点左下，y 向上）**，与 `OCRLine.boundingBox` 同系。
 /// 不要在这里做 y 翻转。

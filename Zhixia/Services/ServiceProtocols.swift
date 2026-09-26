@@ -136,21 +136,24 @@ protocol DocxRendering: Sendable {
     func makeDocx(_ document: ReconstructDocument, fileName: String, tier: R2OutputTier) async throws -> URL
 }
 
-/// DOCX 导出档位（spec/layout-restore plan D1/D8）。
-/// - `restored`（版面还原，默认）：整页原图统一底座 + 块级覆盖 mask + 元素原位渲染；
-///   预览与导出同构（动态 sectPr + behindDoc 底图 + 浮动文本框 + srcRect 浮动图 + 浮动表格）。
-/// - `structured`（结构化）：段落流 + 表格 + 内联图，最稳（行为与历史版本完全一致）。
+/// DOCX 导出档位（spec/wps-parity-layout plan D1/D8）。
+/// - `structured`（流式，**默认**）：段落流 + 表格 + 内联图，与 WPS 默认的
+///   「扫完即可再编辑」产物对齐；预览与导出同构。
+/// - `restored`（高保真 / 版面还原）：整页原图统一底座 + 块级覆盖 mask + 元素原位渲染；
+///   动态 sectPr + behindDoc 底图 + 浮动文本框 + srcRect 浮动图 + 浮动表格。
 ///
 /// 历史：曾经还有 `.anchored`（B 档重排版）/`.background`（C 档衬底图）两个 case，
 /// 2026-09-12 因 bbox 不准被下架（`selectable` 收缩到只剩 `.structured`）；
 /// 2026-09-18 随「版面还原」特性**删除**——它们从未对用户开放，且
 /// `ReconstructDocument`（IR v2）从不编码落盘，无数据兼容风险（plan D1）。
 /// 可复用的 XML 部件（EMU 换算、y 翻转、锚定图结构）已并入 `.restored` 实现。
+/// 2026-09-22（wps-parity-layout T006）：默认档翻回 `.structured`（流式），
+/// `restored` 成为用户显式选择的第二档（用户面措辞流式/高保真见 `ExportTier`）。
 enum R2OutputTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
     case restored
     case structured
 
-    /// UI 里用户可选择的档位。`.restored` 在前 = 默认档（版面还原）。
+    /// UI 里用户可选择的档位（顺序 = Picker 展示序，默认档语义见 `ExportTier.defaultTier`）。
     static let selectable: [R2OutputTier] = [.restored, .structured]
 
     /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.*`，spec layout-restore T017）。

@@ -9,13 +9,14 @@ final class ReconstructViewModel {
     var docxURL: URL?
     var pdfURL: URL?
     var isExporting = false
-    /// 当前选中的导出档位（版面还原 / 结构化，spec/layout-restore plan D1/FR-001）。
-    /// **默认版面还原** —— 用户拍的是「版面」，默认产物就该与拍摄的原始版面同构。
+    /// 当前选中的导出档位（流式 / 高保真，spec/wps-parity-layout plan D1/FR-001）。
+    /// **默认流式**（`.structured`）—— 对照基线改为「默认与 WPS 一致的流式再编辑
+    /// 产物」；高保真（`.restored`，版面还原）成为用户显式选择的第二档。
     ///
     /// 档位**同时**影响两件事：① 导出的 Word 产物；② 页面预览的渲染方式。
     /// 早期版本档位只作用于 ①，预览永远是结构化块流 —— 用户切档看到画面纹丝不动，
     /// 直接反馈「选了没反应」。现在 `ReconstructView.preview` 按档位分两种渲染。
-    var outputTier: R2OutputTier = .restored
+    var outputTier: R2OutputTier = .structured
 
     /// 切换档位。必须走这个方法而不是直接赋值：
     /// 切档后旧产物即失效 —— 若不清 `docxURL`，导出按钮会一直是 ShareLink，
@@ -27,7 +28,7 @@ final class ReconstructViewModel {
         guard tier != outputTier else { return }
         outputTier = tier
         docxURL = nil
-        ZhixiaLog.reconstructTier(tier, isDefault: tier == .restored)
+        ZhixiaLog.reconstructTier(tier, isDefault: tier == .structured)
     }
 
     /// US4 / R3（spec/scan-fidelity plan D4）：重建成功后的全文回填回调。
@@ -44,6 +45,9 @@ final class ReconstructViewModel {
     private let parser: any DocumentParsing
     private let docx: any DocxRendering
     private let searchablePDF: any SearchablePDFRendering
+    /// 墨迹提取（FR-006 哨兵证据源，T013 接线）。默认 `InkRegionProvider()`：
+    /// 既有调用点（ReconstructView / 测试替身）不传即得生产行为，注入替身可控墨迹。
+    private let inkRegions: any InkRegionProviding
 
     init(
         document: ScanDocument,
@@ -51,7 +55,8 @@ final class ReconstructViewModel {
         fileStore: any PageFileStoring,
         parser: any DocumentParsing,
         docx: any DocxRendering,
-        searchablePDF: any SearchablePDFRendering
+        searchablePDF: any SearchablePDFRendering,
+        inkRegions: any InkRegionProviding = InkRegionProvider()
     ) {
         self.document = document
         self.scanPages = scanPages
@@ -59,6 +64,7 @@ final class ReconstructViewModel {
         self.parser = parser
         self.docx = docx
         self.searchablePDF = searchablePDF
+        self.inkRegions = inkRegions
     }
 
     var blocks: [ReconstructBlock] {
@@ -116,7 +122,7 @@ final class ReconstructViewModel {
         guard !isWorking else { return }
         isWorking = true
         error = nil
-        ZhixiaLog.reconstructTier(outputTier, isDefault: outputTier == .restored)
+        ZhixiaLog.reconstructTier(outputTier, isDefault: outputTier == .structured)
         defer { isWorking = false }
         var pages: [ReconstructPage] = []
         for page in scanPages {
@@ -211,10 +217,45 @@ final class ReconstructViewModel {
         isExporting = true
         defer { isExporting = false }
         do {
+            // FR-006（T013）：导出前逐页墨迹-文本对账 —— 只记日志，不阻断，
+            // 对账自身异常也不让导出失败（内部吞掉，见 `runTextSentinel`）。
+            await runTextSentinel()
             store(try await make(reconstructed))
         } catch {
             self.error = .exportFailed
         }
+    }
+
+    /// 丢字哨兵（FR-006 / plan D5，T013 接线）：导出前逐页对账
+    /// 「原页墨迹（`InkRegionProviding`）vs 文字层（`InkTextReconciler`）」，
+    /// 缺口四分类计数进 `ZhixiaLog.textSentinel`（每页一条）。
+    ///
+    /// - **只记不阻断**：墨迹为空（图不可解码 / 无墨）→ 零缺口报告照常记；
+    /// - 墨迹取 `pageImageURL` —— 即 parse 用图（`baseImageRelativePath` 优先），
+    ///   与块 bbox 同一坐标参照系；
+    /// - 解码/栅格化是百毫秒级 CPU 活：主线程只解析 URL，重活丢后台线程，
+    ///   不卡导出按钮。
+    private func runTextSentinel() async {
+        guard let reconstructed else { return }
+        let entries: [(index: Int, page: ReconstructPage, imageURL: URL?)] =
+            reconstructed.pages.enumerated().map { index, page in
+                (index, page, pageImageURL(for: page.pageID))
+            }
+        let provider = inkRegions
+        await Task.detached(priority: .utility) {
+            for entry in entries {
+                let ink = entry.imageURL.map { provider.inkRegions(imageURL: $0) } ?? []
+                let report = InkTextReconciler.reconcile(page: entry.page, inkRegions: ink)
+                ZhixiaLog.textSentinel(
+                    page: entry.index,
+                    gaps: report.gaps.count,
+                    figureOverlap: report.count(of: .figureOverlap),
+                    structureSwallow: report.count(of: .structureSwallow),
+                    edgeBand: report.count(of: .edgeBand),
+                    likelyMissed: report.count(of: .likelyMissed)
+                )
+            }
+        }.value
     }
 
     private func fileName(extension ext: String) -> String {

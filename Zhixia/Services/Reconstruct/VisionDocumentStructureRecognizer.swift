@@ -34,18 +34,31 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
     }
 
     func recognize(imageURL: URL, pageID: UUID) async -> StructuredDocumentPage? {
-        guard #available(iOS 26.0, *) else { return nil }
+        guard #available(iOS 26.0, *) else {
+            // 通路决策可观测（spec/wps-parity-layout plan D9 / FR-002、SC-006）：
+            // 返回 nil 即调用方回退几何管线，所以这里的有效通路就是 geometric。
+            ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .lowVersionFallback)
+            return nil
+        }
         do {
             // 直接吃 URL：省掉一次全分辨率解码（调用方为了裁图本来还要再解一次）。
             var request = RecognizeDocumentsRequest()
             request.textRecognitionOptions.recognitionLanguages = languages
             request.textRecognitionOptions.useLanguageCorrection = true
             let observations = try await request.perform(on: imageURL)
-            guard let container = observations.first?.document else { return nil }
+            guard let container = observations.first?.document else {
+                ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .invalidResult)
+                return nil
+            }
             let page = Self.map(container)
             // 识别不出结构时返回 nil 而不是空结果 —— 契约要求调用方在这种情况回退几何管线。
-            return page.hasContent ? page : nil
+            guard page.hasContent else {
+                ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .invalidResult)
+                return nil
+            }
+            return page
         } catch {
+            ZhixiaLog.reconstructPath(pageID: pageID, path: .geometric, reason: .requestFailed)
             ZhixiaLog.image.debug("RecognizeDocumentsRequest 失败，回退几何管线：\(String(describing: error))")
             return nil
         }

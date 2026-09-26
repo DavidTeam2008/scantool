@@ -48,14 +48,28 @@ enum OCRNoiseFilter {
         // 2. 状态栏：HH:MM 开头且整体很短（"20:14C"、"9:41 "）
         if looksLikeStatusBar(trimmed) { return .drop }
 
-        // 3. UI chrome：靠边 + 短 + 命中界面词
+        // 3. UI chrome：靠边 + 短 + 命中界面词。
+        //    T010（wps-parity-layout FR-005）复核收紧两处：
+        //    a) 句末带标点的短行按正文处理 —— 界面按钮文案不带句号/叹号，
+        //       正文短句带（"wrong bus!" = 10 字符踩线教训的一致化）；
+        //    b) 拉丁界面词改整词匹配（见 `looksLikeUIChrome`）。
         if (context.isNearTopEdge || context.isNearBottomEdge),
            trimmed.count <= 12,
+           !Self.endsWithSentencePunctuation(trimmed),
            looksLikeUIChrome(trimmed) {
             return .drop
         }
 
         return .keep
+    }
+
+    /// 句末标点判定（wps-parity-layout FR-005）：正文短句带句末标点，
+    /// UI 标签 / 页眉不带。短不短不可靠（"wrong bus!" 恰好 10 字符踩线），
+    /// 像不像句子更可靠 —— 页眉短行规则与页缘 chrome 规则共用的兜底判据。
+    static func endsWithSentencePunctuation(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last else { return false }
+        return ".!?。！？…".contains(last)
     }
 
     // MARK: - 判定
@@ -96,16 +110,30 @@ enum OCRNoiseFilter {
         return text.range(of: pattern, options: .regularExpression) != nil
     }
 
-    /// 界面常用词。刻意保持短表 —— 宁可漏，不要误杀正文。
-    private static let chromeWords = [
+    /// CJK 界面词（子串命中）。刻意保持短表 —— 宁可漏，不要误杀正文。
+    private static let cjkChromeWords = [
         "更多", "分享", "加页", "收藏", "返回", "首页", "我的", "设置", "搜索",
-        "完成", "取消", "保存", "编辑", "全选", "下一页", "上一页",
+        "完成", "取消", "保存", "编辑", "全选", "下一页", "上一页"
+    ]
+
+    /// 拉丁界面词（整词命中）。与 CJK 分列是因为匹配语义不同：
+    /// T010（FR-005）复核发现子串匹配会误杀正文 —— "homework" 含 "home"、
+    /// "moreover" 含 "more"、"saved" 含 "save"；`\b` 整词边界消除这类误伤，
+    /// 真正的 UI 文案（"back"、"done"）不受影响。
+    private static let latinChromeWords = [
         "back", "share", "more", "done", "cancel", "save", "edit", "home"
     ]
 
     private static func looksLikeUIChrome(_ text: String) -> Bool {
         let lower = text.lowercased()
-        if chromeWords.contains(where: { lower.contains($0) }) { return true }
+        // CJK：子串命中（中文 UI 文案常是多词拼接，如「文本分享加页」里的「分享」「加页」）。
+        if cjkChromeWords.contains(where: { lower.contains($0) }) { return true }
+        // 拉丁：整词命中（\b 边界，"homework" ≠ "home"）。
+        for word in latinChromeWords {
+            if lower.range(of: "\\b\(word)\\b", options: .regularExpression) != nil {
+                return true
+            }
+        }
         // 导航箭头 + 短串，如 "<1to you更多"、"〈 详情"
         if text.count <= 10, text.contains("<") || text.contains("〈") || text.contains("‹") {
             return true

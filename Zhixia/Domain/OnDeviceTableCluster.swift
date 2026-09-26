@@ -7,6 +7,16 @@ struct DetectedTable: Equatable, Sendable {
 }
 
 enum OnDeviceTableCluster {
+    /// ⚠️ 已退役（wps-parity-layout FR-003 / D2），**不在生产管线的任何调用点上**。
+    ///
+    /// 「按 OCR 行 midX 聚类推列」的启发式在真机 OCR 上被证伪：Vision 只给
+    /// line 级 bbox，真机会把整行单元格合并成一个 line，聚类推不出列结构，
+    /// 产出假表或漏表（`realDeviceOcrStillLacksTable` known-issue 记录了这一缺陷）。
+    /// 表格现只来自两条通路：结构化识别（`VisionDocumentStructureRecognizer`）
+    /// 或锚点驱动的 `TableGridV2Detector`。
+    ///
+    /// 保留原因：直连单测（`ReconstructTests` / `ReconstructV2Tests`）仍钉住
+    /// 该启发式的行为边界，作为对照基线；未来若要复活，先过这批休眠测试。
     static func detect(from lines: [OCRLine]) -> DetectedTable? {
         let cells = lines.filter(isCell)
         guard cells.count >= 6 else { return nil }

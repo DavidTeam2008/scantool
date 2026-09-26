@@ -184,6 +184,265 @@ struct OnDeviceReadingOrderRowClusteringTests {
         }
     }
 
+    // MARK: - wps-parity-layout T014（FR-005 页眉短行规则收紧，T010 落地）
+
+    /// T010 收紧点 ①：位置约束从「上缘擦过」（maxY > 0.93）改为「整行落页顶
+    /// 窄带」（minY > 0.93）。上缘擦过 0.93 但整行没挤进顶部 7% 的内容短行
+    /// 不再被当页眉丢；窄带内的「Test 4」式孤立短页眉仍稳定命中。
+    @Test("页眉窄带收紧：上缘擦过 0.93 的内容短行保留，窄带内孤立短页眉仍被剔")
+    func headerRuleRequiresWholeLineInTopBand() {
+        let body = OCRLine(
+            text: "Choose the correct option A or B and write it down",
+            boundingBox: CGRect(x: 0.10, y: 0.75, width: 0.80, height: 0.05)
+        )
+        // 擦带内容行：maxY 0.95 擦过 0.93，但 minY 0.90 → 旧规则误剔、新规则保留
+        let grazing = OCRLine(
+            text: "Quiz",
+            boundingBox: CGRect(x: 0.40, y: 0.90, width: 0.20, height: 0.05)
+        )
+        let grazingBlocks = OnDeviceReadingOrder.makeBlocks(from: [grazing, body])
+        #expect(
+            grazingBlocks.map(\.text).joined(separator: "\n").contains("Quiz"),
+            "上缘擦过窄带的内容短行不得被当页眉丢弃"
+        )
+
+        // 对照：整行落窄带（minY 0.95）+ 后行远长于它 → 仍按页眉剔
+        let header = OCRLine(
+            text: "Test 9",
+            boundingBox: CGRect(x: 0.80, y: 0.95, width: 0.15, height: 0.02)
+        )
+        let headerBlocks = OnDeviceReadingOrder.makeBlocks(from: [header, body])
+        #expect(
+            !headerBlocks.map(\.text).joined(separator: "\n").contains("Test 9"),
+            "窄带内孤立短页眉仍应被剔除"
+        )
+    }
+
+    /// T010 收紧点 ②：句末标点守卫 —— 页眉标签（"Test 4"）不带句末标点，
+    /// 正文短句（"wrong bus!" = 10 字符踩线教训）带。带句末标点的窄带短行
+    /// 按正文处理。
+    @Test("句末标点守卫：窄带内带句末标点的短行按正文保留")
+    func punctuatedShortTopLineIsContentNotHeader() {
+        let short = OCRLine(
+            text: "Stop!",
+            boundingBox: CGRect(x: 0.40, y: 0.95, width: 0.10, height: 0.02)
+        )
+        let body = OCRLine(
+            text: "The bus finally arrived at the station on time",
+            boundingBox: CGRect(x: 0.10, y: 0.80, width: 0.80, height: 0.02)
+        )
+        let blocks = OnDeviceReadingOrder.makeBlocks(from: [short, body])
+        #expect(
+            blocks.map(\.text).joined(separator: "\n").contains("Stop!"),
+            "带句末标点的窄带短行是正文，不是页眉"
+        )
+    }
+
+    /// T010 收紧点 ③：字符边界 10 → 8 且先 trim。未 trim 10 字符（旧阈值
+    /// `< 10` 判「不短」而漏剔）、trim 后 7 字符的页眉仍要被剔；
+    /// trim 后恰 8 字符的窄带短行不再命中（边界下沿，按正文保留）。
+    @Test("字符边界 8 + 先 trim：trim 后 <8 仍剔，恰 8 字符保留")
+    func headerCharBoundaryIsEightAfterTrim() {
+        let body = OCRLine(
+            text: "Answer all the questions in complete sentences",
+            boundingBox: CGRect(x: 0.10, y: 0.75, width: 0.80, height: 0.02)
+        )
+        let padded = OCRLine(
+            text: "  Test 44 ",
+            boundingBox: CGRect(x: 0.78, y: 0.95, width: 0.18, height: 0.02)
+        )
+        let paddedBlocks = OnDeviceReadingOrder.makeBlocks(from: [padded, body])
+        #expect(
+            !paddedBlocks.map(\.text).joined(separator: "\n").contains("Test 44"),
+            "trim 后 7 字符的窄带孤立短行仍应被剔除"
+        )
+
+        let eight = OCRLine(
+            text: "Test 444",
+            boundingBox: CGRect(x: 0.78, y: 0.95, width: 0.18, height: 0.02)
+        )
+        let eightBlocks = OnDeviceReadingOrder.makeBlocks(from: [eight, body])
+        #expect(
+            eightBlocks.map(\.text).joined(separator: "\n").contains("Test 444"),
+            "trim 后恰 8 字符的窄带短行不满足 < 8，按正文保留"
+        )
+    }
+
+    // MARK: - wps-parity-layout T019（US4 流式档段落切分回归锚，T018 落地）
+
+    /// `FlowParagraphSplitter` 三判据 / 不变量的合成行回归：几何取金标准取证值
+    /// 折算（对话轮换回撤 0.022~0.027、OCR 行首抖动 ≤ 0.006、第 2 节条目行距
+    /// 0.002~0.006 —— 详录 `FlowParagraphSplitter` 文档与 T018 checkpoint）。
+    /// 切分发生在导出侧、块与块序不动（scan-fidelity 聚类断言不受影响），
+    /// 这里钉的是**切分参数与不变量**：阈值 0.012 / 条目号两位上限 / 句末标点
+    /// 口径 / 无行几何恒等 / text-lines 失配回退，任一漂移都会变红。
+    @Test("条目号起段：1~2 位数字起段，年份与三位数不切")
+    func itemMarkerStartsParagraphWhileYearsDoNot() {
+        // "1 Item…" 起段；其续行（无信号）并入同段
+        let numbered = Self.flowBlock([
+            Self.flowLine("First paragraph line one", lead: 0.030),
+            Self.flowLine("1 Item one starts here", lead: 0.030),
+            Self.flowLine("and continues here", lead: 0.054)
+        ])
+        Self.expectParagraphTexts(
+            numbered,
+            ["First paragraph line one", "1 Item one starts here\nand continues here"],
+            "条目号行应起段，其续行应并入"
+        )
+
+        // 年份守卫："2010 was…" 四位数字，^\d{1,2} + 分隔符在位置 2/1 都取不到
+        // 分隔符 → 不切；"999 items" 三位同理
+        let year = Self.flowBlock([
+            Self.flowLine("We moved here in", lead: 0.030),
+            Self.flowLine("2010 was the year", lead: 0.030)
+        ])
+        Self.expectParagraphTexts(year, ["We moved here in\n2010 was the year"], "年份不得被当条目号切开")
+
+        let threeDigits = Self.flowBlock([
+            Self.flowLine("We counted", lead: 0.030),
+            Self.flowLine("999 items in total", lead: 0.030)
+        ])
+        Self.expectParagraphTexts(threeDigits, ["We counted\n999 items in total"], "三位数不得被当条目号切开")
+
+        // 中文顿号分隔符同样命中
+        let chinese = Self.flowBlock([
+            Self.flowLine("前面一句还没完", lead: 0.030),
+            Self.flowLine("3、你好世界", lead: 0.030)
+        ])
+        Self.expectParagraphTexts(chinese, ["前面一句还没完", "3、你好世界"], "顿号条目号应起段")
+    }
+
+    /// 行首回撤判据：轮换回撤（0.024 > 0.012）切，抖动（0.002 < 0.012）与
+    /// 恰在阈值（0.012，严格大于才切）不切。
+    @Test("行首回撤起段：轮换回撤切，抖动与阈值边界不切")
+    func leadingRetreatStartsParagraphWhileJitterDoesNot() {
+        // 对话轮换取证形态：续行 0.076 → 轮首 0.052，回撤 0.024；
+        // 前两行刻意不带句末标点 —— 切分必须只能来自回撤信号
+        let turnTaking = Self.flowBlock([
+            Self.flowLine("A: Yesterday l three hours", lead: 0.049),
+            Self.flowLine("physics exercises for homework", lead: 0.076),
+            Self.flowLine("B: It me a long time, too", lead: 0.052)
+        ])
+        Self.expectParagraphTexts(
+            turnTaking,
+            ["A: Yesterday l three hours\nphysics exercises for homework", "B: It me a long time, too"],
+            "对话轮换的行首回撤应起段"
+        )
+
+        // OCR 抖动 0.002 远低于阈值 → 同段
+        let jitter = Self.flowBlock([
+            Self.flowLine("Line one stays", lead: 0.030),
+            Self.flowLine("with the next line", lead: 0.028)
+        ])
+        Self.expectParagraphTexts(jitter, ["Line one stays\nwith the next line"], "行首抖动不得误切段落")
+
+        // 恰 0.012（严格大于才切）→ 同段：边界下沿
+        let boundary = Self.flowBlock([
+            Self.flowLine("Edge exactly at", lead: 0.030),
+            Self.flowLine("threshold stays together", lead: 0.018)
+        ])
+        Self.expectParagraphTexts(boundary, ["Edge exactly at\nthreshold stays together"], "回撤恰在阈值（0.012）不切（严格大于）")
+
+        // 可调参数的回归锚：T018 定案阈值（抖动 ≤0.006 的 2 倍裕度）。
+        // 重调此值必须是有意识的决策（改这里 + 行为断言一起动）。
+        #expect(
+            FlowParagraphSplitter.leadRetreatThreshold == 0.012,
+            "leadRetreatThreshold 被改动 —— 金标准抖动/回撤取证（0.006/0.022~0.027）下的 2 倍裕度失效，重调须复核 T018 取证"
+        )
+    }
+
+    /// 句末完结判据：上一行以句末标点（`.!?。！？…`，`OCRNoiseFilter` 同口径）
+    /// 收尾 → 当前行起段；无标点不切。
+    @Test("前句完结起段：句末标点切，无标点不切")
+    func sentencePunctuationStartsParagraph() {
+        let english = Self.flowBlock([
+            Self.flowLine("One sentence ends here.", lead: 0.030),
+            Self.flowLine("Second paragraph follows", lead: 0.054)
+        ])
+        Self.expectParagraphTexts(english, ["One sentence ends here.", "Second paragraph follows"], "英文句号后应起段")
+
+        let chinese = Self.flowBlock([
+            Self.flowLine("第一句到此结束。", lead: 0.030),
+            Self.flowLine("第二段从这里开始", lead: 0.054)
+        ])
+        Self.expectParagraphTexts(chinese, ["第一句到此结束。", "第二段从这里开始"], "中文句号后应起段")
+
+        let noPunct = Self.flowBlock([
+            Self.flowLine("No terminal punctuation", lead: 0.030),
+            Self.flowLine("so lines stay together", lead: 0.054)
+        ])
+        Self.expectParagraphTexts(noPunct, ["No terminal punctuation\nso lines stay together"], "无句末标点不得切段")
+    }
+
+    /// 不变量：无行几何恒等单段（旧行为字节不变）；text/lines 失配回退整块
+    /// （文本零丢失）；正常切分组拼回 == 块文本（只改分组、不丢不重排）。
+    @Test("不变量：无 lines 恒等，text/lines 失配回退，正常切分零丢失")
+    func identityAndFallbackInvariantsHold() {
+        // 无 lines（旧持久化 / 既有夹具）：恒等返回 [block.text]
+        let legacy = ReconstructBlock(
+            kind: .paragraph,
+            bbox: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.2),
+            text: "legacy block text"
+        )
+        Self.expectParagraphTexts(legacy, ["legacy block text"], "无行几何的块必须恒等单段（旧行为）")
+
+        // 单行块：无切分可做
+        let single = Self.flowBlock([Self.flowLine("only one line", lead: 0.030)])
+        Self.expectParagraphTexts(single, ["only one line"], "单行块必须恒等单段")
+
+        // text/lines 失配（生产方防御）：回退整块单段，文本零丢失
+        let mismatch = Self.flowBlock(
+            [
+                Self.flowLine("line geometry says one thing", lead: 0.030),
+                Self.flowLine("2 but block text disagrees", lead: 0.030)
+            ],
+            text: "block text is the source of truth here"
+        )
+        Self.expectParagraphTexts(
+            mismatch,
+            ["block text is the source of truth here"],
+            "text/lines 失配必须回退整块单段（零丢失）"
+        )
+
+        // 正常切分：组拼回 == 块文本（只改分组），组数 > 1（确实切了）
+        // 三判据各切一次：句号（0→1）、条目号（1→2）、轮换回撤 0.054→0.030
+        // 即 0.024 > 0.012（2→3）。
+        let mixed = Self.flowBlock([
+            Self.flowLine("Intro sentence here.", lead: 0.030),
+            Self.flowLine("1 first item line", lead: 0.030),
+            Self.flowLine("item continuation", lead: 0.054),
+            Self.flowLine("A new turn begins", lead: 0.030)
+        ])
+        let groups = FlowParagraphSplitter.paragraphTexts(in: mixed)
+        #expect(groups.count == 3, "混合判据块应切 3 段，实际 \(groups.count)")
+        #expect(
+            groups.joined(separator: "\n") == mixed.text,
+            "分段组拼回必须等于块文本 —— 只改分组，不丢字不重排"
+        )
+    }
+
+    /// 切分测试合成行：几何取金标准取证量级（行高 0.015 / 行距 0.004 / 行宽 0.30），
+    /// lead 由用例按判据场景给定。
+    private static func flowLine(_ text: String, lead: Double) -> BlockLine {
+        BlockLine(text: text, height: 0.015, gapToPrevious: 0.004, leadingOffset: lead, width: 0.30)
+    }
+
+    /// 切分测试合成块：默认块文本 = 行文本按 "\n" 连接（与生产方口径一致）；
+    /// 失配场景用 `text:` 显式覆写。
+    private static func flowBlock(_ lines: [BlockLine], text: String? = nil) -> ReconstructBlock {
+        ReconstructBlock(
+            kind: .paragraph,
+            bbox: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.2),
+            text: text ?? lines.map(\.text).joined(separator: "\n"),
+            lines: lines
+        )
+    }
+
+    private static func expectParagraphTexts(_ block: ReconstructBlock, _ expected: [String], _ message: String) {
+        let actual = FlowParagraphSplitter.paragraphTexts(in: block)
+        #expect(actual == expected, "\(message)：期望 \(expected) 段，实际 \(actual)")
+    }
+
     /// SplitMix64（固定种子，跨运行确定）：`unit()` ∈ [0, 1)。
     private struct SplitMix64 {
         var state: UInt64

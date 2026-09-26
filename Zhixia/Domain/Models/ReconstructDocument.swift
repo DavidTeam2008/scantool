@@ -278,3 +278,112 @@ struct ReconstructDocument: Sendable, Equatable, Codable, Hashable {
         }
     }
 }
+
+// MARK: - 导出档位（用户面语义，spec/wps-parity-layout plan D1 / FR-001、FR-009）
+
+/// 导出档位的**用户面**语义（spec/wps-parity-layout plan D1）。
+///
+/// 内部 `R2OutputTier` 枚举命名保留（restored/structured），用户面按「流式/高保真」理解：
+/// - `flow`（流式，**默认**）：阅读序段落流 + 内联图 + 原生表格 —— 即现 `.structured` 产物；
+/// - `highFidelity`（高保真）：像素合成版面（底图 + 遮罩 + 文本框）—— 即现 `.restored` 产物。
+///
+/// 档位同时作用于预览渲染与导出产物（预览/导出同源，FR-009）；用户选择经
+/// `ExportTier.preferenceKey` 持久化，未设置/非法值一律回退默认档 flow（FR-001）。
+enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
+    case flow
+    case highFidelity
+
+    /// 档位偏好持久化键（@AppStorage / UserDefaults，命名对齐 `PreferencesStore.Key`）。
+    static let preferenceKey = "zhixia.reconstruct.exportTier"
+
+    /// 默认档 = 流式（FR-001：默认导出与预览 MUST 为流式重建文档）。
+    static let defaultTier: ExportTier = .flow
+
+    /// 从持久化原始值还原档位；未设置/非法值回退默认档（老版本数据零破坏）。
+    init(persistedRawValue: String?) {
+        self = persistedRawValue.flatMap(ExportTier.init(rawValue:)) ?? ExportTier.defaultTier
+    }
+
+    /// 映射内部导出档位（协议层 `R2OutputTier`，导出调用点消费）。
+    var outputTier: R2OutputTier {
+        switch self {
+        case .flow: .structured
+        case .highFidelity: .restored
+        }
+    }
+
+    /// 反向映射（wps-parity-layout US5 / T020：UI 层持久化用）—— 内部导出
+    /// 档位 → 用户档位。与 `outputTier` 互逆，`ExportTier(outputTier:).outputTier == self`。
+    init(outputTier: R2OutputTier) {
+        switch outputTier {
+        case .structured: self = .flow
+        case .restored: self = .highFidelity
+        }
+    }
+
+    /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.flow` /
+    /// `reconstruct.tier.highFidelity`）。`Text(String)` 是 verbatim 渲染，
+    /// 本地化必须在这里发生（与 `R2OutputTier.displayName` 同模式）。
+    var displayName: String {
+        switch self {
+        case .flow: return String(localized: "reconstruct.tier.flow")
+        case .highFidelity: return String(localized: "reconstruct.tier.highFidelity")
+        }
+    }
+}
+
+// MARK: - 墨迹-文本对账类型（spec/wps-parity-layout plan D5 / FR-006 / T012）
+
+/// 对账缺口的原因分类（plan D5）。
+enum InkGapCategory: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
+    /// 图形区（figure/artwork 块 bbox）内的墨 —— 预期，不是丢字。
+    case figureOverlap
+    /// 结构（表格/条码块 bbox）吞噬的墨 —— 归因给结构；其携带文本由解析期
+    /// containment 不变量（T009 `splitCarriedLines`）保障，违规在那边计数。
+    case structureSwallow
+    /// 页缘带（页眉/页脚/系统 chrome）的墨 —— 预期噪声。
+    case edgeBand
+    /// 无文字覆盖、无结构归因、不在页缘 —— **疑似 OCR 漏识**，
+    /// 丢字哨兵（FR-006）的核心证据类。
+    case likelyMissed
+}
+
+/// 单个墨迹缺口（plan「InkGap」）：归一化矩形 + 面积占比 + 原因分类。
+struct InkGap: Sendable, Equatable, Codable, Hashable {
+    /// 墨迹区域外接框（Vision 归一化，原点左下）。
+    var frame: CGRect
+    /// 面积占比 = width × height（页面 = 1×1）。
+    var areaFraction: Double
+    var category: InkGapCategory
+
+    init(frame: CGRect, category: InkGapCategory) {
+        self.frame = frame
+        self.areaFraction = Double(frame.width) * Double(frame.height)
+        self.category = category
+    }
+}
+
+/// 一页的墨迹-文本对账报告（FR-006：只记不阻断导出）。
+/// 由 `InkTextReconciler` 纯函数产出，`ZhixiaLog.textSentinel` 消费汇总计数。
+struct MissingTextReport: Sendable, Equatable, Codable, Hashable {
+    /// 全部缺口（含预期类 figureOverlap/structureSwallow/edgeBand），
+    /// 保持墨迹区域输入序。
+    var gaps: [InkGap]
+
+    init(gaps: [InkGap] = []) {
+        self.gaps = gaps
+    }
+
+    var isEmpty: Bool { gaps.isEmpty }
+
+    /// 指定分类的缺口数。
+    func count(of category: InkGapCategory) -> Int {
+        gaps.lazy.filter { $0.category == category }.count
+    }
+
+    /// 疑似漏识缺口（哨兵核心证据），按面积降序 —— 排查丢字先看这里。
+    var likelyMissedGaps: [InkGap] {
+        gaps.filter { $0.category == .likelyMissed }
+            .sorted { $0.areaFraction > $1.areaFraction }
+    }
+}

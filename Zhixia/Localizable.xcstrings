@@ -1364,6 +1364,38 @@
         }
       }
     },
+    "reconstruct.tier.flow" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flow (Default)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流式（默认）"
+          }
+        }
+      }
+    },
+    "reconstruct.tier.highFidelity" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High Fidelity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高保真"
+          }
+        }
+      }
+    },
     "reconstruct.tier.restored" : {
       "localizations" : {
         "en" : {
