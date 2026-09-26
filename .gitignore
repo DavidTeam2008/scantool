@@ -1,1 +1,7 @@
 .workbuddy
+.DS_Store
+
+# Xcode 构建产物（Makefile BUILD_DIR / 手工 derivedData / 用户态）
+build/
+DerivedData/
+*.xcuserstate

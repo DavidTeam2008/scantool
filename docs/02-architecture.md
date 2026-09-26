@@ -90,25 +90,38 @@ Zhixia/
   Domain/
     Models/           ScanDocument · ScanPage · Folder · Quad · ScanMode
                       Enhancement · PageDraft · OCRPageText · ReconstructDocument
-                      DocumentTitle · LibraryLoadState
+                      DocumentTitle · LibraryLoadState · ReconstructSemantics
     OnDeviceReadingOrder.swift
-    OnDeviceTableCluster.swift
+    OnDeviceTableCluster.swift    // v1 表聚类器：已退役休眠（wps-parity-layout），保留直连单测作回归钉
     OnDeviceFigureRegions.swift
+    Table/            TableGridV2 · TableGridV2Detector · TableProfile   // 锚点驱动 v2
+    Figure/           FigureRegionsV2 · InkFigureDetector
+    Layout/           LayoutAnalyzer · PageLayoutMapper · LayoutMask(Builder) · LayoutTypography
+                      PageColumnSplitter · ColumnResolver · AnchorExtractor
+                      HeaderFooterClassifier · GarbledRegionDetector · RegionLayoutEngine
+    CropConsistencyGate.swift     // WYSIWYG 快门裁切门禁（呈现框 = 裁切基准）
+    FlowParagraphSplitter.swift   // flow 导出侧切段（三判据 + 三不变量）
+    InkTextReconciler.swift       // 墨迹-文本对账哨兵 textSentinel（只记不阻断）
+    OCRNoiseFilter.swift
+    OverlaySpaceMap.swift · GuidanceDirective.swift · EdgeSnapper.swift
     ReconstructSceneRouter.swift
-    DocumentMaskQuad.swift
+    DocumentMaskQuad.swift        // 预埋：文档区域二次分割（暂无调用者）
+    CaptureGeometry.swift · FOVLayout.swift
     OCRTextQuality.swift
     ScanSession.swift
     Errors/ZhixiaError.swift
   Services/
     ServiceProtocols.swift
     Camera/           AVCameraSession · PreviewBinder · Representable 辅助
-    Vision/           VisionEdgeDetector · QuadSmoother · FrameMapper
+    Vision/           VisionEdgeDetector · QuadSmoother · FrameMapper · CandidateSticky
+                      // CandidateSticky：live 候选粘滞（先稳者胜，3 帧无相似逃逸清锚）
     Image/            ImagePipeline · EnhancementRecipe · ImportedImage
-    OCR/              VisionTextRecognizer
+    OCR/              VisionTextRecognizer · InkRegionProvider   // 墨迹区域（哨兵输入）
     PDF/              PDFExportService          // 扫描件图片 PDF
     Reconstruct/
       OnDeviceDocumentParser.swift
       CompositeDocumentParser.swift
+      VisionDocumentStructureRecognizer.swift  // iOS 26 RecognizeDocumentsRequest（默认通路）
       TextInDocumentParser.swift     // stub
       PageBarcodeDetector.swift
       NormalizedImageCrop.swift
@@ -121,9 +134,13 @@ Zhixia/
   DesignSystem/
   Localizable.xcstrings
   Info.plist · Assets.xcassets
-ZhixiaTests/
+ZhixiaTests/           40 个测试文件 / 357 个 @Test
   QuadSmootherTests · ImagePipelineTests · DocumentStoreTests
   CaptureViewModelTests · OCRViewModelTests · ReconstructTests
+  CropConsistencyGateTests · CandidateStickyTests · CropGateAtShutterTests   // WYSIWYG
+  AutoCaptureHoldWindowTests · OverlaySpaceMapTests · EdgeOverlayRenderingTests · GuidanceDirectiveTests
+  GoldenWorksheetEndToEndTests · InkTextReconcilerTests   // 金标准端到端 / 对账哨兵
+  ReconstructEndToEndTests · ExportSafetyTests · ReconstructTierTests · …（全表见 00 §7）
 ```
 
 命名：协议用能力（`EdgeDetecting`、`DocumentParsing`），实现用技术（`VisionEdgeDetector`、`OnDeviceDocumentParser`）。
@@ -199,8 +216,12 @@ struct ReconstructDocument { documentID, title, pages }
 
 ```
 AVCaptureSession (photo + 720p video)
-  → EdgeDetecting → QuadSmoother → overlayQuad
-  → capturePhoto → tmp original.jpg + PageDraft
+  → EdgeDetecting（VisionEdgeDetector，内含 CandidateSticky 候选粘滞）
+  → QuadSmoother → overlayQuad
+  → OverlaySpaceMap 解析映射 → EdgeOverlayView（连续实线整框 + 四态引导）
+  → 自动快门：锁定后 6 帧确认窗（suspicious 冻结、手动快门不受限）
+  → capturePhoto → CropConsistencyGate（WYSIWYG：呈现框 = 裁切基准）
+  → tmp original.jpg + PageDraft
 ```
 
 成品用 Photo Output，不用视频帧。
@@ -228,10 +249,14 @@ Export：rendered 图 → PDFExportService → ShareLink
 
 ```
 ReconstructViewModel
-  → 优先 original URL，否则 rendered
+  → rendered 优先（original 兜底）
   → DocumentParsing.parse
-  → ReconstructDocument
-  → DocxRendering / SearchablePDFRendering → ShareLink
+      ├─ iOS 26：VisionDocumentStructureRecognizer（RecognizeDocumentsRequest，结构化——默认通路）
+      └─ 回退：OnDeviceDocumentParser（几何启发式；v1 表聚类已退役，不再产表）
+  → StructuredDocumentPage 归一 → ReconstructDocument（每页一条 reconstructPath 决策日志）
+  → 档位：flow（流式，默认）/ .restored（高保真，可选；@AppStorage 持久化、预览/导出同源）
+  → DocxRendering（flow 导出侧 FlowParagraphSplitter 切段；InkTextReconciler 哨兵只记不阻断）
+    / SearchablePDFRendering → ShareLink
 ```
 
 `CompositeDocumentParser`：先本机；仅当场景非 plain **且** TextIn 已配置密钥时才尝试云；失败回退本机。当前密钥为空 → **永远本机**。
@@ -324,12 +349,16 @@ Library
 
 | 层级 | 文件 / 内容 |
 | --- | --- |
-| Smoother / Mapper | `QuadSmootherTests` |
+| Smoother / Mapper | `QuadSmootherTests` · `OverlaySpaceMapTests` · `EdgeOverlayRenderingTests` |
 | 图像 | `ImagePipelineTests` |
 | Store | `DocumentStoreTests` |
 | Capture / Review VM | 无页不能完成、滤镜退出裁切等 |
+| WYSIWYG 取景 | `CropConsistencyGateTests` · `CandidateStickyTests` · `CropGateAtShutterTests` · `AutoCaptureHoldWindowTests` · `GuidanceDirectiveTests` |
 | OCR | 中文质量、双图择优 |
-| 还原 | 场景路由、阅读序、表聚类、配图空洞、DOCX 含 `w:tbl` / `word/media` |
+| 还原 | 场景路由、阅读序、段落、配图空洞、DOCX 含 `w:tbl` / `word/media`；端到端 `ReconstructEndToEndTests` + 金标准 `GoldenWorksheetEndToEndTests`（真实 Vision 链路）；丢字哨兵 `InkTextReconcilerTests` |
+
+全量 357 用例 = 356 passed + 1 expected failure + 0 failed（跑法与计数陷阱见
+[00 §7](00-getting-started.md#7-怎么测) 与 `Makefile`）。
 
 Preview：`PreviewSupport` 假相机 / 假识别器 / 内存 Store。
 

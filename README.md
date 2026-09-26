@@ -10,20 +10,24 @@
 | Bundle ID | `com.david.Zhixia` |
 | 系统 / 语言 | iOS 18+ · Swift 6 |
 | 设备 | 仅 iPhone（竖屏） |
-| 规模 | 90 个 Swift 文件 / 约 9.3k 行 / 132 个测试用例（全量 131 passed + 1 known issue + 0 failed） |
+| 规模 | 147 个 Swift 文件（主工程 107 / 测试 40）/ 主工程约 14.5k 行 / 357 个测试用例（全量 356 passed + 1 expected failure + 0 failed） |
 
 ---
 
 ## 新人怎么读
 
-**第一读：[docs/09-project-handbook.md](docs/09-project-handbook.md)** —— 一页讲全
+**第一读：[docs/12-handover.md](docs/12-handover.md)** —— 交接文档单入口（项目全貌 /
+当前卡点 / 路线图 / AI 工程师上手路径，每项可下钻到证据）。
+**第二读：[docs/09-project-handbook.md](docs/09-project-handbook.md)** —— 一页讲全
 （产品原型 / 架构 / 技术选型 / 实现原理 / 已实现功能 / 卡点 / 后续方向 / 上手操作）。
 
 然后按需下钻：
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/09-project-handbook.md](docs/09-project-handbook.md) | **接手手册（新人第一读）**：全貌 + 卡点 + 优化方向 |
+| [docs/12-handover.md](docs/12-handover.md) | **交接文档（新人第一读）**：全貌 / 卡点 / 路线图 / 上手路径 |
+| [docs/09-project-handbook.md](docs/09-project-handbook.md) | **接手手册**：架构原理 + 卡点史 + 优化方向 |
+| [AGENTS.md](AGENTS.md) | AI coding agent 冷启动入口：定位 / 铁律 / 命令速查 |
 | [docs/00-getting-started.md](docs/00-getting-started.md) | 实操：目录地图、主路径、改哪里、怎么测 |
 | [docs/01-product-prototype.md](docs/01-product-prototype.md) | 产品原型：场景、信息架构、主路径、视觉 |
 | [docs/02-architecture.md](docs/02-architecture.md) | 分层、模块、数据流、工程结构（与代码对齐） |
@@ -33,6 +37,8 @@
 | [docs/06-document-reconstruction.md](docs/06-document-reconstruction.md) | 版面还原：IR、本机 R2、TextIn stub、**已知问题** |
 | [docs/07-reconstruct-r2-optimization.md](docs/07-reconstruct-r2-optimization.md) | **R2 优化方案**：原型 / 架构 / 选型 / 原理 / 阻碍 / 计划 + 实测数据 |
 | [docs/08-reconstruct-v3-realworld-fix.md](docs/08-reconstruct-v3-realworld-fix.md) | **真机回归**：反解方法、根因链、P0~P3 路线图 |
+| [docs/10-project-summary.md](docs/10-project-summary.md) | 项目总结：架构 / 技术原理 / SDD 周期史 |
+| [docs/11-wps-parity-research.md](docs/11-wps-parity-research.md) | **WPS 扫描对标调研**：docx 取证 / 差距分析 / 周期规划 |
 | [docs/fixtures/README.md](docs/fixtures/README.md) | 样张 OCR 夹具：怎么导、怎么生成、保真度说明 |
 | [prototype/index.html](prototype/index.html) | 可交互界面原型 |
 | [docs/reconstruct-r2-preview.html](docs/reconstruct-r2-preview.html) | 还原功能界面线框（8 屏） |
@@ -47,26 +53,32 @@
 open Zhixia.xcodeproj
 ```
 
-> ⚠️ **macOS 26.6 + Xcode 26.4 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`**，否则所有 Swift 宏
+**命令行一律走 [`Makefile`](Makefile)**（环境坑已固化：DEVELOPER_DIR 默认注入、
+`-disable-sandbox` 必加、Busy 只提示不自动擦除）：
+
+```bash
+make help      # 全部命令
+make test      # 全量单测 + 自动 xcresulttool 计数
+make test-only T=GoldenWorksheetEndToEndTests   # 局部单测
+make smoke     # 装机冒烟（build + install + launch + 存活检查）
+make device-build   # 真机目标编译（免签名）
+make doctor    # 环境自检
+```
+
+> ⚠️ **macOS 26.x + Xcode 26.x 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`**，否则所有 Swift 宏
 > （SwiftData `@Model` / Observation `@Observable` / swift-testing `@Test`）都会报
 > `swift-plugin-server produced malformed response` 而构建失败。
 > 根因是编译器给宏插件套的 `sandbox-exec` 在本系统申请失败（`sandbox_apply: Operation not permitted`）。
 > 与 Xcode 装在哪个卷无关，详见 [docs/00-getting-started.md §7](docs/00-getting-started.md#7-怎么测)。
-
-```bash
-OTHER_SWIFT_FLAGS="-disable-sandbox" xcodebuild test \
-  -project Zhixia.xcodeproj -scheme Zhixia \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -skipPackagePluginValidation -skipMacroValidation
-```
 
 模拟器偶发 `Simulator device failed to launch ... reason: Busy` —— 不是代码问题，
 `xcrun simctl erase all` 后重跑即可。
 
 ```
 Zhixia/          App · Features · Domain · Services · DesignSystem
-ZhixiaTests/     17 个测试文件（含端到端断言 + 真实双栏样张）
-docs/            接手手册 + 产品 / 架构 / 选型 / 原理 / 路线图 / 还原专题
+ZhixiaTests/     40 个测试文件 / 357 个 @Test（含端到端断言 + 真实样张 + 金标准语法页）
+docs/            接手手册 + 交接文档 + 产品 / 架构 / 选型 / 原理 / 路线图 / 还原专题
+spec/            SDD 周期工件（9 个周期：spec/plan/tasks/device-acceptance 四件套）
 Tools/           ocr-dump（造夹具）· pdf-ocr-dump（反解真机 OCR）
 prototype/       可交互界面原型
 ```
@@ -84,31 +96,38 @@ prototype/       可交互界面原型
 
 ---
 
-## 能力现状（2026-09-12）
+## 能力现状（2026-09-26）
 
 ### 已可用
 
 | 能力 | 状态 |
 | --- | --- |
-| 取景 / 实时框边 / 连拍 / 相册导入 | ✅ |
+| 取景 / 实时框边（三级检测兜底 + 连续实线整框）/ 连拍 / 相册导入 | ✅ |
+| 取景：自动快门确认窗 + 可疑锁定门禁 + 四态引导 | ✅ |
 | 整理：拖角、五档滤镜、旋转、保存入库 | ✅ |
 | 库：文件夹、搜索、收藏、加页 | ✅ |
 | OCR「文本」、图片 PDF / 可检索 PDF / 分享 | ✅ |
-| OCR：专用预处理档 + 质量不达标时自动重 OCR | ✅ 新增（V3.2） |
+| OCR：专用预处理档 + 质量不达标时自动重 OCR | ✅ |
 | 证件模式比例窗 | ✅ |
 | 还原：段落阅读序 → DOCX / 可检索 PDF | ✅ |
 | 还原：IR v2（PageLayout / 语义标签 / anchor） | ✅ |
-| **还原：表格（iOS 26 结构化通路）** | ✅ **新增（V3.1）**：`RecognizeDocumentsRequest` 直接给行列结构 |
-| 还原：A/B/C 三档导出 + 预览随档位切换 | ✅ 实现保留，但 **B/C 入口已下架**（见下） |
-| **还原：左右分栏排阅读序** | ✅ **新增（V3.5）**：`PageColumnSplitter`，不再逐行交错 |
-| **还原：正文里的照片** | ✅ **新增（V3.5）**：`InkFigureDetector` 像素墨块，几何通路会漏 |
+| **还原：表格（iOS 26 结构化通路）** | ✅：`RecognizeDocumentsRequest` 直接给行列结构（模拟器实测 7×3）；真机接通性待取证（L1 疑案） |
+| **还原：流式档默认（WPS 对标）** | ✅ **新增（wps-parity-layout）**：flow 流式为默认档，`.restored` 降级可选「高保真」；档位选择器 + @AppStorage 持久化、预览/导出同源 |
+| **还原：零假表** | ✅ **新增**：v1 表格聚类器退役（几何通路不再产表，宁缺毋假），表只来自结构化识别或锚点驱动 v2 |
+| **还原：丢字防护** | ✅ **新增**：containment 不变量 + 页眉规则收紧 + 墨迹-文本对账哨兵 `textSentinel`（四分类，只记不阻断） |
+| **还原：通路可观测** | ✅ **新增**：`reconstructPath` 每页一条决策线（五分类） |
+| **还原：段落收敛** | ✅ **新增**：导出侧 `FlowParagraphSplitter` 切段，金标准 32 段 ∈ 42±30% |
+| **还原：漫画条整块内联** | ✅ **新增**：细长大图形单张完整内联于阅读序原位（金标准验证） |
+| 还原：左右分栏排阅读序（`PageColumnSplitter`） | ✅ |
+| 还原：正文里的照片（`InkFigureDetector` 像素墨块） | ✅ |
+| **取景：快门裁切门禁 + 候选粘滞（WYSIWYG 契约）** | ✅ 单测钉死（`CropConsistencyGate` / `CandidateSticky`）；⚠️ 真机 Case A/B 未达效，见下 |
 
 ### 未达可用标准 / 未完成
 
 | 能力 | 状态 |
 | --- | --- |
-| **还原：表格（iOS 18~25 几何兜底）** | ⚠️ 样张能出表，**真机仍 `w:tbl = 0`**（见下） |
-| **还原：B 重排版 / C 衬底图** | ❌ **已从 UI 下架**（V3.4）。实现保留，改 `R2OutputTier.selectable` 可恢复 |
+| **取景 WYSIWYG（真机验收标准）** | 🔴 **当前最大卡点**：折页书 Case A 成片仍含折起部分；摊开书 Case B 实线框仍跳、手动拍成片含左页大半——R4/R5 修复经 2026-09-26 新包复测未达效，待日志定案（见 [docs/09 §6.13](docs/09-project-handbook.md)） |
+| **还原：表格（iOS 18~25 几何兜底）** | ⚠️ 锚点命中才出表，**真机仍 `w:tbl = 0`**（known issue 钉住） |
 | 还原：配图 / 条码裁切 | ⚠️ 能出图，真机质量差 |
 | TextIn / 云版面解析 | ❌ stub：无密钥、无网络实现，`parse` 直接 throw |
 | 手写 / 勾选识别 | ❌ 未实现（类型已预留，无产出） |
@@ -117,74 +136,58 @@ prototype/       可交互界面原型
 
 ## 当前最大卡点
 
-### 1. 真机表格（🔴 头号问题）—— iOS 26 已解决，老系统仍未解决
+### 1. 取景裁剪 WYSIWYG 未达（🔴 头号问题，2026-09-26 复测）
+
+用户用含 wysiwyg-crop + wps-parity-layout 两周期全部改动的新包真机复测（iPhone 13 ·
+iOS 26.7）：
+
+- **Case A**（折页书翻中间、左侧折起拍右页）：成片**仍含折起部分**——R4 修复（快门裁切
+  门禁「呈现框 = 裁切基准」）未达效。两个待定案假设：H1 显示侧（呈现框本身锁了含折起
+  的整书外轮廓，门禁按契约工作、错在锁定对象）vs H2 门禁侧（误纳静帧/路径未命中）。
+- **Case B**（摊开书从中线取景拍右页）：实线框**仍持续跳动**，手动拍成片**含左页大半**
+  ——R5 修复（候选粘滞）未达效；高置信假设：粘滞 v1「池交替」盲区（候选池存在性逐帧
+  交替时无相似帧可改写）。
+- **总体**：WPS 扫描对标（取景拍照 + 还原版面 Word）未达。
+
+**两轮修复的共同短板**：`cropGate` / `stickyOverride` 日志从未取得，根因至今未定案。
+**下轮必须先实时抓日志定案再动刀**（步骤：`spec/wysiwyg-crop/device-acceptance.md` §0）。
+逐字记录与归因：`spec/agent-handover/device-retest-20260926.md`。
+
+### 2. L1 真机通路疑案（iOS 26 结构化识别疑似静默回退）
+
+iPhone 13（iOS 26.7）2026-09-21 真机导出的 docx 走了几何回退通路，而模拟器（iOS 26.4.1）
+结构化通路正常——真机接通性从未验证。已加 `reconstructPath` 决策日志（每页一条），
+取证一步到位：`spec/wps-parity-layout/device-acceptance.md` §A。
+
+### 3. 真机表格（iOS 26 已解决，老系统仍未解决）
 
 根因链（见 [docs/08](docs/08-reconstruct-v3-realworld-fix.md)）：Vision 老的
 `VNRecognizeTextRequest` **只给 line 级 bbox**，真机把整行单元格合并成一个 line
 （`项目每100克NRV%`），于是「按 OCR 行的 midX 聚类推列」这条假设**直接失效** ——
-列聚类只剩 1 列、锚点「营养成分表」也丢，`TableGridV2Detector` 直接 `return nil`
-→ **整表消失 → Word 里 `w:tbl = 0`**。算法再调也救不回来。
+`TableGridV2Detector` 直接 `return nil` → **整表消失 → Word 里 `w:tbl = 0`**。
+iOS 26 的 `RecognizeDocumentsRequest` 直接返回二维 Cell 数组绕开该假设（模拟器实测
+7×3）；iOS 18~25 仍走几何兜底 —— `ReconstructEndToEndTests.realDeviceOcrStillLacksTable`
+用 `withKnownIssue` 钉在测试里。
 
-**✅ iOS 26 通路已解决（V3.1）**：`RecognizeDocumentsRequest` 直接返回二维 Cell 数组，
-根本不需要那个假设。实测（iPhone 17 模拟器 + 样张 `nutrition-mango.jpg`）读出
-**1 张 7 行 × 3 列**的表，行切分完全正确（`["能量", "1429千焦", "17%"]`），
-连真机丢失的「营养成分表」表头都恢复了。端到端断言见
-`ZhixiaTests/ReconstructEndToEndTests.structuredPathProducesTableInDocx`。
+### 4. 单张 fixture 过拟合（部分缓解）
 
-**⚠️ iOS 18~25 仍走几何兜底**，那条路在真机上依旧出不了表 ——
-`ReconstructEndToEndTests.realDeviceOcrStillLacksTable` 用 `withKnownIssue` 把这件事
-钉在测试里（修好时会**反向失败**提醒）。
+iOS 26 通路绕开了旧阈值；但**几何兜底仍然过拟合**，且阈值本身没有改。
 
-### 2. 单张 fixture 过拟合（部分缓解）
-
-M0~M2 的阈值全是用两张**摆正、干净**的样张调出来的：
-
-| 指标 | fixture | 真机（用户实拍） |
-| --- | --- | --- |
-| 营养表 x 跨度 | 0.147~0.84（页宽 70%） | 0.082~0.25（**17%**） |
-| 单元格粒度 | 18 个独立 cell | **7 个错位行**（`项目每100克NRV%`、`17%蛋白` 跨行粘连） |
-| 「营养成分表」标题 | 完整一行 | 识别成「◎配料：…」+ 孤立「表」，**anchor 丢失** |
-
-iOS 26 通路绕开了这些阈值；但**几何兜底仍然过拟合**，且阈值本身没有改。
-
-### 3. 架构性天花板
+### 5. 架构性天花板
 
 | 维度 | 扫描王 / WPS | 纸匣 | 差距性质 |
 | --- | --- | --- | --- |
-| 图像预处理 | 自动裁边 + 去阴影 + 二值化 + 锐化 | ✅ 已补 OCR 专用预处理档（去阴影 + 灰度 + 锐化） | —— |
+| 图像预处理 | 自动裁边 + 去阴影 + 二值化 + 锐化 | ✅ 已补 OCR 专用预处理档 | —— |
 | OCR 引擎 | 自研/定制 + 云 | Apple Vision（端侧） | 端侧差一档，需云通路 |
-| 版面分析 | 深度学习版面模型 | 几何启发式 → ✅ iOS 26 走系统结构化识别 | 老系统仍有差距 |
+| 版面分析 | 深度学习版面模型 | ✅ iOS 26 走系统结构化识别 | 老系统仍有差距 |
 | 表格还原 | 深度学习表格结构识别 | ✅ iOS 26 用 `RecognizeDocumentsRequest` | 老系统仍有差距 |
 
-**结论**：纯端侧几何算法追不平扫描王。iOS 26 把「版面分析 / 表格还原」这两格的差距
-填上了（靠系统模型），但**老系统与云通路仍是缺口**。
+### 已修历史（详录见 [docs/09 §6](docs/09-project-handbook.md)）
 
-### 已修（2026-09-12，本轮）
-
-| 类别 | 内容 |
-| --- | --- |
-| 数据安全 🔴 | `PageFileStore.commit` 回滚会删掉**追加目标文档的既有全部页图**；DOCX 未过滤 XML 非法控制字符导致**产物损坏**；图片 PDF 越界插入 |
-| 导出正确性 | B 档 anchor 误用 twips（比正确值小 **635 倍**，图片缩成左上角一点）；C 档多页衬底全堆第 1 页；补 `w:rFonts` 中文字体声明 |
-| 还原能力 | 接入 iOS 26 `RecognizeDocumentsRequest`；OCR 专用预处理档 + 自动重 OCR |
-| 产品决策 | B/C 档从 UI 下架（实现保留） |
-| 测试闭环 | 新增端到端断言（图片 → parse → docx → `w:tbl`）、真机烂图 fixture、数据安全回归网 |
-
-### 已修（2026-09-12 第二轮 · 真机反馈）
-
-| 类别 | 内容 |
-| --- | --- |
-| **取景虚线框对不上书的边框** | 视频帧连接与 `CIImage.oriented` **转了两次**（预览只转一次）→ 帧变横向、`FrameMapper` 算出 3.86 倍水平拉伸、框被推到屏幕外。旋转收敛到 `emit` 一处 |
-| **还原左右栏逐行交错** | `OnDeviceReadingOrder` 的段落聚类与最终全局排序都假设单栏。新增 `PageColumnSplitter` 按栏切分、栏内排序、栏间按栏序拼 |
-| **正文里的照片整个丢失** | 几何的「空白连通域」**区分不了照片和白纸**（实测整页空白连成面积 0.905 的一整块）。新增 `InkFigureDetector` 读像素找墨块，用「是否被 OCR 文字盒覆盖」做主判据 |
-| **练习册选项句被当成链接** | `"stopped / was stopping working."` 含 `.` 和 `/` → 被判成 URL 降级成条码块。真 URL 的判据改为**不含空白** |
-| **短行被排到整段之后** | `readingOrder` 的「同一视觉行」容差 0.03 比教材行距还大 → 改成严格按 y 排 |
-
-### 已修（2026-09-08）
-
-- **OCR 跑在未矫正的原图上**：已改为 rendered 优先。指纹：关掉「保留原图」反而更好。
-- **OCR 噪声过滤**：`Domain/OCRNoiseFilter.swift`（状态栏 / UI chrome 丢弃，QR URL 降级）。
-- **配图把整块文字区当图**：`FigureRegionsV2` 重写为网格 flood fill + `maxArea` 闸门。
-- **A/B/C 切换无反应**：`setTier()` 切档清 `docxURL`。
+2026-09-08 ~ 09-24 共 8 个 SDD 周期修复了：数据安全三缺陷、导出六缺陷、真机第二轮
+五缺陷、扫描保真六缺陷、取景框不可见两环、WYSIWYG 门禁与粘滞（单测级）、默认导出
+对标 WPS（流式默认/零假表/丢字防护/段落收敛/漫画条内联）等——完整卡点史与回归网
+见手册 §6.1~§6.12。
 
 ---
 
@@ -192,13 +195,15 @@ iOS 26 通路绕开了这些阈值；但**几何兜底仍然过拟合**，且阈
 
 | 优先级 | 内容 |
 | --- | --- |
-| **P0** | 真机验证 iOS 26 通路的表格质量（模拟器已验证结构，真机未验） |
-| **P1** | 几何兜底补降级阶梯（anchor → 通用数字列 → v1）：老系统仍出不了真机表 |
-| **P2** | DOCX 表格样式（`w:tblPr` / 表头加粗 / 数值右对齐）；`w:tblGrid`；合并单元格 `gridSpan`/`vMerge` |
-| **P3** | UI 线程与内存：`LibraryViewModel.reload` 全表加载 + N+1 + 全目录遍历；`ReviewViewModel.save` 全量驻留内存 |
+| **P0** | 取景裁剪质量：实时抓 `cropGate` / `stickyOverride` 日志定案 Case A（H1/H2）与 Case B（池交替），再修复 |
+| **P0** | L1 真机通路取证：真机解析语法页，抄录 `reconstructPath` 行定案（iOS 26.7 结构化通路疑案） |
+| **P1** | 老系统兜底：表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter |
+| **P2** | 导出层：DOCX 表格样式（`w:tblPr` / 表头加粗 / 数值右对齐）；合并单元格 `gridSpan`/`vMerge` |
+| **P3** | 工程债：`LibraryViewModel.reload` 全表加载 + N+1；`ReviewViewModel.save` 全量驻留内存 |
 | **P4** | 接通云解析（TextIn）；手写 / 勾选识别 |
 
-详细排期与任务拆解见 [docs/09-project-handbook.md §7](docs/09-project-handbook.md#7-后续优化方向)。
+详细排期与任务拆解见 [docs/12-handover.md §3](docs/12-handover.md) 与
+[docs/09-project-handbook.md §7](docs/09-project-handbook.md#7-后续优化方向)。
 
 ---
 

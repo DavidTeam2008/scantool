@@ -1,7 +1,7 @@
 # 06 版面还原：图、表、Word / PDF
 
-状态：**本机 R1 已上线；本机表/图/条码已接线；样张验收未通过。** TextIn 为未接线 stub。  
-更新：2026-09-07
+状态：**本机 R1 已上线；表/图/条码已接线。iOS 26 结构化通路 + 流式默认档已上线（金标准端到端验证）；真机接通性待取证（L1 疑案）；iOS 18~25 几何兜底真机仍出不了表。** TextIn 为未接线 stub。  
+更新：2026-09-07；2026-09-26 对齐 wysiwyg-crop / wps-parity-layout 两周期后的现状（§12.0）
 
 动机：真机两份样张证明，「文本」是行级 OCR 字符串，不是文档。
 
@@ -94,23 +94,33 @@ ReconstructBlock
 ```
 Features/Reconstruct/
   ReconstructView.swift
-  ReconstructViewModel.swift          // 优先 original
+  ReconstructViewModel.swift          // rendered 优先（original 兜底）
+Domain/Models/ReconstructDocument.swift
 Domain/
-  Models/ReconstructDocument.swift
   ReconstructSceneRouter.swift
   OnDeviceReadingOrder.swift
-  OnDeviceTableCluster.swift
+  OnDeviceTableCluster.swift          // v1 表聚类器：已退役休眠（宁缺毋假），保留直连单测作回归钉
   OnDeviceFigureRegions.swift
+  Table/    TableGridV2.swift · TableGridV2Detector.swift · TableProfile.swift   // 锚点驱动 v2
+  Figure/   FigureRegionsV2.swift · InkFigureDetector.swift
+  Layout/   LayoutAnalyzer · PageLayoutMapper · PageColumnSplitter · LayoutTypography …
+  FlowParagraphSplitter.swift        // flow 导出侧切段（三判据 + 三不变量）
+  InkTextReconciler.swift            // 墨迹-文本对账哨兵 textSentinel（四分类，只记不阻断）
+  OCRNoiseFilter.swift
 Services/Reconstruct/
-  OnDeviceDocumentParser.swift        // 主路径
-  CompositeDocumentParser.swift       // 本机 → 可选云
+  VisionDocumentStructureRecognizer.swift  // iOS 26 RecognizeDocumentsRequest（默认通路）
+  OnDeviceDocumentParser.swift        // 几何回退（iOS 18~25）
+  CompositeDocumentParser.swift       // 结构化 → 本机 → 可选云
   TextInDocumentParser.swift         // stub，抛 reconstructCloudUnavailable
   PageBarcodeDetector.swift
   NormalizedImageCrop.swift           // Vision bbox → PNG
   DocxExportService.swift
   SearchablePDFExportService.swift
   ZipArchive.swift
-ZhixiaTests/ReconstructTests.swift
+Services/OCR/InkRegionProvider.swift  // 墨迹区域（哨兵输入）
+ZhixiaTests/   ReconstructTests · ReconstructV2Tests · ReconstructEndToEndTests
+               GoldenWorksheetEndToEndTests（金标准端到端）· InkTextReconcilerTests
+               DocumentStructureTests · ReconstructTierTests · ExportSafetyTests …
 ```
 
 协议（`ServiceProtocols.swift`）：`DocumentParsing`、`DocxRendering`、`SearchablePDFRendering`、`ReconstructRepairing`（无实现）。
@@ -120,20 +130,25 @@ ZhixiaTests/ReconstructTests.swift
 ## 7. 当前管线（实现，不是愿景）
 
 ```
-original（优先）/ rendered
-  → TextRecognizing
-  → scene 路由
-  → TableCluster → ReadingOrder(剩余)
-  → FigureRegions + Barcode → 裁 PNG
-  → sort by visual Y
-  → ReconstructPage
-  → UI Grid / 图
-  → Docx | SearchablePDF
+rendered 优先（original 兜底）
+  ├─ iOS 26：VisionDocumentStructureRecognizer（RecognizeDocumentsRequest）
+  │    直接拿 lines / tables（行列结构）/ barcodes —— 默认通路（flow 流式档）
+  └─ 回退：Vision OCR → TableGridV2Detector（锚点驱动；v1 聚类器已退役，
+       几何通路不再产表，宁缺毋假）
+  两条通路归一成 StructuredDocumentPage ↓（每页一条 reconstructPath 决策日志）
+  → ReconstructSceneRouter（plain / exam / table / packaging）
+  → OCRNoiseFilter（状态栏 / UI chrome / URL）
+  → PageColumnSplitter（x 投影找 gutter → 按栏切）
+  → OnDeviceReadingOrder（栏内：剩余行 → 段落 / 标题 / 列表）
+  → FigureRegionsV2（空白连通域）+ InkFigureDetector（像素墨块）→ 裁 PNG
+  → PageBarcodeDetector（条码裁图 + payload）
+  → InkTextReconciler（丢字对账哨兵，只记不阻断）
+  → ReconstructDocument IR
+  → 预览 / DocxExportService（flow 侧 FlowParagraphSplitter 切段）/ SearchablePDFExportService
+  → 档位：flow（流式，默认）/ .restored（高保真，可选）
 ```
 
-`CompositeDocumentParser`：非 plain 且 TextIn `isConfigured` 才打云；否则本机。密钥未配 → 恒为本机。
-
-ViewModel：`fileExists(original)` 则先解析原图，保证配图来源正确。
+`CompositeDocumentParser`：结构化通路优先，失败回退本机几何；非 plain 且 TextIn `isConfigured` 才打云。密钥未配 → 恒为本机。
 
 ---
 
@@ -170,7 +185,7 @@ ViewModel：`fileExists(original)` 则先解析原图，保证配图来源正确
 | 阶段 | 用户可感知 | 代码状态 |
 | --- | --- | --- |
 | R1 | 纯文字 → 可编辑 DOCX + 文字层 PDF | **完成** |
-| R2 本机 | 尝试真表、配图、条码 | **已接线，样张未过关** |
+| R2 本机 | 尝试真表、配图、条码 | **iOS 26 结构化通路样张已过（模拟器 7×3）+ 金标准端到端全绿；真机接通性待取证（L1）；iOS 18~25 真机仍 `w:tbl = 0`** |
 | R2′ TextIn | 云解析嵌图嵌表 | stub |
 | R3 | 试卷模型、勾选进 IR | 未做 |
 | R4 | VL 修补指定 block | 协议 only |
@@ -187,11 +202,27 @@ ViewModel：`fileExists(original)` 则先解析原图，保证配图来源正确
 
 ---
 
-## 12. 已知问题（2026-09）
+## 12. 已知问题
 
-> 用练习册 + 营养成分表两张样张走一遍「还原 → 导出 Word」：**练习册配图和营养表网格仍有问题。生成的 Word 没有还原成接近原图的样式。**
+### 12.0 状态更新（2026-09-26，wps-parity-layout 周期后）
 
-### 12.1 现象（实机）
+原 2026-09 记录（§12.1~§12.3）保留作历史快照。当前状态：
+
+| 原问题 | 现状 |
+| --- | --- |
+| 营养表三列（iOS 26） | ✅ 结构化通路直接给行列结构（模拟器实测 7×3）；**真机接通性从未验证**（L1 疑案：iOS 26.7 真机疑似静默回退，已加 `reconstructPath` 决策日志，取证步骤 `spec/wps-parity-layout/device-acceptance.md` §A） |
+| 营养表三列（iOS 18~25） | ❌ 几何兜底真机仍 `w:tbl = 0`——真机 OCR 把整行单元格合并成一个 line，「midX 聚类推列」假设失效（根因链见 [08](08-reconstruct-v3-realworld-fix.md)）；`withKnownIssue` 钉在 `ReconstructEndToEndTests.realDeviceOcrStillLacksTable` |
+| 默认导出像「OCR 重排文档」 | ✅ **流式档默认**（wps-parity-layout）：flow 干净流式文档为默认，`.restored` 降级可选「高保真」；档位选择器 + @AppStorage 持久化、预览/导出同源 |
+| 散排编号 → 假表吞字 | ✅ **v1 表格聚类器退役**：几何通路不再产表（宁缺毋假），金标准端到端钉死零假表 |
+| 疑似静默丢字（"wrong bus!"） | ✅ **定案：检索假阴性**——OCR 原行是全角 `！`（`wrong bus！`），一直在故事块内，2026-09-21 用 ASCII `!` 检索全角输出造成「丢失」误判；防护机制照建（风险真实存在）：containment 不变量 + 页眉规则收紧 + 墨迹-文本对账哨兵 `textSentinel`（四分类，**只记日志不阻断**，断言「真丢报得出、没丢不误报」） |
+| 段落碎片化 | ✅ 导出侧 `FlowParagraphSplitter` 切段：三判据（条目号领头 / 行首回撤 ≥ 0.012 / 句末标点）+ 三不变量；金标准 **32 段 ∈ 42 ± 30%** |
+| 漫画条完整性 | ✅ 细长大图形单张完整内联于阅读序原位（金标准验证）；几何回退通路未检出为 figure 时哨兵如实报证（记录不修） |
+| 通路决策黑箱 | ✅ `reconstructPath` 每页一条五分类决策线（debug + privacy.public） |
+| 配图真机质量 | ⚠️ 仍待真机验证（模拟器条码恒 0 等限制见 [00 §7](00-getting-started.md#7-怎么测)） |
+
+原 §12.3 建议的落点：①夹具化 → 已做（`ReconstructV2Fixtures` + 金标准套件）；②营养表锚点强制网格 → 已做（`TableGridV2Detector` 锚点驱动）；③配图锚点扩框 → 部分做了（`InkFigureDetector` 像素墨块）；④产品预期 → 已明确（流式档默认 = 干净流式文档，对标 WPS）；⑤TextIn → 未启（纯离线红线，云通路须独立周期评审）。
+
+### 12.1 现象（实机，2026-09 历史快照）
 
 | 样张 | 期望 | 实际 |
 | --- | --- | --- |
@@ -199,7 +230,7 @@ ViewModel：`fileExists(original)` 则先解析原图，保证配图来源正确
 | 营养表 | 三列真表，能量行对齐 | **表格经常没有**；即使有字也是**样式/结构不对**（偏重排段落） |
 | 整体 | 版心、块顺序接近原页 | Word 像「OCR 重排文档」，**不像原图版式** |
 
-### 12.2 可能根因（便于接手排查）
+### 12.2 可能根因（2026-09 历史快照，便于接手排查）
 
 1. **`OnDeviceFigureRegions`**  
    - 栅格连通域易把大空白（页边、题干间隙）当成 figure，或被文字盒膨胀掩码切碎。  
@@ -217,7 +248,7 @@ ViewModel：`fileExists(original)` 则先解析原图，保证配图来源正确
 4. **单测与样张落差**  
    - `ReconstructTests` 用合成 bbox，绿不代表真机样张过关。
 
-### 12.3 建议下一步
+### 12.3 建议下一步（2026-09 历史快照，落点见 §12.0 末段）
 
 1. 对两张样张导出 OCR `[(text, bbox)]` 夹具，写成失败单测。  
 2. 先保营养表三列（可临时加「营养成分表」锚点下方强制网格）。  

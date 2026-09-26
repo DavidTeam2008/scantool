@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-09-24 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 357 用例 = 356 passed + 1 known issue + 0 failed（基线 317 → 357，§6.12）
+> 最后更新：2026-09-26 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 357 用例 = 356 passed + 1 expected failure + 0 failed（基线 317 → 357，§6.12）· 当前最大卡点：取景 WYSIWYG 真机复测未达效（§6.13）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
 
 ---
 
@@ -16,12 +16,17 @@
 
 **现状一句话**：**扫描主链路（拍、框、拉正、增强、OCR、导出图片 PDF）已经可用**；
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
-实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12），**在 iOS 18~25 上仍走几何兜底、真机依旧出不了表**——见 §6。
+实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12）；
+**但取景 WYSIWYG 经 2026-09-26 真机复测未达效**（折页书 Case A 成片仍含折起部分、摊开书
+Case B 实线框仍跳且手动拍含左页大半——当前最大卡点，§6.13）；**iOS 18~25 仍走几何兜底、
+真机依旧出不了表**；iOS 26 结构化通路真机接通性未验证（L1 疑案，§6.12 已知限制 ③）——见 §6。
 
 ### 仓库地图
 
 ```
 scantool/
+├── AGENTS.md                AI coding agent 冷启动入口（定位 / 铁律 / 命令速查）
+├── Makefile                 构建/测试命令固化（test / test-only / smoke / device-build / doctor）
 ├── Zhixia/                  主工程（107 个 .swift）
 │   ├── App/                 入口、DI 容器（AppEnvironment）、路由
 │   ├── Features/            按页面拆：Capture / Edit / Document / Reconstruct / Library / OCR / Settings …
@@ -29,11 +34,12 @@ scantool/
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
 ├── ZhixiaTests/             40 个测试文件 / 357 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
-├── docs/                    本文 + 专题文档（01~09）
+├── docs/                    本文 + 专题文档（00~12；12 为交接文档单入口）
+├── spec/                    SDD 周期工件（9 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
 │   └── pdf-ocr-dump/        **从导出的 PDF 反解真机 OCR**（排障利器，见 §8.3）
-├── docs/fixtures/           两张样张 + 其 OCR 夹具
+├── docs/fixtures/           样张 + OCR 夹具 + 金标准语法页（grammar-worksheet + 42 段阅读流）
 └── prototype/index.html     可交互界面原型
 ```
 
@@ -534,6 +540,8 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 | 模块 | 能力 | 状态 |
 |---|---|---|
 | 取景 | 实时框边（三级检测兜底：严格矩形 → 条件分割 → 放宽矩形；连续实线整框：跟踪细实线 / 锁定粗双线）、手动对焦/曝光、闪光灯、连拍、相册导入 | ✅ |
+| 取景 | 自动快门 6 帧确认窗（锁定后 ≈0.4s 才拍；suspicious 冻结、解锁清零、手动快门不受限）+ 四态引导（对准 / 太远 / 可疑 / 寻找，面积滞回防闪烁） | ✅ 新增（spec/overlay-frame-visibility、spec/scan-fidelity，§6.9/§6.10） |
+| 取景 | **WYSIWYG 裁切契约**：快门裁切门禁 `CropConsistencyGate`（呈现框 = 裁切基准，静帧仅一致精修可胜出）+ live 候选粘滞 `CandidateSticky`（相似候选优先延续，3 帧无相似逃逸清锚） | ✅ 单测钉死（spec/wysiwyg-crop，§6.11）；⚠️ **真机 Case A/B 复测未达效**（§6.13，当前最大卡点） |
 | 取景 | 证件模式比例窗 | ✅ |
 | 整理 | 拖角校正、五档滤镜、旋转 | ✅ |
 | 库 | 文件夹、搜索、收藏、加页、删除、存储占用统计 | ✅ |
@@ -547,6 +555,9 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 | 还原 · 噪声过滤 | 状态栏 / UI chrome / QR URL | ✅ |
 | OCR · 预处理档 | `OCRPreprocessor`：去阴影 + 灰度 + 锐化，质量不达标时自动重跑 | ✅ 新增（§4.3） |
 | 还原 · 双档 | 流式 `.structured`（**默认**）+ 高保真 `.restored`（可选；底座/覆盖/原位/浮动表格，导出同构）；@AppStorage 持久化、预览/导出同源 | ✅ 重做 + 默认档翻转（spec/layout-restore、spec/wps-parity-layout，§4.5/§6.12） |
+| 还原 · 段落收敛 | 导出侧 `FlowParagraphSplitter` 切段（条目号领头 / 行首回撤 ≥ 0.012 / 句末标点，三不变量恒等/回退/零丢失）；金标准 32 段 ∈ 42 ±30% | ✅ 新增（spec/wps-parity-layout，§6.12） |
+| 还原 · 图形完整 | 漫画条等细长大图形单张完整内联于阅读序原位（金标准验证）；几何回退未检出时哨兵报证 | ✅ 新增（spec/wps-parity-layout，§6.12） |
+| 还原 · 通路可观测 | `reconstructPath` 每页一条五分类决策线（debug + privacy.public） | ✅ 新增（spec/wps-parity-layout，§6.12） |
 | 还原 · 丢字防护 | containment 不变量 + 页眉规则收紧 + 墨迹-文本对账哨兵 `textSentinel`（只记不阻断） | ✅ 新增（spec/wps-parity-layout，§6.12） |
 | 还原 · 乱码治理 | `GarbledRegionDetector` 双门控 → `.artwork` 原像素保留 | ✅ 新增 |
 | 还原 · 条码单份 | figure↔barcode 交叉去重 + URL 并入 | ✅ 新增 |
@@ -592,7 +603,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ✅ 已修为 rendered 优先 + original 兜底（不做存在性检查，交给 `parse` 自己失败）。
 
-### 6.2 真机表格：iOS 26 已解决，iOS 18~25 未解决（**当前最大卡点**）
+### 6.2 真机表格：iOS 26 已解决，iOS 18~25 未解决
 
 **根因**（docs/08 §3）：Vision 老的 `VNRecognizeTextRequest` **只给 line 级 bbox**。
 真机把整行单元格合并成一个 line：
@@ -777,6 +788,11 @@ scan-fidelity 把 overlay 映射改成解析链后，真机上整框**仍然不�
 
 ### 6.11 已修：所见非所得 + 双候选振荡——快门裁切门禁与候选粘滞（2026-09-21，spec/wysiwyg-crop）
 
+> ⚠️ **2026-09-26 真机复测更新：R4/R5 修复在真机验收标准下未达效**——Case A 成片
+> 仍含折起部分、Case B 实线框仍持续跳动且跟踪态手动拍成片含左页大半，同因复发。
+> 详见 §6.13 与 `spec/agent-handover/device-retest-20260926.md`。本节修复内容与
+> 回归网保留作历史记录与单元级证据（门禁/粘滞语义本身有测试钉死）。
+
 > 规格与决策：`spec/wysiwyg-crop/spec.md`（US1~US5 / FR-001~010）、
 > `plan.md`（D1~D6）；真机重测协议 `spec/wysiwyg-crop/device-acceptance.md`。
 
@@ -852,9 +868,40 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 
 ---
 
+### 6.13 未解决：Case A / Case B 真机复测未达效（**当前最大卡点**，2026-09-26）
+
+> 逐字原文与完整归因：`spec/agent-handover/device-retest-20260926.md`；
+> 上轮验收记录与待定案假设：`spec/wysiwyg-crop/device-acceptance.md`（含 2026-09-26
+> 复测记录行）。
+
+用户 2026-09-26 用**含 wysiwyg-crop + wps-parity-layout 两周期全部改动**的新构建
+安装包复测（iPhone 13 · iOS 26.7），§6.11 的两项修复同因复发：
+
+| # | 卡点 | 现象（用户逐字） | 归因 | 状态 |
+|---|---|---|---|---|
+| 1 🔴 P0 | **Case A：折页书拍右页，成片仍含折起部分** | 「case A，还是会有折起部分」 | **R4 修复未达效**：折页场景检测器偏好整书外轮廓——若呈现框锁定的是含折起的大框，门禁「呈现框 = 裁切基准」忠实裁出整书（错在锁定对象，上轮假设 H1）；门禁侧误纳/路径未命中（H2）未排除 | 两轮修复未达效；H1/H2 待 `cropGate` 日志定案 |
+| 2 🔴 P0 | **Case B：摊开书双候选，实线框仍跳 + 手动拍成片含左页大半** | 「case B，实线框一直再跳，手动拍，左边很大部分都近图片」 | **R5 修复未达效**：双候选面积比 ≈2:1 超 smoother areaJump 阈值；上轮高置信假设——粘滞 v1「池交替」盲区（候选池存在性逐帧交替时无相似帧可改写，走 miss 分支） | 同因复发；池交替假设被复测强化，待 `stickyOverride` 日志定案 |
+
+**共同教训**：两轮修复都缺真机日志取证闭环——`cropGate` / `stickyOverride` 行从未
+取得，根因假设至今未定案。**下轮修复必须先实时抓日志（Console.app 步骤见
+`spec/wysiwyg-crop/device-acceptance.md` §0）定案，再动刀。** Case B 池交替盲区
+已有明确修复方向（miss 帧 hold-through-miss，与 QuadSmoother 语义对齐）；Case A
+若定案 H1，则修检测器候选偏好/锁定策略，门禁契约本身无需推翻。
+
+**关联卡点**：WPS 对标总体未达（用户第三条反馈「整体上感觉跟wps的扫描还是有差距」）
+——除上述取景裁剪问题外，还原链真机验收清单（`spec/wps-parity-layout/device-acceptance.md`）
+仍「待填」，L1 真机通路疑案（iOS 26.7 结构化通路疑似静默回退）未定案，见 §6.12
+已知限制 ③ 与 §7 P0。
+
+---
+
 ## 7. 后续优化方向
 
 > 2026-09-12 更新：原 P0/P1/P3 大部分已完成（见 §6.7 与下方「已完成」）。
+> 2026-09-26 更新：wysiwyg-crop 的 R4/R5 修复经真机复测**未达效**（Case A/B，§6.13）
+> ——新增 **P0-0 取景裁剪取证与修复**置顶（当前最大卡点），下轮必须**先实时抓
+> `cropGate` / `stickyOverride` 日志定案再动刀**。取景范式的「常驻框」替代路线见
+> [11 §4.2/§7](11-wps-parity-research.md)。
 > 下面按**当前**的真实缺口重排。
 
 ### 已完成（2026-09-12）
@@ -869,11 +916,12 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 | P3-2 | 端到端断言（图片 → parse → docx → `w:tbl`） | `ZhixiaTests/ReconstructEndToEndTests.swift` |
 | —— | 三个数据安全级缺陷 + 导出缺陷 | 见 §6.7，回归网 `ExportSafetyTests.swift` |
 
-### P0 · 真机验证（🔴 最优先，且只有你能做）
+### P0 · 取景裁剪质量 + 真机验证（🔴 最优先，且只有你能做）
 
 | # | 任务 | 说明 |
 |---|---|---|
-| P0-1 | **真机跑 iOS 26 结构化通路** | 模拟器已验证结构（7×3），但模拟器 ≠ 真机。拿营养表 / 练习册各拍一张，导出 Word 看 `w:tbl` 与单元格内容——已并入 `spec/wps-parity-layout/device-acceptance.md` §A/§B（带 `reconstructPath` 取证步骤，§6.12 已知限制 ③） |
+| **P0-0** | **取景 Case A/B 日志取证与修复（当前最大卡点）** | 实时抓 `cropGate` / `stickyOverride` 日志（步骤：`spec/wysiwyg-crop/device-acceptance.md` §0），定案 Case A（H1 显示侧 vs H2 门禁侧）与 Case B（粘滞 v1「池交替」盲区）；按定案修复（Case B 方向：hold-through-miss 与 `QuadSmoother` miss 语义对齐；Case A 若 H1：修候选择优/锁定策略，门禁契约不动）→ 真机复测。取证也可与 P0-1 同一次真机会话完成 |
+| P0-1 | **真机跑 iOS 26 结构化通路（L1 取证）** | 模拟器已验证结构（7×3），但模拟器 ≠ 真机（iOS 26.7 真机疑似静默回退）。拿营养表 / 练习册各拍一张，导出 Word 看 `w:tbl` 与单元格内容——已并入 `spec/wps-parity-layout/device-acceptance.md` §A/§B（带 `reconstructPath` 取证步骤，§6.12 已知限制 ③） |
 | P0-2 | 真机验 OCR 预处理档 | 拍一张**有阴影**的纸，对比开/关预处理档的「文本」结果 |
 | P0-3 | 真机验条码 | 模拟器上 `VNDetectBarcodesRequest` 恒为 0，条码裁图只能真机验 |
 
@@ -918,11 +966,11 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 
 | 阶段 | 内容 | 预估 |
 |---|---|---|
-| V3.5 | P0 真机验证（只有你能做） | 0.5 天 |
+| V3.5 | **P0-0 + P0-1：一次真机会话抓齐 `cropGate`/`stickyOverride`/`reconstructPath` 日志 → 定案 → 修复 → 复测**（只有你能做） | 1~3 天 |
 | V3.6 | P2 导出层（表格样式 + gridSpan + C 档衬底换原图） | 3 天 |
 | V3.7 | P1-1/P1-2 老系统兜底阶梯 | 5 天 |
 | V4.0 | P3 工程债清理 | 3 天 |
-| V4.1 | 云通路 + 手写/勾选 | 2 周+ |
+| V4.1 | 云通路 + 手写/勾选（若走「常驻框范式」的周期 2，见 [11 §7](11-wps-parity-research.md)，则先于 V3.6 评审立项） | 2 周+ |
 
 
 ## 8. 新人操作指南

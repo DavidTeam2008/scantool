@@ -1,8 +1,8 @@
 # 智夏（Zhixia）项目总结
 
-> **生成日期**：2026-09-21
-> **当前状态**：5 个特性周期交付完毕（scan-edge-accuracy → layout-restore → layout-engine → scan-fidelity → live-edge-crop）；测试基线 **295 用例 = 294 passed + 1 known issue（豁免）+ 0 failed**；live-edge-crop 已完成实施（T001~T010），构建/部署验证（T011~T012）由验证子代理收尾。
-> **配套文档**：`docs/00~09`（产品原型 / 架构 / 技术选型 / 实现原则 / 路线图 / 重建三篇 / 项目手册）；各周期 `spec/<name>/{spec,plan,tasks,device-acceptance}.md` 四件套。
+> **生成日期**：2026-09-21；**更新**：2026-09-26
+> **当前状态**：8 个特性周期交付完毕（scan-edge-accuracy → layout-restore → layout-engine → scan-fidelity → live-edge-crop → overlay-frame-visibility → wysiwyg-crop → wps-parity-layout），第 9 个周期 agent-handover（交接与项目 Agent 化）进行中；测试基线 **357 用例 = 356 passed + 1 expected failure（豁免）+ 0 failed**；⚠️ 当前最大卡点：wysiwyg-crop 的 R4/R5 修复经 2026-09-26 真机复测未达效（Case A/B，见 [09 §6.13](09-project-handbook.md)）。
+> **配套文档**：`docs/00~12`（产品原型 / 架构 / 技术选型 / 实现原则 / 路线图 / 重建三篇 / 项目手册 / WPS 对标调研 / 交接文档）+ `AGENTS.md`（AI agent 入口）+ `Makefile`（构建测试命令固化）；各周期 `spec/<name>/{spec,plan,tasks,device-acceptance}.md` 四件套。
 
 ---
 
@@ -45,10 +45,12 @@ Zhixia/
 │   ├── Export / Library / Settings / Onboarding
 ├── Services/               # 协议实现（I/O 边界）
 │   ├── Camera/             # AVCameraSession、CameraPreviewBinder、CameraPreviewView
-│   ├── Vision/             # VisionEdgeDetector、QuadSmoother、FrameMapper
+│   ├── Vision/             # VisionEdgeDetector、QuadSmoother、FrameMapper、
+│   │                       #   CandidateSticky（live 候选粘滞：先稳者胜）
 │   ├── Image/              # ImagePipeline、OCRPreprocessor、EnhancementRecipe
-│   ├── OCR/                # VisionTextRecognizer
-│   ├── Reconstruct/        # DocxExportService、SearchablePDFExportService、
+│   ├── OCR/                # VisionTextRecognizer、InkRegionProvider（墨迹区域，哨兵输入）
+│   ├── Reconstruct/        # VisionDocumentStructureRecognizer（iOS 26 结构化，默认通路）、
+│   │                       #   DocxExportService、SearchablePDFExportService、
 │   │                       #   CompositeDocumentParser、PageBarcodeDetector、ZipArchive...
 │   ├── PDF/                # PDFExportService
 │   ├── Persistence/        # SwiftDataDocumentStore（+ InMemory 测试替身）、PageFileStore
@@ -63,7 +65,10 @@ Zhixia/
     │                       #   LayoutMaskBuilder、AnchorExtractor、PageLayoutMapper
     ├── Table/              # TableGridV2（+Detector）、TableProfile
     ├── Figure/             # InkFigureDetector、FigureRegionsV2
-    ├── OnDeviceReadingOrder / OnDeviceTableCluster / OnDeviceFigureRegions
+    ├── OnDeviceReadingOrder / OnDeviceTableCluster（v1 已退役休眠）/ OnDeviceFigureRegions
+    ├── CropConsistencyGate # WYSIWYG 快门裁切门禁（呈现框 = 裁切基准）
+    ├── FlowParagraphSplitter  # flow 导出侧切段（三判据 + 三不变量）
+    ├── InkTextReconciler   # 墨迹-文本对账哨兵 textSentinel（只记不阻断）
     ├── OverlaySpaceMap     # 照片→屏幕坐标解析链（渲染真值）
     ├── GuidanceDirective   # 四态引导判定 + 面积滞回
     ├── FOVLayout           # 视频↔照片 FOV 换算（单点收敛）
@@ -71,13 +76,13 @@ Zhixia/
     ├── EdgeSnapper / OCRTextQuality / OCRNoiseFilter / ReconstructSceneRouter / ScanSession
     └── Errors/ZhixiaError
 
-ZhixiaTests/                # 35 个测试文件，295 用例
+ZhixiaTests/                # 40 个测试文件（38 个含用例 + 2 个纯 fixture），357 个 @Test
 ```
 
 ### 2.2 依赖规则（架构铁律）
 
 1. **依赖方向**：Features → ServiceProtocols + Domain；Domain 不依赖任何上层；对象创建只发生在 `AppEnvironment` 装配层。
-2. **Domain 纯函数无 I/O**：所有算法（聚类/排版/映射/判定）以纯函数落地，同参数必同结果——这是 295 用例中大量穷举/性质断言的基础。
+2. **Domain 纯函数无 I/O**：所有算法（聚类/排版/映射/判定）以纯函数落地，同参数必同结果——这是 357 用例中大量穷举/性质断言的基础。
 3. **协议签名稳定**：`ServiceProtocols` 是跨周期契约，实现可替换（如 SwiftData ↔ InMemory），签名不动则 Feature 零感知。
 4. **布局解析一次完成，渲染只消费**：重建解析产物（ReconstructDocument）是唯一真值，LayoutCanvas 预览与 DocxExportService 导出消费同一份——预览 = Word 的根保证。
 5. **Feature 不碰持久化**：落库一律经 ViewModel → DocumentStore。
@@ -86,7 +91,8 @@ ZhixiaTests/                # 35 个测试文件，295 用例
 ### 2.3 状态管理与可测性
 
 - SwiftUI `@Observable` MVVM；无 Combine/Rx 依赖。
-- `PreviewSupport` 替身（相机/检测器/存储）同时服务 SwiftUI 预览与 XCTest——「模拟器无真实相机」的拍摄链路全部以替身帧/替身快门验证。
+- 测试框架是 **Swift Testing**（`import Testing` / `@Test`，38 个含用例文件；零 XCTest）——注意 known issue 用例日志是 `recorded an expected failure`，不是 `passed`，计数陷阱见 `Makefile` 与 [AGENTS.md](../AGENTS.md)。
+- `PreviewSupport` 替身（相机/检测器/存储）同时服务 SwiftUI 预览与单测——「模拟器无真实相机」的拍摄链路全部以替身帧/替身快门验证。
 - 两套坐标系是跨子系统最重要的隐式契约，已在多处测试钉死：
   - **OCR/文档空间 y-up**（Vision 原生，`OCRLine.boundingBox` 原点左下）
   - **拍摄/Quad 空间 y-down**（`Quad.fullImage` topLeft 原点，`VisionEdgeDetector` 出口 flipY）
@@ -195,24 +201,30 @@ OnDeviceReadingOrder（阅读序）:
 | **layout-engine** | 预览=Word 的布局引擎 | 37 任务：溢出阶梯 / split / 消解 / 表格模板 / 双栏；映射一致性断言 | 255 用例全绿；真机验收暴露 R1~R7 |
 | **scan-fidelity** | 修复 R1~R7 还原缺陷 | 行级字号同源（R5 叠字）/ y 跨度重叠率聚类（R1 碎片+R2 乱序+R6 不稳）/ segments 下划线占位（R3）/ onContentReady→applyOCRBlob（R7 搜索失效）/ OverlaySpaceMap 解析式映射（边框不可见）/ GuidanceDirective 四态滞回；I-l-1 混淆定为已知限制（R4） | 279 用例全绿 + 真机验收（SC-001~005）+ 装机 |
 | **live-edge-crop** | 折页厚书可靠裁切（真机验收反馈） | live 三级检测兜底（needsRelaxedRectangles 门控）/ 实线整框 DocumentFrameStyle / 快门回退链三分支测试钉死 / relaxedLiveProbe 观测 | T001~T010 完成，295 用例全绿；真机验收清单已产出 |
+| **overlay-frame-visibility** | 取景整框可见的最后一环 + 自动快门节奏 | `QuadShape` 屏幕点契约统一（两个 Shape 两种坐标约定并存的隐性缺陷）/ 自动快门 6 帧确认窗（suspicious 冻结、手动不受限） | 302 用例全绿；折页「错误锁定」可见且可中止 |
+| **wysiwyg-crop** | 所见即所得：快门成片 = 屏幕呈现框 | R4 快门裁切门禁 `CropConsistencyGate`（呈现框为基准，静帧仅一致精修可胜出）/ R5 候选粘滞 `CandidateSticky`（相似候选优先延续，3 帧无相似逃逸清锚） | 317 用例全绿（单测级）；⚠️ **2026-09-26 真机复测 Case A/B 未达效**（R4/R5 未定案，[09 §6.13](09-project-handbook.md)） |
+| **wps-parity-layout** | 默认导出对标 WPS（用户拿 WPS 拍同页对照） | 流式档默认翻转 / v1 假表聚类器退役（宁缺毋假）/ containment 不变量 + 页眉收紧 + `textSentinel` 丢字哨兵（"wrong bus!" 定案检索假阴性）/ `FlowParagraphSplitter` 段落收敛（32∈42±30%）/ 漫画条整块内联 / `reconstructPath` 通路决策日志 / 金标准套件 `GoldenWorksheetEndToEndTests`（真实 Vision 链路端到端） | 357 用例（356 passed + 1 expected failure + 0 failed）；真机通路取证待做（L1 疑案） |
 
 ---
 
 ## 5. 质量保障体系
 
-- **测试**：XCTest 295 用例（294 passed + 1 known issue + 0 failed），基线**只增不减**；新增能力必有纯函数或替身可测面（门控穷举 / 性质断言 / 回退链三分支 / fixture 回归锚点）。
-- **取证驱动修复**：真机导出产物（DOCX 逐行比对）→ 本地 Vision 同参 OCR 对照（证明「OCR 没丢词，是聚类拆散」）→ 几何数据固化为 `DialogueRowFixture` 等永久测试锚点。
-- **日志观测**：`ZhixiaLog` 通道——geometry（FOV 比对）/ detectionTier（候选档位）/ relaxedLiveProbe（放宽档触发率）/ overlayProbeAnalytic+Delta（映射对照）/ suspiciousLock（门禁触发）。真机 Console 可检索，验收清单含对照步骤。
+- **测试**：Swift Testing 357 用例（356 passed + 1 expected failure + 0 failed），基线**只增不减**；新增能力必有纯函数或替身可测面（门控穷举 / 性质断言 / 回退链三分支 / fixture 回归锚点 / 金标准端到端）。跑法与计数陷阱固化在 `Makefile`（`make test` 自动 xcresulttool 计数）。
+- **取证驱动修复**：真机导出产物（DOCX 逐行比对）→ 本地 Vision 同参 OCR 对照（证明「OCR 没丢词，是聚类拆散」）→ 几何数据固化为 `DialogueRowFixture` / `GoldenParseCache` 等永久测试锚点（金标准语法页 42 段阅读流从用户导出的 docx 解包提取）。
+- **日志观测**：`ZhixiaLog` 通道——geometry（FOV 比对）/ detectionTier（候选档位）/ relaxedLiveProbe（放宽档触发率）/ overlayProbeAnalytic+Delta（映射对照）/ suspiciousLock（门禁触发）/ cropGate+stickyOverride（WYSIWYG 门禁与粘滞）/ reconstructPath（还原通路决策，每页一条）/ textSentinel（丢字对账）。真机 Console 可检索，验收清单含对照步骤。
 - **验证链**：模拟器全量测试 → 部署启动（pid 存活）→ generic 真机目标编译 → 真机人工验收清单（device-acceptance.md，SC-xxx 逐项勾选）。
 
 ---
 
 ## 6. 已知限制
 
-1. **OCR 字符级混淆**（I/l/1、O/0、rn/m）：接受为已知限制（FR-012），不做自动改写——误改风险大于收益。
-2. **曲边书页精确贴合**受矩形检测器物理上限约束：三级兜底显著提高命中率，但不保证曲边 100% 贴合；极端场景由预览四角调框兜底。
-3. **真机合并单元格表格**：`realDeviceOcrStillLacksTable` 豁免测试——真机 OCR 输入在几何通路上仍出不了表（known issue 跟踪中）。
-4. 低对比度 / 强反光 / 暗光场景检测置信度天然下降，引导提示可缓解但无法完全消除。
+1. **取景 WYSIWYG 真机未达效（当前最大卡点）**：Case A（折页书成片仍含折起部分）/ Case B（摊开书实线框持续跳动、手动拍成片含左页大半）——R4/R5 修复经 2026-09-26 复测未达效，`cropGate` / `stickyOverride` 日志从未取得，下轮必须先实时取证定案再动刀（[09 §6.13](09-project-handbook.md)、`spec/agent-handover/device-retest-20260926.md`）。
+2. **iOS 26 结构化通路真机接通性未验证（L1 疑案）**：iPhone 13（iOS 26.7）2026-09-21 真机导出走了几何回退，模拟器（iOS 26.4.1）结构化正常——已加 `reconstructPath` 决策日志，取证一步到位（`spec/wps-parity-layout/device-acceptance.md` §A）。
+3. **OCR 字符级混淆**（I/l/1、O/0、rn/m）：接受为已知限制（FR-012），不做自动改写——误改风险大于收益。
+4. **曲边书页精确贴合**受矩形检测器物理上限约束：三级兜底显著提高命中率，但不保证曲边 100% 贴合；极端场景由预览四角调框兜底。
+5. **真机合并单元格表格（iOS 18~25 几何兜底）**：`realDeviceOcrStillLacksTable` 豁免测试——真机 OCR 输入在几何通路上仍出不了表（known issue 跟踪中；iOS 26 结构化通路已绕开该假设，模拟器实测 7×3）。
+6. **几何回退通路漫画条未检出为 figure**：哨兵 likelyMissed 如实报证（记录不修——为回退档强推检测的回归风险大于收益）。
+7. 低对比度 / 强反光 / 暗光场景检测置信度天然下降，引导提示可缓解但无法完全消除。
 
 ---
 
@@ -220,9 +232,11 @@ OnDeviceReadingOrder（阅读序）:
 
 | 方向 | 内容 | 依据 |
 |---|---|---|
-| **曲面展平（dewarping）** | 折页厚书的曲边是矩形检测器的物理天花板；引入曲面文档矫正（网格变形 / 文档分割模型的稠密形变场），把「检出外框」升级为「展平后再裁」，同时提升 OCR 行几何质量 | live-edge-crop 已知限制 2 |
-| **真机表格修复** | 排查真机 OCR 输入下表格几何通路（模拟器替身可通过、真机真实输入失败），消除 known issue 豁免 | 已知限制 3 |
-| **OCR 后处理校正** | 词典 / 上下文置信度校正 I/l/1 等字符混淆（中文文本场景误改风险低，可仅对拉丁词启用） | 已知限制 1 |
+| **🔴 取景 WYSIWYG 取证与修复（P0）** | 实时抓 `cropGate` / `stickyOverride` 日志定案 Case A（H1 显示侧 vs H2 门禁侧）与 Case B（粘滞 v1「池交替」盲区），再修复复测 | 已知限制 1；`spec/agent-handover/device-retest-20260926.md` |
+| **🔴 L1 真机通路取证（P0）** | 真机解析语法页，抄录 `reconstructPath` 决策行，定案 iOS 26.7 结构化通路疑案 | 已知限制 2；`spec/wps-parity-layout/device-acceptance.md` §A |
+| **曲面展平（dewarping）** | 折页厚书的曲边是矩形检测器的物理天花板；引入曲面文档矫正（网格变形 / 文档分割模型的稠密形变场），把「检出外框」升级为「展平后再裁」，同时提升 OCR 行几何质量 | live-edge-crop 已知限制 4 |
+| **真机表格修复（iOS 18~25）** | 排查真机 OCR 输入下表格几何通路（模拟器替身可通过、真机真实输入失败），消除 known issue 豁免；或确认最低部署上移后降级维护 | 已知限制 5 |
+| **OCR 后处理校正** | 词典 / 上下文置信度校正 I/l/1 等字符混淆（中文文本场景误改风险低，可仅对拉丁词启用） | 已知限制 3 |
 | **性能与监控面板** | relaxedLiveProbe 触发率、布局引擎耗时、OCR 两轮成本的调试面板；长文档（100+ 页）的重建吞吐 | 观测通道已就绪 |
 | **批量扫描体验** | 多页连拍（锁定即拍连击）、翻页节奏引导、会话内页序管理 | 拍摄链路成熟后的自然延伸 |
 | **导出能力** | PDF 文本层质量提升、Markdown 导出（行几何已具备）、页面重排（reflow）模式 | 布局引擎产物的低成本复用 |
