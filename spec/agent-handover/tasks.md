@@ -103,9 +103,9 @@
 
 **Purpose**: 脚本实跑回归 + 交接验收终检（纯文档周期无 UI 验证）
 
-- [ ] T020 实跑 `make test`：全绿 357 = 356 passed + 1 expected failure + 0 failed——同时证明 Makefile 可用且文档周期未破坏代码
-- [ ] T021 实跑 `make smoke` + `make device-build`：模拟器装机启动 pid 存活 + 真机目标编译 BUILD SUCCEEDED
-- [ ] T022 交接验收终检（SC-001~005 逐条）：①文档数字与实测一致 ②复测结论三处互链可检索 ③C1/C2 两 commit 落盘、工作区干净、交接文档引用的 C1 hash 正确 ④交接文档四要素齐备且任意卡点 ≤2 跳下钻到证据
+- [x] T020 实跑 `make test`：全绿 357 = 356 passed + 1 expected failure + 0 failed——同时证明 Makefile 可用且文档周期未破坏代码
+- [x] T021 实跑 `make smoke` + `make device-build`：模拟器装机启动 pid 存活 + 真机目标编译 BUILD SUCCEEDED
+- [x] T022 交接验收终检（SC-001~005 逐条）：①文档数字与实测一致 ②复测结论三处互链可检索 ③C1/C2 两 commit 落盘、工作区干净、交接文档引用的 C1 hash 正确 ④交接文档四要素齐备且任意卡点 ≤2 跳下钻到证据
 
 ---
 
