@@ -93,7 +93,7 @@
 
 - [x] T017 [P] 全文档数字一致性校验：grep `README.md`/`AGENTS.md`/`docs/*.md` 中的测试数/文件数/周期数，逐一比对 `/tmp/agent-handover-logs/baseline-facts.md` 实测值，修正偏差
 - [x] T018 [P] 链接有效性校验：`AGENTS.md` 与 `docs/12-handover.md` 全部相对链接指向存在的文件与锚点
-- [ ] T019 提交 C2（US2/FR-002 收尾）：暂存本周期全部产物（`AGENTS.md`/`Makefile`/`docs/12-handover.md`/全量文档同步/`spec/agent-handover/`/`spec/feature.json`），commit 按 `git log` 既有风格，确认 `git status` 干净
+- [x] T019 提交 C2（US2/FR-002 收尾）：暂存本周期全部产物（`AGENTS.md`/`Makefile`/`docs/12-handover.md`/全量文档同步/`spec/agent-handover/`/`spec/feature.json`），commit 按 `git log` 既有风格，确认 `git status` 干净
 
 ---
 
