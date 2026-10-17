@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-09-26 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 357 用例 = 356 passed + 1 expected failure + 0 failed（基线 317 → 357，§6.12）· 当前最大卡点：取景 WYSIWYG 真机复测未达效（§6.13）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
+> 最后更新：2026-10-17 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 368 用例 = 367 passed + 1 expected failure + 0 failed（基线 357 → 368，case-b-sticky-v2）· 当前最大卡点：取景 WYSIWYG 真机复测未达效（§6.13）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
 
 ---
 
@@ -33,9 +33,9 @@ scantool/
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             40 个测试文件 / 357 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── ZhixiaTests/             41 个测试文件 / 368 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
 ├── docs/                    本文 + 专题文档（00~12；12 为交接文档单入口）
-├── spec/                    SDD 周期工件（9 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
+├── spec/                    SDD 周期工件（10 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
 │   └── pdf-ocr-dump/        **从导出的 PDF 反解真机 OCR**（排障利器，见 §8.3）
@@ -333,9 +333,12 @@ SC-004 证据链）、`detectionTier`（候选层级）、`suspiciousLock`
 重跑（严格+分割双落空）、`candidates` 放宽档命中数——**触发率 = triggered=true 行数 ÷
 本日志总行数**，与 `detectionTier`（面积兜底档位）语义正交）、`cropGate`（快门门禁：
 呈现框/静帧面积、IoU 与 acceptedStill 采纳方向，文档模式每次拍摄一行，`iou=-1` 表示
-无可测对）、`stickyOverride`（live 粘滞改写帧，双候选振荡止跳证据）。真机验收步骤见
-`spec/scan-edge-accuracy/device-acceptance.md`、`spec/live-edge-crop/device-acceptance.md`
-与 `spec/wysiwyg-crop/device-acceptance.md`。
+无可测对）、`stickyOverride`（live 粘滞改写帧，双候选**同池**振荡止跳证据）、
+`stickyHold`（v2 hold-through-miss 维持帧：miss 计数 / 锚点面积 / 被拦截择优面积——
+存在性交替被吸收的直接证据，spec/case-b-sticky-v2）、`stickyEscape`（粘滞达限清锚，
+FR-007 不粘死证据）。真机验收步骤见
+`spec/scan-edge-accuracy/device-acceptance.md`、`spec/live-edge-crop/device-acceptance.md`、
+`spec/wysiwyg-crop/device-acceptance.md` 与 `spec/case-b-sticky-v2/device-acceptance.md`。
 
 - `QuadSmoother` 对连续帧的四边形做平滑，避免实时框抖动（未动）。
 - 证件模式（`ScanMode.idCard`）用一个固定比例窗约束检测（语义未动）。
@@ -566,7 +569,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- 40 个测试文件 / 357 个 `@Test`，全量 **356 passed + 0 failed + 1 expected failure**
+- 41 个测试文件 / 368 个 `@Test`，全量 **367 passed + 0 failed + 1 expected failure**
   （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的

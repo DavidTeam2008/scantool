@@ -5,8 +5,9 @@
 > AI agent 请从 [`AGENTS.md`](../AGENTS.md) 进入（铁律与命令速查）；人读细节下钻
 > [`09 接手手册`](09-project-handbook.md)。
 >
-> 更新：2026-09-26 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
-> （wysiwyg-crop + wps-parity-layout 两周期产物入库点）
+> 更新：2026-10-17 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
+> （wysiwyg-crop + wps-parity-layout 两周期产物入库点）+ case-b-sticky-v2 周期
+> 改动（§2.2 修复，待入库）
 
 ---
 
@@ -22,10 +23,10 @@
 | bundle id | `com.david.Zhixia` |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构分层 | App → Features（SwiftUI MVVM）→ Domain（纯函数）→ Services（actor 副作用），依赖只向下 |
-| 代码规模 | 147 个 Swift 文件（主工程 107 / 测试 40）/ 主工程约 14.5k 行 |
-| 质量现状 | **357 用例 = 356 passed + 1 expected failure + 0 failed**（Swift Testing，38 个含用例文件 + 2 个纯 fixture；基线只增不减） |
+| 代码规模 | 148 个 Swift 文件（主工程 107 / 测试 41）/ 主工程约 14.5k 行 |
+| 质量现状 | **368 用例 = 367 passed + 1 expected failure + 0 failed**（Swift Testing，39 个含用例文件 + 2 个纯 fixture；基线只增不减） |
 
-### 1.1 SDD 周期一览（8 个已交付 + 1 个进行中）
+### 1.1 SDD 周期一览（9 个已交付 + 1 个进行中）
 
 | # | 周期 | 主题 | 关键交付 | 基线 | 验收 |
 |---|---|---|---|---|---|
@@ -37,7 +38,8 @@
 | 6 | `overlay-frame-visibility` | 整框可见最后一环 + 快门节奏 | `QuadShape` 屏幕点契约统一、自动快门 6 帧确认窗 | 295→302 | 同名目录 |
 | 7 | `wysiwyg-crop` | 所见即所得 | R4 快门裁切门禁 `CropConsistencyGate`、R5 候选粘滞 `CandidateSticky` | 302→317 | 同名目录（⚠️ 真机复测未达效，见 §2） |
 | 8 | `wps-parity-layout` | 默认导出对标 WPS | 流式档默认 / v1 假表聚类器退役 / 丢字哨兵 `textSentinel` / `FlowParagraphSplitter` 段落收敛 / 漫画条内联 / `reconstructPath` 通路日志 / 金标准端到端套件 | 317→357 | 同名目录（真机取证待做，见 §2.4） |
-| 9 | `agent-handover`（进行中） | 交接与项目 Agent 化 | 复测结论落盘、AGENTS.md + Makefile、全量文档同步、本文 | 357 不变 | `spec/agent-handover/` |
+| 9 | `agent-handover` | 交接与项目 Agent 化 | 复测结论落盘、AGENTS.md + Makefile、全量文档同步、本文 | 357 不变 | `spec/agent-handover/` |
+| 10 | `case-b-sticky-v2`（进行中） | Case B 粘滞 v2 hold-through-miss | 池交替根因代码级定案、`CandidateSticky` v2 参数门控、`stickyHold`/`stickyEscape` 遥测补缺、存在性交替单测 ×11 | 357→368 | `spec/case-b-sticky-v2/`（真机复测待做） |
 
 ---
 
@@ -59,20 +61,31 @@
   `spec/wysiwyg-crop/device-acceptance.md` §0）；若 H1 成立 → 修检测候选择优/锁定策略
   （门禁契约不动）；若 H2 成立 → 修门禁静帧纳入条件。**取证前不要再动刀。**
 
-### 2.2 🔴 P0 · Case B：摊开书实线框持续跳动、手动拍含左页大半（R5 修复未达效）
+### 2.2 🟠 P0 · Case B：摊开书实线框持续跳动、手动拍含左页大半（粘滞 v2 已交付，真机复测待做）
 
 - **现象**：摊开书从中线取景拍右页，实线框在右页与整书两候选间持续跳动、永不锁定；
-  手动拍成片含左页大半（复测用户逐字：「case B，实线框一直再跳，手动拍，左边很大部分都近图片」）。
-- **根因**：**高置信假设**——粘滞 v1「池交替」盲区：`CandidateSticky` 只在「当前候选池里
-  存在相似候选」时改写锚点；当两候选以**存在性交替**（一帧只有 A、下一帧只有 B）方式
-  出现时，任何一帧都找不到相似帧可延续，粘滞恒走 miss 分支。伴生 C4：手动抢拍瞬间
-  呈现框恰处「整书帧」或无框帧，快门基准随之漂移。
-- **证据**：同 2.1；粘滞语义与测试见 `ZhixiaTests/CandidateStickyTests`（单测假设同池共存，
-  未覆盖存在性交替）。
-- **复测状态**：2026-09-26 ✗（同因复发）；`stickyOverride` 日志从未取得。
-- **建议方向**：真机抓 `stickyOverride` 日志验证池交替假设；修复方向 = 粘滞 v2
-  **hold-through-miss**（miss 期间维持现锚一段窗口，与 `QuadSmoother` 的 miss 语义对齐），
-  而不是继续收紧相似判据。
+  手动拍成片含左页大半（复测用户逐字：「case B，实线框一直再跳，手动拍，左边很大部分都近图片」；
+  2026-10 最新反馈：「实线框持续跳动有改善，其它的问题都还在」——同池共存帧已被 v1 吸收，
+  存在性交替帧仍在跳）。
+- **根因（2026-10-17 代码级定案）**：池交替盲区**确认**——三级检测门控
+  （`needsDocumentSegmentation`/`needsRelaxedRectangles`）使 live 候选池逐帧近似单源，
+  两候选以存在性交替出现时 `CandidateSticky` v1 的同池续锚分支结构性不触发，恒走
+  miss 透传、回摆帧又把 missCount 清零——逃逸永不触发、锚点永不保护、输出逐帧翻转；
+  下游 `QuadSmoother` 每帧 areaJump 重置 → 永不锁定。`stickyOverride` 两轮未取得的
+  原因：只在改写帧发射、miss 路径零遥测——日志缺席恰是池交替假设的预测结果。
+  C4（手动拍含左页）定性为下游症状：振荡期快门快照到整书帧/插值混合帧/nil，
+  门禁按契约忠实工作，修好振荡即收敛（门禁与快门路径未动）。
+- **修复（case-b-sticky-v2 周期，已交付）**：`CandidateSticky` v2 **hold-through-miss**
+  ——miss 窗口内维持锚点（与 `QuadSmoother` miss 语义对齐），达限仍逃逸；
+  参数门控（默认 v1 语义）→ 既有断言零修改；新增 `stickyHold`/`stickyEscape`
+  遥测补缺（真机一趟可判读制式）；存在性交替单测 ×10（含 sticky→smoother
+  集成锁定与对照组机理钉住）。全量 367 全绿。
+- **证据**：`spec/case-b-sticky-v2/`（四件套：根因证据链 / D1~D5 决策 /
+  复测清单）；`ZhixiaTests/CandidateStickyV2Tests.swift`。
+- **复测状态**：代码与单测交付（2026-10-17）；**真机复测待做**——按
+  `spec/case-b-sticky-v2/device-acceptance.md`：≤5s 稳定不跳可锁定 / 手动拍
+  成片=呈现框 / `stickyHold`+`cropGate` 日志归档，同会话顺带 `reconstructPath`
+  （§2.4 L1 取证）。
 
 ### 2.3 🟠 P1 · WPS 对标剩余差距（总体观感未达）
 
@@ -117,7 +130,7 @@
 
 | 阶段 | 内容 | 前置 |
 |---|---|---|
-| **P0 裁剪质量** | 真机日志取证（`cropGate` / `stickyOverride`）→ 定案 Case A（H1/H2）与 Case B（池交替）→ 修复（Case B：粘滞 v2 hold-through-miss；Case A 若 H1：候选择优/锁定策略）→ 真机复测两条 Case | 无——**这是下轮第一件事**；步骤 `spec/wysiwyg-crop/device-acceptance.md` §0 |
+| **P0 裁剪质量** | Case B：✅ 池交替代码级定案 + 粘滞 v2 已交付（case-b-sticky-v2，368 全绿）→ **真机复测**（`spec/case-b-sticky-v2/device-acceptance.md`，一趟抄齐 `stickyHold`/`stickyEscape`/`cropGate`）；Case A：真机 `cropGate` 取证定案 H1/H2（可与 Case B 复测同会话）→ 若 H1 修候选择优/锁定策略（门禁契约不动）→ 真机复测 | Case B 修复已入库待复测；Case A 步骤 `spec/wysiwyg-crop/device-acceptance.md` §0 |
 | **P1 真机取证与对标收尾** | L1 通路取证（`reconstructPath`，可与 P0 同一会话）；iOS 26 表格真机验证；阴影场景 OCR 预处理档验证；条码真机验证（模拟器恒 0）；取证后评审「常驻框范式」周期 2（wps-parity-capture，需 WPS 取景录屏） | P0 日志会话顺带完成取证 |
 | **P2 老系统兜底与工程债** | 表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter；导出层表格样式（`w:tblPr`/表头加粗/数值右对齐）与 `gridSpan`/`vMerge`；Library/Review/SwiftData 工程债 | P0/P1 收尾后 |
 | **P3 云通路** | 接通 TextIn（低置信 block 走 `ReconstructRepairing`，禁止整页 LLM 重打表数字）；手写 / 勾选识别 | **独立周期评审**——纯离线是铁律，云通路须单独立项（含隐私披露与用户确认 UX） |
@@ -179,7 +192,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 
 ## 5. 证据索引
 
-### 5.1 spec/ 周期工件（8 个已交付周期 + 当前周期）
+### 5.1 spec/ 周期工件（9 个已交付周期 + 当前周期）
 
 | 周期 | 四件套位置 | 一句话 |
 |---|---|---|
@@ -191,7 +204,8 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | overlay-frame-visibility | `spec/overlay-frame-visibility/` | 屏幕点契约 + 6 帧确认窗 |
 | wysiwyg-crop | `spec/wysiwyg-crop/` | 裁切门禁 + 候选粘滞（**§0 = 日志取证步骤，下轮必读**） |
 | wps-parity-layout | `spec/wps-parity-layout/` | 默认导出对标 WPS（**§A = L1 取证步骤**） |
-| agent-handover | `spec/agent-handover/` | 本周期：复测落盘（`device-retest-20260926.md`）+ Agent 化 |
+| agent-handover | `spec/agent-handover/` | 复测落盘（`device-retest-20260926.md`）+ Agent 化 |
+| case-b-sticky-v2 | `spec/case-b-sticky-v2/` | Case B 池交替根因定案 + 粘滞 v2 hold-through-miss（真机复测待做） |
 
 ### 5.2 docs/ 索引
 

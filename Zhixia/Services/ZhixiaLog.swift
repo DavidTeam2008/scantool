@@ -204,10 +204,37 @@ enum ZhixiaLog {
     }
 
     /// 候选粘滞改写逐帧择优：粘滞候选替换当前最优时的相似度 IoU
-    /// （新选择与被替换选择的 bbox IoU——摊开书双候选振荡场景的止跳证据）。
+    /// （新选择与被替换选择的 bbox IoU——摊开书双候选**同池**振荡场景的
+    /// 止跳证据；v2 起仅同池改写分支发射，hold/逃逸走下方两通道）。
     static func stickyOverride(iou: Double) {
         capture.debug(
             "stickyOverride iou=\(iou, format: .fixed(precision: 4), privacy: .public)"
+        )
+    }
+
+    /// 候选粘滞 hold-through-miss 维持帧（spec/case-b-sticky-v2，plan D1/D3）：
+    /// 存在性交替（帧间候选池互斥）场景 miss 窗口内维持锚点的证据——
+    /// `missCount` 当前连续 miss 计数、`heldArea` 被维持的锚点面积、
+    /// `selectionArea` 被拦截的本帧择优面积。摊开书中线取景判读：hold 行与
+    /// `detectionTier` 的 selectedArea 交替节奏互补出现（交替帧被锚住）；
+    /// 连续 hold 后接 `stickyEscape` = 用户真移场；hold 行整段缺失而框仍跳
+    /// = v2 未生效（对照 CandidateStickyV2Tests 是否绿）。上轮复测
+    /// stickyOverride 整段缺失即 miss 路径零遥测所致，本通道补缺。
+    static func stickyHold(missCount: Int, heldArea: Double, selectionArea: Double) {
+        capture.debug(
+            "stickyHold miss=\(missCount) heldArea=\(heldArea, format: .fixed(precision: 4), privacy: .public) selectionArea=\(selectionArea, format: .fixed(precision: 4), privacy: .public)"
+        )
+    }
+
+    /// 候选粘滞达限逃逸：连续 miss 达上限清空锚点、透传新择优（FR-007
+    /// 不粘死证据）；`afterMisses` = 触发清空时的连续 miss 计数（= missLimit）。
+    /// 每次锚点放弃仅发射一条——锚点已弃的持续检测间隙不再重发
+    /// （CandidateSticky 分支① `lastPick != nil` 守卫，审查 confirmed C1）；
+    /// 判读：取景期短暂失焦/遮挡（≥3 连续零候选帧）会产生一条
+    /// afterMisses=3 属设计内间隙逃逸，连发或 afterMisses≠3 才是异常。
+    static func stickyEscape(afterMisses: Int) {
+        capture.debug(
+            "stickyEscape afterMisses=\(afterMisses)"
         )
     }
 
