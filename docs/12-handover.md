@@ -224,6 +224,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | [10](10-project-summary.md) | 项目总结：架构 / 技术原理 / SDD 周期史 |
 | [11](11-wps-parity-research.md) | WPS 对标调研：docx 取证 / 差距分析（L1~L7 / C1~C4）/ 周期规划 / §7 复测闭环 |
 | [12](12-handover.md) | 本文 |
+| [13](13-mcp-quickref.md) | MCP 使用速查：6 server 分工 / 配置落点 / 场景对照 / 项目铁律叠加 |
 
 ### 5.3 提交锚点
 

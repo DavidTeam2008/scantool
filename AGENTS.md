@@ -37,6 +37,11 @@
 | `make device-build` | 真机目标编译（`generic/platform=iOS`，免签名） |
 | `make doctor` | 环境自检（Xcode / 模拟器 / Busy 提示） |
 
+> **MCP 工具**：本机已装 6 个 MCP server（mobilebuildmcp / xcode / agent-device / maestro /
+> testflight / app-store-connect），分工、配置落点与使用铁律见
+> [`docs/13-mcp-quickref.md`](docs/13-mcp-quickref.md)；其中 testflight /
+> app-store-connect 待补 ASC 凭证。
+
 **计数陷阱（必读）**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 failure`，**不是** `passed`——按 `passed` 关键字搜日志会数出 356 然后误判丢了 1 条。
 以 `make test` 末尾自动打印的 xcresulttool 计数为准：`total=357 passed=356
