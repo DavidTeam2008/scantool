@@ -69,6 +69,10 @@ npx -y mobilebuildmcp@latest tools                        # 全目录；<工作�
 - 每*会话*先 `XcodeOpenWorkspace`（传 `.xcodeproj` 的绝对路径）拿 **workspaceIdentifier**，
   后续工具都吃这个 id（会跨会话变化，别硬编码）。首次对新 agent / 新项目会触发一次
   Xcode 侧授权弹窗，本项目 agent 已批准过。
+- **外部 agent 权限管理面**：`xcrun mcp-server status` 列 Permitted agents / folders 与
+  开放工作区；待批请求用 `xcrun mcp-server approve <id>`（需 sudo），重置用 `reset-all`，
+  活动日志 `show-logs`。opencode 于 2026-10-20 已注册并实证
+  （`signed 5NZ4Q7NXJ4 opencode` + 项目目录授权；`BuildProject` 全绿）。
 - 常用：`XcodeListSchemes` / `XcodeSwitchScheme` / `XcodeListTargets` / build / run /
   `StopProject`；运行时验证走 `DeviceInteractionStart{,Workspace}Session`（要装跑再用，
   用完 `DeviceInteractionEndSession` 释放）。
