@@ -82,7 +82,23 @@ struct ReviewView: View {
 
     @ViewBuilder
     private var canvas: some View {
-        if viewModel.isAdjustingCrop, let original = viewModel.originalImage {
+        if viewModel.isAdjustingSplit, let original = viewModel.originalImage {
+            // 拆分工具（spec/guided-capture T021 / FR-008）：在**矫正前的原图**
+            // 上画可见分割线；系统只给建议，用户点「应用」才改写裁切框。
+            ReviewSplitCanvas(
+                image: original,
+                proposal: viewModel.splitProposal,
+                onUChange: { viewModel.updateSplitU($0) },
+                onSelectOption: { viewModel.selectSplitOption($0) },
+                onApply: {
+                    viewModel.applySplit(viewModel.splitProposal?.selection ?? .right)
+                    viewModel.isAdjustingSplit = false
+                },
+                onCancel: { viewModel.isAdjustingSplit = false },
+                canUndo: viewModel.canUndoSplit,
+                onUndo: { viewModel.undoSplit() }
+            )
+        } else if viewModel.isAdjustingCrop, let original = viewModel.originalImage {
             CropCanvas(
                 image: original,
                 quad: Binding(
@@ -122,6 +138,8 @@ struct ReviewView: View {
                 .foregroundStyle(Color.white.opacity(0.85))
             Button("review.crop") { viewModel.toggleCrop() }
                 .foregroundStyle(viewModel.isAdjustingCrop ? Tokens.seal : Color.white.opacity(0.85))
+            Button("review.split") { viewModel.toggleSplitTool() }
+                .foregroundStyle(viewModel.isAdjustingSplit ? Tokens.seal : Color.white.opacity(0.85))
             Button("review.retake") {
                 if let id = viewModel.current?.id {
                     onRetake(id)

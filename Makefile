@@ -25,8 +25,8 @@ TEST_LOG    := $(BUILD_DIR)/last-test.log
 APP_PATH    := $(BUILD_DIR)/dd/Build/Products/Debug-iphonesimulator/Zhixia.app
 XCODEBUILD  := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -skipPackagePluginValidation -skipMacroValidation
 # 测试基线（**只增不减**）：新增测试后同步本值；计数低于本值 = 测试被删 → make 失败。
-BASELINE_TOTAL ?= 436
-BASELINE_PASSED ?= 435
+BASELINE_TOTAL ?= 444
+BASELINE_PASSED ?= 443
 BASELINE_EXPECTED_FAILURES ?= 1
 
 .PHONY: help test test-only smoke device-build doctor

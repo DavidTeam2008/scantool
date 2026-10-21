@@ -1,7 +1,7 @@
 # Tasks: 拍后增强（scan-enhance）
 
 **测试基线（周期交付时）**：392 = 391 passed + 1 expected failure + 0 failed
-**当前总基线**：436 = 435 passed + 1 expected failure + 0 failed（2026-10-21 实测；
+**当前总基线**：444 = 443 passed + 1 expected failure + 0 failed（2026-10-21 实测；
 本文是历史周期记录，T005 的 392 不改写）
 **构建/测试**：`make test` / `make test-only T=<Suite>`
 

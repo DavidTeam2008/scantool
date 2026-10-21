@@ -364,6 +364,25 @@ enum ZhixiaLog {
         )
     }
 
+    /// 拆分提案（spec/guided-capture FR-008 / T020~T021）：用户确认或撤销时一条。
+    /// `proposalU` = 分割线位置（-1 = 撤销）；`source` = spine / leftFold / none；
+    /// `confidence` = 0~1（≥0.5 实线建议）；`applied` = 是否写入了 quad。
+    /// 判读重点：**`applied=true` 必须伴随一次用户点选**——若日志出现
+    /// `applied=true` 而用户没点「应用」，即为静默误裁（失败）。
+    static func reviewSplit(
+        proposalU: Double,
+        source: String,
+        prominence: Double,
+        continuity: Double,
+        confidence: Double,
+        selection: String,
+        applied: Bool
+    ) {
+        capture.notice(
+            "reviewSplit proposalU=\(proposalU, format: .fixed(precision: 4), privacy: .public) source=\(source, privacy: .public) prominence=\(prominence, format: .fixed(precision: 3), privacy: .public) continuity=\(continuity, format: .fixed(precision: 3), privacy: .public) confidence=\(confidence, format: .fixed(precision: 3), privacy: .public) selection=\(selection, privacy: .public) applied=\(applied, privacy: .public)"
+        )
+    }
+
     // MARK: - 版面还原对标 WPS 结构化诊断（spec/wps-parity-layout，plan D5/D9 / FR-002、FR-006）    //
     // 两个可观测通道，真机验收（SC-002/SC-006）用 Console.app 检索：
     // - `reconstructPath`：每页解析的通路决策（结构化 vs 几何回退 + 原因分类）；

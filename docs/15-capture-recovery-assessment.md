@@ -5,7 +5,7 @@
 > 哪些判断需要纠正、下一步怎么落地**。
 >
 > 执行入口：`spec/guided-capture/`（spec / plan / tasks / device-acceptance）。
-> 基线：**436 = 435 passed + 1 expected failure + 0 failed**（2026-10-21 实测）。
+> 基线：**444 = 443 passed + 1 expected failure + 0 failed**（2026-10-21 实测）。
 
 ---
 
@@ -18,7 +18,7 @@
    被检出，也可能被包含降权压掉。
 2. **锁定/解锁判据是逐帧差，不是累计位移**——慢速移动时系统会锁在旧框上；
    越调角度越不恢复，快门时框与书边有偏差。
-3. **没有端到端真值/回放**——436 个单测证明不了真机成片正确；每轮修复都
+3. **没有端到端真值/回放**——444 个单测证明不了真机成片正确；每轮修复都
    在“单测绿、真机败”之间循环。
 
 如果按 `P0-1 → P0-2 → P1-1` 执行，大概率是第 8 个周期继续在同一范式里调
@@ -31,7 +31,7 @@
 
 - `make test` 直接执行会失败在 destination：`iPhone 17 Pro` 只有 iOS 26.4.1，
   而 xcodebuild 把未指定 OS 的 destination 解析成 `OS=latest`（27.0）。
-- 指定 `OS=26.4.1` 后：`total=436 passed=435 failed=0 expectedFailures=1
+- 指定 `OS=26.4.1` 后：`total=444 passed=443 failed=0 expectedFailures=1
   skipped=0`，与 `docs/14` 一致。
 - 复核时 `AGENTS.md` 仍写 386、`Makefile` 打印 357、`scan-enhance/tasks.md` 写 392；
   本轮已把 `AGENTS.md` 同步为 397，`Makefile` / `scan-enhance` 的修正列入
@@ -158,7 +158,7 @@ P0-1/P0-2 的调参可能都发生在错误的坐标上。
 
 #### ⑤ 过程问题：没有 trace/replay，测试治理在反噬
 
-436 个测试全绿，但真机仍失败，说明测试的“真值”选错了：大量用例钉的是
+444 个测试全绿，但真机仍失败，说明测试的“真值”选错了：大量用例钉的是
 **每层阈值/帧预算**，不是用户场景。`AutoCaptureHoldWindowTests` 用固定帧数
 钉 0.4s，实际 30fps 下只有 0.2s——这不是测试太严，是测试和产品时间语义
 脱节。
@@ -322,7 +322,7 @@ A/B 验证，不搞大爆炸迁移。
 3. **不要在没量剖面之前扩 `searchRange`**——可能从“切错一列”变成“切错
    另一列”。
 4. **不要自动应用拆分结果**——必须可见、可拖、可撤销。
-5. **不要把“436 全绿”当成产品验收**——真机 device-acceptance 空着就是
+5. **不要把“444 全绿”当成产品验收**——真机 device-acceptance 空着就是
    没完成。
 6. **不要改 `ServiceProtocols` 签名**——需要预览几何就加新协议/闭包，
    不动旧协议。
@@ -534,4 +534,4 @@ WPS 的自动跟随，而是用固定框达到同样的确定性。
 | 左折条“第一个持续明亮列” | `Zhixia/Domain/SpreadSplitter.swift` `leftFoldTrim` |
 | 整理页自动改 quad | `Zhixia/Features/Edit/ReviewViewModel.swift` `refineQuads` |
 | `.enhance` 默认饱和度为 0.9（偏降饱和） | `Zhixia/Services/Image/EnhancementRecipe.swift` |
-| 测试基线 | `ZhixiaTests/`（436 个 `@Test`）；2026-10-21 `make test` 实测 |
+| 测试基线 | `ZhixiaTests/`（444 个 `@Test`）；2026-10-21 `make test` 实测 |

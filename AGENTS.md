@@ -13,7 +13,7 @@
 |---|---|
 | 语言 / 最低部署 | Swift 6 · iOS 18.0+（结构化识别用 iOS 26 `RecognizeDocumentsRequest`） |
 | bundle id | `com.david.Zhixia` |
-| 测试基线 | **436 = 435 passed + 1 expected failure + 0 failed**（`ZhixiaTests/`；2026-10-21 实测；只增不减） |
+| 测试基线 | **444 = 443 passed + 1 expected failure + 0 failed**（`ZhixiaTests/`；2026-10-21 实测；只增不减） |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构 | App → Features(SwiftUI VM) → Domain(纯函数) → Services(actor 副作用)，依赖只向下 |
 | 构建 | `Zhixia.xcodeproj`，Xcode 26.x，scheme `Zhixia`，PBXFileSystemSynchronizedRootGroup（新文件免改 pbxproj） |
@@ -50,7 +50,7 @@
 
 **计数陷阱（必读）**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 failure`，**不是** `passed`——按 `passed` 关键字搜日志会少算 1 条。以 `make test`
-末尾自动打印的 xcresulttool 计数为准：`total=436 passed=435 failed=0
+末尾自动打印的 xcresulttool 计数为准：`total=444 passed=443 failed=0
 expectedFailures=1` 才是全绿。
 
 **环境坑**（已固化进 Makefile，手工执行时别漏）：① `DEVELOPER_DIR` 必须指向本机
@@ -61,7 +61,7 @@ Xcode；② 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`（macOS 26.x 宏沙
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动
    全部替身测试连锁崩。
-2. **既有测试断言零修改**——基线 436 只增不减；方向性翻转属唯一例外，须在周期
+2. **既有测试断言零修改**——基线 444 只增不减；方向性翻转属唯一例外，须在周期
    tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
 3. **纯离线**——不引任何网络依赖、不加云调用；云通路是 P4 路线图，须独立周期评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 在模拟器永远返回空，
@@ -92,7 +92,7 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
 
 - **当前状态**：Case A（折页书）与 Case B（摊开书）的既有修复已交付
   （case-b-sticky-v2 + folded-page-capture + frame-truth 三周期；全量
-  **436 = 435 passed + 1 expected failure + 0 failed**），真机验收仍待做
+  **444 = 443 passed + 1 expected failure + 0 failed**），真机验收仍待做
   （主清单 `spec/frame-truth/device-acceptance.md`；同会话合并 Case B 复测与
   `reconstructPath` L1 取证）。
 - **2026-10-21 复核后新增主线**：`docs/15-capture-recovery-assessment.md` +
@@ -100,11 +100,11 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
   sticky/smoother 阈值不是优先项；先做引导框 MVP + 画布真值 + trace/replay。
   默认仍 `.auto`，引导模式经真机 A/B 后再决定是否翻转默认。
 - **guided-capture 进度（2026-10-22）**：**Phase 0（T000~T004）+ Phase 1
-  （T010~T016）代码已交付**（基线 417→436；模拟器走查通过：切引导 → 拖角 →
-  拍 → 切回自动）。**未做**：T005 真机 V1/V2/V3、Phase 2 Review 拆分提案
-  （T020~T023）、真机 A/B（T030~T034）。**动 capture 侧前先读
-  `spec/guided-capture/plan.md` D1~D10**；引导路径与自动路径**互不影响**
-  （自动路径本周期零改动）。
+  （T010~T016）+ Phase 2（T020~T023）代码已交付**（基线 417→444；模拟器走查
+  通过：切引导 → 拖角 → 拍 → 切回自动；拆分语料 0 静默误裁 / 10-10 可修正 /
+  10-10 u 误差 ≤2%）。**未做**：T005 真机 V1/V2/V3、真机 A/B（T030~T034）。
+  **动 capture 侧前先读 `spec/guided-capture/plan.md` D1~D10**；引导路径与
+  自动路径**互不影响**（自动路径本周期零改动）。
 - **WPS 参考录屏已评估（2026-10-21）**：49s 录屏显示手动快门 + 单实线自动跟随框 +
   拍后自动重裁/滤镜；框在右页/整页间切换，快门时也不紧。结论：我们的固定引导框
   是替代范式而非 WPS 同款；不照搬静默换框，WPS 式自动裁边/滤镜列为 `T040`/`T041`

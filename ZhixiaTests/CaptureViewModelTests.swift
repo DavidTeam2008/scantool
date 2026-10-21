@@ -213,7 +213,7 @@ struct ReviewViewModelTests {
         #expect(viewModel.drafts.first { $0.id == freePage }?.quad == stillRedetected)
     }
 
-    @Test("Post-capture refine splits a spread into the right page (spine valley)")
+    @Test("Post-capture refine proposes a spread split (spine valley) instead of applying it")
     func reviewSplitsSpreadToRightPage() async throws {
         // spec/scan-enhance FR-002：摊开书场景候选池里只有整书一个候选，
         // 「只拍右页」靠拍后按书脊拆分。合成图：两张亮页 + 中央暗脊。
@@ -242,13 +242,21 @@ struct ReviewViewModelTests {
         viewModel.appear()
         #expect(await waitUntil { viewModel.previewImage != nil })
 
+        // **方向性翻转（spec/guided-capture T020/T022）**：拆分从「自动应用」
+        // 改为「提案」——refineQuads 不再静默改写 draft.quad（静默误裁的来源），
+        // 改为产出可见提案；用户确认（applySplit）后才写框。
+        #expect(viewModel.drafts.first?.quad == spread, "拆分提案不得静默改写裁切框")
+        let proposal = try #require(viewModel.splitProposal)
+        #expect(proposal.u > 0.42 && proposal.u < 0.58,
+                "分割线应落在书脊（≈0.5），实际 \(proposal.u)")
+        viewModel.applySplit(.right)
         let quad = try #require(viewModel.drafts.first?.quad)
         #expect(quad.topLeft.x > 0.42 && quad.topLeft.x < 0.58,
-                "拆分后左缘应落在书脊（≈0.5），实际 \(quad.topLeft.x)")
-        #expect(quad.area < spread.area * 0.75, "拆分后应为单页面积（约整书一半）")
+                "应用后左缘应落在书脊（≈0.5），实际 \(quad.topLeft.x)")
+        #expect(quad.area < spread.area * 0.75, "应用后应为单页面积（约整书一半）")
     }
 
-    @Test("Post-capture refine trims a dark folded strip on the left")
+    @Test("Post-capture refine proposes trimming a dark folded strip on the left")
     func reviewTrimsFoldedLeftStrip() async throws {
         // spec/scan-enhance FR-002 场景 2：折起部分在画面左侧是一条暗带
         // （真机照片实测 u≈0.08、暗度 0.44）——拍后裁掉折条，右页左缘
@@ -278,9 +286,14 @@ struct ReviewViewModelTests {
         viewModel.appear()
         #expect(await waitUntil { viewModel.previewImage != nil })
 
+        // **方向性翻转（spec/guided-capture T020/T022）**：改为提案 + 用户确认。
+        #expect(viewModel.drafts.first?.quad == captured, "折条提案不得静默改写裁切框")
+        let proposal = try #require(viewModel.splitProposal)
+        #expect(proposal.source == .leftFold)
+        viewModel.applySplit(.right)
         let quad = try #require(viewModel.drafts.first?.quad)
         #expect(quad.topLeft.x > 0.05 && quad.topLeft.x < 0.15,
-                "左缘应裁到折条右侧（≈0.10），实际 \(quad.topLeft.x)")
+                "应用后左缘应裁到折条右侧（≈0.10），实际 \(quad.topLeft.x)")
         #expect(quad.area < captured.area * 0.97, "折条必须被裁掉")
     }
 

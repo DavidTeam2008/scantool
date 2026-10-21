@@ -2,8 +2,8 @@
 
 **Input**: Design documents from `spec/guided-capture/`
 **Prerequisites**: `spec.md`（US1~US5 / FR-001~010）、`plan.md`（D1~D10）
-**测试基线**: **436 = 435 passed + 1 expected failure + 0 failed**（2026-10-21 实测；
-T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画布/偏好））
+**测试基线**: **444 = 443 passed + 1 expected failure + 0 failed**（2026-10-22 实测；
+T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画布/偏好）→ Phase 2 +8（拆分提案/语料））
 **构建/测试**: T000 前用
 `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`；
 T000 后直接 `make test`。局部：`make test-only T=<Suite>`
@@ -80,7 +80,7 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
   `docs/15-capture-recovery-assessment.md` §九与 `device-acceptance.md` §0。
   **Checkpoint 0**：T000 全绿 + T001~T004 单测绿 + V1/V2/V3 有结论；
   未过不得进 Phase 1。依赖 T001~T004。
-  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 436 = 435 passed +
+  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 444 = 443 passed +
   1 expected failure + 0 failed）；**V1/V2/V3 待真机会话**（iPhone 13 · iOS 26.7，
   需人工配合 1 小时）——本机无真机，**不得用模拟器结果冒充**。
 
@@ -177,22 +177,46 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
 
 ## Phase 2: Review 拆分确认（US4）
 
-- [ ] **T020** 拆分提案模型与计算（D5 / FR-008）：`ReviewViewModel` 增
+- [X] **T020** 拆分提案模型与计算（D5 / FR-008）：`ReviewViewModel` 增
   `SplitProposal`（u/source/prominence/continuity/confidence/quadBefore/
   quadAfter）；`refineQuads` 保留身份锚定 still 精修，但拆分只生成 proposal，
   **不写 quad**；引导页（`userAdjustedQuad`）跳过；切换页/改框/删除后清空
   proposal。单测：proposal 不修改 quad、左右/整页应用、撤销、低置信不应用、
   引导页跳过、切换页清空。依赖 T014。
-- [ ] **T021** Review 拆分 UI（D5 / FR-008）：`ReviewView` 增“拆分”工具 +
+  **交付（2026-10-22）**：`Domain/Models/SplitProposal.swift`（提案模型 +
+  `SplitProposalConfidence` 纯函数：D5 的 spine/leftFold 公式、clamp、阈值 0.5）；
+  `ReviewViewModel`：`splitProposal`（**按页存储**——提案只属于它自己的页，
+  不跨页复用）、`computeSplitProposal()`、`selectSplitOption()`、
+  `updateSplitU()`（只改提案）、`applySplit(_:)`（**唯一写 quad 的入口**，
+  置 `userAdjustedQuad = true`）、`undoSplit()`（恢复框**并恢复提案**，
+  可再次应用）、改框/删页清提案。
+  `refineQuads` 仍做身份锚定 still 精修；拆分改为**只生成提案**。
+  单测 `ReviewSplitProposalTests`（7 条）。
+- [X] **T021** Review 拆分 UI（D5 / FR-008）：`ReviewView` 增“拆分”工具 +
   `ReviewSplitCanvas`（原图、可见分割线、可拖 u、整页/左页/右页、应用/取消/
   撤销）；低置信虚线提示；proposal 为 nil 时提供手动拆分（u=0.5）；
   `reviewSplit` 日志。依赖 T020。
-- [ ] **T022** 回归与方向性翻转（D7 / FR-010）：检查 `ReviewViewModelTests`/
+  **交付（2026-10-22）**：`Features/Edit/ReviewSplitCanvas.swift`（在**矫正前
+  的原图**上画竖分割线；可拖改 u；置信度 ≥0.5 实线、<0.5 虚线弱提示；整页/
+  左页/右页三选一 + 应用/取消/撤销；无提案时进入手动模式 u=0.5）；
+  `ReviewView` 工具条加“拆分”入口（打开时若无提案则现场算一次）；
+  `ZhixiaLog.reviewSplit(proposalU/source/prominence/continuity/confidence/
+  selection/applied)`——判读要点：`applied=true` 必须伴随用户点选。
+- [X] **T022** 回归与方向性翻转（D7 / FR-010）：检查 `ReviewViewModelTests`/
   `SpreadSplitterTests`；拆分从自动应用改为提案导致的断言翻转逐条记录在
   下方“方向性翻转清单”；`SpreadSplitter` 纯函数测试零改动。依赖 T021。
-- [ ] **T023** Phase 2 验证：10 张整书/折页/导入 fixture 跑提案；统计
+  **交付（2026-10-22）**：两条断言翻转（见下方清单）；`SpreadSplitterTests`
+  **零改动**（纯函数未动）。
+- [X] **T023** Phase 2 验证：10 张整书/折页/导入 fixture 跑提案；统计
   `u` 误差、误裁、撤销率；**Checkpoint 2**：SC-006 通过（0 静默误裁、
   10/10 可修正、8/10 提案 ≤2%）。依赖 T020~T022。
+  **交付（2026-10-22）**：`ReviewSplitCorpusTests`（10 个参数化合成 fixture：
+  7 个中央暗脊 u∈[0.42,0.58] + 3 个左侧暗折条 u∈[0.06,0.10]；真机样本待
+  T030 补入，同结构不改断言）。**指标基线**（附件 `review-split-corpus`）：
+  静默误裁 **0/10**；可一键修正 **10/10**；u 误差 ≤2% **10/10**
+  （最大 0.0114，均为「取书脊左缘」的固有偏置 0.5%~1.1%）；置信度均 1.000
+  （合成图干净，真机值待测）。**Checkpoint 2（模拟器/合成语料口径）通过**；
+  真机 10 张仍待 T030。
 
 ## Phase 3: 真机 A/B、回归与收尾（US5）
 
@@ -249,7 +273,9 @@ T040 / T041 在 T034 之后单独立项，不计入本周期依赖图与验收�
 
 | 测试 | 旧断言 | 新断言 | 理由 | 任务 |
 |---|---|---|---|---|
-| （无） | | | | Phase 0/1 新增 39 条用例，既有断言零修改；Review 拆分翻转将在 T022 记录 |
+| `ReviewViewModelTests.reviewSplitsSpreadToRightPage` | 整理页 `appear()` 后 quad **自动**变成右页（左缘≈0.5、面积 <0.75×整书） | `appear()` 后 quad **保持整书**；`splitProposal.u ≈ 0.5`；`applySplit(.right)` 后才是右页 | FR-008：拆分从「自动应用」改为「提案 + 用户确认」——静默改写 quad 是「静默误裁」的来源 | T020/T022 |
+| `ReviewViewModelTests.reviewTrimsFoldedLeftStrip` | 整理页 `appear()` 后 quad **自动**裁掉左侧折条 | `appear()` 后 quad **保持原样**；`splitProposal.source == .leftFold`；`applySplit(.right)` 后才裁掉 | 同上（折条场景） | T020/T022 |
+| （其余 442 条） | 零修改 | 零修改 | Phase 0/1/2 只增用例；`SpreadSplitter` 纯函数测试零改动 | — |
 
 ## 待办（记录在案，不在本周期实施）
 
@@ -265,7 +291,7 @@ T040 / T041 在 T034 之后单独立项，不计入本周期依赖图与验收�
 
 ## 验收门
 
-1. **Checkpoint 0**：`make test` 436 基线可复现；trace 可导出/回放；V1/V2/V3
+1. **Checkpoint 0**：`make test` 444 基线可复现；trace 可导出/回放；V1/V2/V3
    有结论。
 2. **Checkpoint 1**：引导拍摄 20/20 只含框内内容；框零自动移动；画布
    round-trip ≤0.5%；引导路径无 detector 调用。

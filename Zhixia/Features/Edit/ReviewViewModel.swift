@@ -11,8 +11,31 @@ final class ReviewViewModel {
     var isSaving = false
     var isRendering = false
     var isAdjustingCrop = false
+    /// 拆分工具是否打开（spec/guided-capture T021 / FR-008）。
+    var isAdjustingSplit = false
     var error: ZhixiaError?
     var savedDocumentID: UUID?
+
+    /// 逐页拆分提案（spec/guided-capture T020 / FR-008）——**提案不写 quad**，
+    /// 只在用户确认（`applySplit`）时才改写。键为页 ID：提案只属于它自己的
+    /// 页，不跨页复用（`splitProposal` 取当前页的那一份）。
+    private var proposalsByPage: [UUID: SplitProposal] = [:]
+    /// 拆分撤销栈（每项：页 ID + 提案前的框 + 当时的提案）。
+    private struct SplitUndo: Equatable {
+        var pageID: UUID
+        var quadBefore: Quad
+        var proposal: SplitProposal
+    }
+    private var splitUndoStack: [SplitUndo] = []
+
+    /// 当前页的拆分提案（nil = 没有建议；UI 此时提供「手动拆分」）。
+    var splitProposal: SplitProposal? {
+        guard let id = current?.id else { return nil }
+        return proposalsByPage[id]
+    }
+
+    /// 是否还能撤销上一次拆分应用。
+    var canUndoSplit: Bool { !splitUndoStack.isEmpty }
 
     let sessionID: UUID
     let appendToDocumentID: UUID?
@@ -129,6 +152,8 @@ final class ReviewViewModel {
         guard drafts.indices.contains(selectedIndex) else { return }
         drafts[selectedIndex].quad = quad.clamped()
         drafts[selectedIndex].userAdjustedQuad = true
+        // 手动改框 → 提案作废（用户已经自己决定了边界，系统的建议不再适用）。
+        clearProposal(for: drafts[selectedIndex].id)
     }
 
     func commitCrop() {
@@ -138,14 +163,114 @@ final class ReviewViewModel {
 
     func deleteCurrent() {
         guard drafts.indices.contains(selectedIndex) else { return }
+        let removedID = drafts[selectedIndex].id
         drafts.remove(at: selectedIndex)
         if selectedIndex >= drafts.count {
             selectedIndex = max(0, drafts.count - 1)
         }
         isAdjustingCrop = false
+        // 删页 → 该页的提案与撤销记录一并作废。
+        clearProposal(for: removedID)
+        splitUndoStack.removeAll { $0.pageID == removedID }
         previewImage = nil
         loadOriginal()
         Task { await renderSelected() }
+    }
+
+    // MARK: - 拆分提案（spec/guided-capture T020~T022 / FR-008 / plan D5）
+
+    /// 打开/关闭拆分工具（打开时若无提案 → 现场算一次）。
+    func toggleSplitTool() {
+        isAdjustingSplit.toggle()
+        if isAdjustingSplit, splitProposal == nil {
+            Task { await computeSplitProposal() }
+        }
+    }
+
+    /// 现场计算当前页的拆分提案（不写 quad）。
+    func computeSplitProposal() async {
+        guard drafts.indices.contains(selectedIndex) else { return }
+        let index = selectedIndex
+        // 引导页（用户已定框）不生成提案——引导框就是用户意图。
+        guard !drafts[index].userAdjustedQuad else { return }
+        let url = fileStore.originalURL(session: drafts[index].sessionID, page: drafts[index].id)
+        guard let data = try? Data(contentsOf: url) else { return }
+        if let proposal = Self.makeSplitProposal(quad: drafts[index].quad, data: data) {
+            proposalsByPage[drafts[index].id] = proposal
+        }
+    }
+
+    /// 拖动分割线（改 `u`）——只改提案，不写 quad。
+    func updateSplitU(_ u: Double) {
+        guard var proposal = splitProposal, let pageID = current?.id else { return }
+        let clamped = min(1, max(0, u))
+        proposal.u = clamped
+        proposal.quadAfter = SpreadSplitter.split(proposal.quadBefore, at: clamped).right
+        proposalsByPage[pageID] = proposal
+    }
+
+    /// 选择拆分结果（整页/左页/右页）——**只改提案的高亮，不写 quad**。
+    func selectSplitOption(_ selection: SplitProposal.Selection) {
+        guard var proposal = splitProposal, let pageID = current?.id else { return }
+        proposal.selection = selection
+        proposalsByPage[pageID] = proposal
+    }
+
+    /// 应用拆分（用户确认）——**这一步才写 quad**。
+    func applySplit(_ selection: SplitProposal.Selection) {
+        guard drafts.indices.contains(selectedIndex) else { return }
+        guard let proposal = splitProposal else { return }
+        let index = selectedIndex
+        let pageID = drafts[index].id
+        let quad: Quad
+        switch selection {
+        case .whole:
+            quad = proposal.quadBefore
+        case .left:
+            quad = SpreadSplitter.split(proposal.quadBefore, at: proposal.u).left
+        case .right:
+            quad = SpreadSplitter.split(proposal.quadBefore, at: proposal.u).right
+        }
+        drafts[index].quad = quad
+        drafts[index].userAdjustedQuad = true
+        splitUndoStack.append(
+            SplitUndo(pageID: pageID, quadBefore: proposal.quadBefore, proposal: proposal)
+        )
+        proposalsByPage.removeValue(forKey: pageID)
+        ZhixiaLog.reviewSplit(
+            proposalU: proposal.u,
+            source: proposal.source.rawValue,
+            prominence: proposal.prominence,
+            continuity: proposal.continuity,
+            confidence: proposal.confidence,
+            selection: selection.rawValue,
+            applied: true
+        )
+        Task { await renderSelected() }
+    }
+
+    /// 撤销上一次拆分应用（恢复提案前的框）——**并恢复提案**，用户可再选一次
+    /// （验收 §4-5「撤销：恢复 quadBefore；可再次应用」）。
+    func undoSplit() {
+        guard let undo = splitUndoStack.popLast() else { return }
+        guard let index = drafts.firstIndex(where: { $0.id == undo.pageID }) else { return }
+        drafts[index].quad = undo.quadBefore
+        proposalsByPage[undo.pageID] = undo.proposal
+        ZhixiaLog.reviewSplit(
+            proposalU: undo.proposal.u,
+            source: undo.proposal.source.rawValue,
+            prominence: undo.proposal.prominence,
+            continuity: undo.proposal.continuity,
+            confidence: undo.proposal.confidence,
+            selection: "none",
+            applied: false
+        )
+        Task { await renderSelected() }
+    }
+
+    /// 清空某页的提案（手动改框 / 删页 / 应用后）。
+    private func clearProposal(for pageID: UUID) {
+        proposalsByPage.removeValue(forKey: pageID)
     }
 
     func save() async -> UUID? {
@@ -245,7 +370,7 @@ final class ReviewViewModel {
                     acceptedStill = true
                 }
             }
-            let split = applySpreadSplitIfNeeded(index: index, data: data)
+            let split = makeSplitProposal(index: index, data: data)
             ZhixiaLog.refineStage(
                 capturedArea: captured.area,
                 stillArea: stillArea,
@@ -258,7 +383,7 @@ final class ReviewViewModel {
                 spineU: split.spineU,
                 prominence: split.prominence,
                 continuity: split.continuity,
-                splitApplied: split.applied
+                splitApplied: false
             )
         }
     }
@@ -277,11 +402,16 @@ final class ReviewViewModel {
         var applied = false
     }
 
-    /// 拍后裁切（spec/scan-enhance FR-002）：透视矫正后两种模型互补——
+    /// 拍后裁切（spec/guided-capture T020 / FR-008）：**只生成提案，不写 quad**。
+    ///
+    /// 两种模型互补（与 spec/scan-enhance FR-002 同一套纯函数）：
     /// 1. **左侧折痕暗条**（场景 2：折起部分是一条暗带）→ 从左侧第一个持续
     ///    明亮列裁掉折条；
     /// 2. **中央书脊暗谷**（场景 1：亮左页的摊开书）→ 沿书脊拆出右页。
-    private func applySpreadSplitIfNeeded(index: Int, data: Data) -> SplitOutcome {
+    ///
+    /// 上一周期这里是**直接改写 `drafts[index].quad`**（静默误裁的来源）；
+    /// 现在只产出 `SplitProposal`（可见、可撤销），由用户在 Review 里确认。
+    private func makeSplitProposal(index: Int, data: Data) -> SplitOutcome {
         var outcome = SplitOutcome()
         guard let image = Self.uprightImage(from: data) else {
             outcome.reason = "noImage"
@@ -298,8 +428,16 @@ final class ReviewViewModel {
             outcome.reason = "leftTrim"
             outcome.trimU = trim.u
             outcome.trimDepth = trim.stripDepth
-            drafts[index].quad = SpreadSplitter.split(quad, at: trim.u).right
-            outcome.applied = true
+            let confidence = SplitProposalConfidence.leftFold(stripDepth: trim.stripDepth)
+            proposalsByPage[drafts[index].id] = SplitProposal(
+                u: trim.u,
+                source: .leftFold,
+                prominence: 0,
+                continuity: 0,
+                confidence: confidence,
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: trim.u).right
+            )
             return outcome
         }
         let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
@@ -312,9 +450,51 @@ final class ReviewViewModel {
             return outcome
         }
         outcome.reason = "spine"
-        drafts[index].quad = SpreadSplitter.split(quad, at: spine.u).right
-        outcome.applied = true
+        let confidence = SplitProposalConfidence.spine(
+            prominence: diagnosis.prominence,
+            continuity: diagnosis.continuity
+        )
+        proposalsByPage[drafts[index].id] = SplitProposal(
+            u: spine.u,
+            source: .spine,
+            prominence: diagnosis.prominence,
+            continuity: diagnosis.continuity,
+            confidence: confidence,
+            quadBefore: quad,
+            quadAfter: SpreadSplitter.split(quad, at: spine.u).right
+        )
         return outcome
+    }
+
+    /// 现场计算当前页提案的纯函数版本（拆分工具打开时用；不写 quad）。
+    private static func makeSplitProposal(quad: Quad, data: Data) -> SplitProposal? {
+        guard let image = uprightImage(from: data) else { return nil }
+        guard let rectified = rectifiedImage(image, quad: quad) else { return nil }
+        if let trim = SpreadSplitter.leftFoldTrim(inRectified: rectified) {
+            return SplitProposal(
+                u: trim.u,
+                source: .leftFold,
+                prominence: 0,
+                continuity: 0,
+                confidence: SplitProposalConfidence.leftFold(stripDepth: trim.stripDepth),
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: trim.u).right
+            )
+        }
+        let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
+        guard let spine = analysis.spine else { return nil }
+        return SplitProposal(
+            u: spine.u,
+            source: .spine,
+            prominence: analysis.diagnosis.prominence,
+            continuity: analysis.diagnosis.continuity,
+            confidence: SplitProposalConfidence.spine(
+                prominence: analysis.diagnosis.prominence,
+                continuity: analysis.diagnosis.continuity
+            ),
+            quadBefore: quad,
+            quadAfter: SpreadSplitter.split(quad, at: spine.u).right
+        )
     }
 
     /// 从原图数据加载直立 CIImage（EXIF 方向与渲染链一致）。
