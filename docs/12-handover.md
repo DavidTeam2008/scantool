@@ -27,7 +27,7 @@
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构分层 | App → Features（SwiftUI MVVM）→ Domain（纯函数）→ Services（actor 副作用），依赖只向下 |
 | 代码规模 | 152 个 Swift 文件（主工程 108 / 测试 44）/ 主工程约 14.5k 行 |
-| 质量现状 | **397 用例 = 396 passed + 1 expected failure + 0 failed**（Swift Testing；2026-10-21 实测；基线只增不减） |
+| 质量现状 | **417 用例 = 416 passed + 1 expected failure + 0 failed**（Swift Testing；2026-10-21 实测；基线只增不减） |
 
 ### 1.1 SDD 周期一览（9 个已交付 + 4 个进行中 + 1 个待实施）
 
@@ -46,10 +46,10 @@
 | 11 | `folded-page-capture`（进行中） | 折页书四痛点：框抖 / 边框捕获 / 自动拍 / 折痕入片 | 四链路根因定案（regime c 近摄交替被相似跟随吞并等）、autoCapture 默认关（零迁移）、live 严格档放宽（0.15/26°）、粘滞调用点 0.70/5 止棘轮、`EdgeSnapper` 双向两阶段内拉、`gateRejectedStill` 贯穿 WYSIWYG | 368→377 | `spec/folded-page-capture/`（真机验收已被周期 12 取代） |
 | 12 | `frame-truth`（进行中） | 框真相：框锁局部带 / 成片越界 | 逐帧遥测定案（门控一票否决 + 粘滞④改选 + 逃逸抽签）、`viablePool` 单一真源、页面先验门控 0.25、锚点治理（0.12/3帧/0.8）、EdgeSnapper s=0 守卫（双线性）、**锁定冻结 + 精修上屏 + 成片=呈现框**、无效框承诺、来源/四角遥测 | 377→386 | `spec/frame-truth/`（真机验收待做，合并 Case B 复测 + L1 取证） |
 | 13 | `scan-enhance`（进行中） | 拍后增强 / 拍后拆分 / 清晰化 | 全分辨率静帧重检 + 身份锚定、书脊/左折条拆分、document 增强档、Review 可见可调 | 386→392 | `spec/scan-enhance/`（真机验收 T006 待做） |
-| 14 | `guided-capture`（待实施） | 引导取景：用户框定右页 + 画布真值 + 取证/回放 + Review 拆分确认 | 引导路径（不跑 detector/sticky/smoother）、屏幕↔照片逆映射、trace/诊断包、拆分提案不静默改 quad | 397→（T030 记录） | `spec/guided-capture/`（先读 `docs/15`） |
+| 14 | `guided-capture`（待实施） | 引导取景：用户框定右页 + 画布真值 + 取证/回放 + Review 拆分确认 | 引导路径（不跑 detector/sticky/smoother）、屏幕↔照片逆映射、trace/诊断包、拆分提案不静默改 quad | 417→（T030 记录） | `spec/guided-capture/`（先读 `docs/15`） |
 
 > 基线说明：表中“377→386”等是各周期交付时的计数；2026-10-21 全量实测总基线
-> 为 **397 = 396 passed + 1 expected failure + 0 failed**。`guided-capture`
+> 为 **417 = 416 passed + 1 expected failure + 0 failed**。`guided-capture`
 > 的最终计数在 T030/T034 回填。
 
 ---
@@ -78,7 +78,7 @@
 > 自动拍门禁不看引导；**d. 快门隐藏换框**——still 是无身份锚的全局重选（包含降权
 > 使「右页+折痕」外框胜出），且吸附只在 still 发生、外向相从不测 s=0（已贴边的检出
 > 被继续外推 δ~1–2%），门禁只有 bbox IoU 无法分辨合法精修与越界。
-> **修复（frame-truth，交付时 386 全绿；当前总基线 397）**：`viablePool` 单一真源；页面先验门控 0.25；
+> **修复（frame-truth，交付时 386 全绿；当前总基线 417）**：`viablePool` 单一真源；页面先验门控 0.25；
 > 锚点治理（anchorMinArea 0.12 / 起锚 3 帧确认 / 跟随面积比 0.8 / 1s 清锚）；
 > EdgeSnapper s=0 守卫（双线性 G0）；**锁定瞬间吸附上屏并冻结、成片=呈现框**
 > （快门后不重检）；无效框（closer）不画锁定框/不自动拍/手动拍走搜索态；
@@ -193,7 +193,7 @@
 
 | 阶段 | 内容 | 前置 |
 |---|---|---|
-| **P0 裁剪质量** | Case A：✅ 两轮定案 + frame-truth 已交付（交付时 386 全绿；当前总基线 397：候选池单一真源 / 页面先验门控 / 锚点治理 / s=0 守卫 / **锁定冻结+成片=呈现框** / 无效框承诺）→ **真机验收**（`spec/frame-truth/device-acceptance.md`）；Case B：✅ 粘滞 v2 已交付 → **真机复测并入同一会话**（一趟抄齐 `stickyHold`/`stickyEscape`/`candidateProvenance`/`snapOnLock`）；**新增 guided-capture：引导框 MVP + 画布真值 + trace/replay + Review 拆分确认（当前主线）** | 三周期修复均已交付待入库；验收主清单 `spec/frame-truth/device-acceptance.md`（含合并项 §4）；引导验收 `spec/guided-capture/device-acceptance.md` |
+| **P0 裁剪质量** | Case A：✅ 两轮定案 + frame-truth 已交付（交付时 386 全绿；当前总基线 417：候选池单一真源 / 页面先验门控 / 锚点治理 / s=0 守卫 / **锁定冻结+成片=呈现框** / 无效框承诺）→ **真机验收**（`spec/frame-truth/device-acceptance.md`）；Case B：✅ 粘滞 v2 已交付 → **真机复测并入同一会话**（一趟抄齐 `stickyHold`/`stickyEscape`/`candidateProvenance`/`snapOnLock`）；**新增 guided-capture：引导框 MVP + 画布真值 + trace/replay + Review 拆分确认（当前主线）** | 三周期修复均已交付待入库；验收主清单 `spec/frame-truth/device-acceptance.md`（含合并项 §4）；引导验收 `spec/guided-capture/device-acceptance.md` |
 | **P1 真机取证与对标收尾** | L1 通路取证（`reconstructPath`，可与 P0 同一会话）；iOS 26 表格真机验证；阴影场景 OCR 预处理档验证；条码真机验证（模拟器恒 0）；取证后评审「常驻框范式」周期 2（wps-parity-capture，WPS 录屏已提供并评估，见 §2.3） | P0 日志会话顺带完成取证 |
 | **P2 老系统兜底与工程债** | 表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter；导出层表格样式（`w:tblPr`/表头加粗/数值右对齐）与 `gridSpan`/`vMerge`；Library/Review/SwiftData 工程债 | P0/P1 收尾后 |
 | **P3 云通路** | 接通 TextIn（低置信 block 走 `ReconstructRepairing`，禁止整页 LLM 重打表数字）；手写 / 勾选识别 | **独立周期评审**——纯离线是铁律，云通路须单独立项（含隐私披露与用户确认 UX） |
@@ -216,7 +216,7 @@
 
 ```bash
 make doctor    # 环境自检（Xcode / 模拟器 / Busy 提示）
-make test      # 全量单测 + 自动 xcresulttool 计数（基线：total=397 passed=396 failed=0 expectedFailures=1）
+make test      # 全量单测 + 自动 xcresulttool 计数（基线：total=417 passed=416 failed=0 expectedFailures=1）
 make test-only T=GoldenWorksheetEndToEndTests   # 局部单测
 make smoke     # 装机冒烟（build + install + launch + 存活检查）
 make device-build   # 真机目标编译（generic/platform=iOS，免签名）
@@ -234,7 +234,7 @@ make device-build   # 真机目标编译（generic/platform=iOS，免签名）
 ### 4.3 铁律（违反任何一条都会破坏既有资产）
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动全部替身测试连锁崩。
-2. **既有测试断言零修改**——基线 397 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
+2. **既有测试断言零修改**——基线 417 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
 3. **纯离线**——不引任何网络依赖、不加云调用；云通路是 P3 路线图，须独立周期评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 模拟器永远返回空；条码断言只能靠 `BarcodeDetecting` 协议注入替身 + 真机验收。
 5. **`withKnownIssue` ≠ failed ≠ passed**——见 4.2 计数陷阱。

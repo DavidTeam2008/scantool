@@ -24,6 +24,23 @@ final class AppEnvironment {
     let searchablePDF: any SearchablePDFRendering
     let pdf: any PDFRendering
 
+    /// 诊断 trace 缓冲（spec/guided-capture T001 / FR-007）——**debug 采集，
+    /// release 为 nil**（不采集、不分配）。
+    ///
+    /// 单一实例挂在环境上：取景时由 `CaptureViewModel` 写入（逐帧事实 + 候选
+    /// 快照 + 低分辨率帧），设置页「导出诊断包」时读取——跨页面共享同一份事实。
+    var traceRecorder: CaptureTraceRecorder? {
+        #if DEBUG
+        return debugTraceRecorder
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG
+    private let debugTraceRecorder = CaptureTraceRecorder()
+    #endif
+
     init(
         preferences: PreferencesStore = PreferencesStore(),
         permissions: any PermissionGranting = PermissionService(),

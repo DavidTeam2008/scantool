@@ -78,7 +78,7 @@ Zhixia/
     ServiceProtocols.swift   全部能力协议
   DesignSystem/        Tokens + 组件
   Localizable.xcstrings
-ZhixiaTests/           44 个测试文件 / 397 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure）
+ZhixiaTests/           44 个测试文件 / 417 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure）
 ```
 
 依赖方向：**Features → Domain / DesignSystem / Environment 协议**。禁止 Feature 里直接 `AVCaptureSession` / `CIFilter` / `VNRecognize…`（预览 Representable 除外）。
@@ -176,7 +176,7 @@ make doctor                      # 环境自检（Xcode / 模拟器 / Busy 提�
 
 > 📌 **计数陷阱**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 > failure`，不是 `passed`——按 `passed` 关键字搜日志会少数。以 `make test` 末尾自动
-> 打印的 xcresulttool 计数为准（当前基线：`total=397 passed=396 failed=0
+> 打印的 xcresulttool 计数为准（当前基线：`total=417 passed=416 failed=0
 > expectedFailures=1`）。
 
 **手工裸跑**（与 Makefile 等价，模拟器名称/OS 按本机调整；本机只有 26.4.1 时

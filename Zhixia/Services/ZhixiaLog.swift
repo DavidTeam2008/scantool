@@ -307,8 +307,27 @@ enum ZhixiaLog {
         )
     }
 
-    // MARK: - 版面还原对标 WPS 结构化诊断（spec/wps-parity-layout，plan D5/D9 / FR-002、FR-006）
-    //
+    /// 候选快照摘要（spec/guided-capture T002 / FR-007）：**每帧一条** debug 行——
+    /// 与 `candidateProvenance` 正交：那条记「候选从哪来、门控是否触发」，这条记
+    /// 「池里留下了什么、丢了多少、谁在生效」。判读要点：
+    /// - `viable=0` → 本帧池里没有页面尺度候选（检测问题）；
+    /// - `viable>0` 且 `selectionArea` ≫ 单页面积 → 整书赢下择优（评分/意图问题）；
+    /// - `dropped>0` → 候选多于硬上限 16，细节看诊断包 JSON。
+    static func candidateDump(
+        path: String,
+        rawCount: Int,
+        viableCount: Int,
+        droppedCount: Int,
+        topArea: Double,
+        selectionArea: Double,
+        disposition: String?
+    ) {
+        capture.debug(
+            "candidateDump path=\(path, privacy: .public) raw=\(rawCount) viable=\(viableCount) dropped=\(droppedCount) topArea=\(topArea, format: .fixed(precision: 4), privacy: .public) selectionArea=\(selectionArea, format: .fixed(precision: 4), privacy: .public) disposition=\(disposition ?? "none", privacy: .public)"
+        )
+    }
+
+    // MARK: - 版面还原对标 WPS 结构化诊断（spec/wps-parity-layout，plan D5/D9 / FR-002、FR-006）    //
     // 两个可观测通道，真机验收（SC-002/SC-006）用 Console.app 检索：
     // - `reconstructPath`：每页解析的通路决策（结构化 vs 几何回退 + 原因分类）；
     // - `textSentinel`：导出前墨迹-文本对账的缺口汇总（四分类计数，只记不阻断）。

@@ -128,7 +128,8 @@ struct RootView: View {
                     detector: environment.detector,
                     fileStore: environment.fileStore,
                     permissions: environment.permissions,
-                    preferences: environment.preferences
+                    preferences: environment.preferences,
+                    traceRecorder: environment.traceRecorder
                 )
             }
         }

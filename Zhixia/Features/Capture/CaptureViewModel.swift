@@ -68,6 +68,12 @@ final class CaptureViewModel {
     /// 取景视图尺寸（spec/scan-enhance：预览可见域钳制）。由视图
     /// `onGeometryChange` 写入；`.zero` = 尚未测量（不钳制，既有语义）。
     var previewSize: CGSize = .zero
+    /// 诊断 trace 缓冲（spec/guided-capture T001 / FR-007）——**可选注入**：
+    /// 默认 nil（既有测试零改动、release 不采集）。注入后逐帧记录事实 +
+    /// 候选快照 + 低分辨率帧，供诊断包导出与离线回放。
+    private let traceRecorder: CaptureTraceRecorder?
+    /// 低分辨率帧采样计数（1/3 帧采一次 ≈10fps，控住诊断开销）。
+    private var traceFrameCounter = 0
     private let impact = UIImpactFeedbackGenerator(style: .light)
 
     init(
@@ -77,7 +83,8 @@ final class CaptureViewModel {
         fileStore: any PageFileStoring,
         permissions: any PermissionGranting,
         preferences: PreferencesStore,
-        autoCaptureHoldFrames: Int = 6
+        autoCaptureHoldFrames: Int = 6,
+        traceRecorder: CaptureTraceRecorder? = nil
     ) {
         self.sessionID = UUID()
         self.appendToDocumentID = launch.documentID
@@ -87,6 +94,7 @@ final class CaptureViewModel {
         self.permissions = permissions
         self.preferences = preferences
         self.autoCaptureHoldFrames = autoCaptureHoldFrames
+        self.traceRecorder = traceRecorder
     }
 
     var canFinish: Bool { !drafts.isEmpty }
@@ -190,6 +198,7 @@ final class CaptureViewModel {
             try await camera.start()
             geometry = await camera.geometry()
             ZhixiaLog.geometry(video: geometry.videoAspect, photo: geometry.photoAspect)
+            await subscribeToCandidateSnapshots()
             phase = .previewing
             UIApplication.shared.isIdleTimerDisabled = true
             listenToFrames()
@@ -197,6 +206,18 @@ final class CaptureViewModel {
             error = zhixia
         } catch {
             self.error = .cameraUnavailable
+        }
+    }
+
+    /// 订阅检测器的候选快照（spec/guided-capture T002 / FR-007）——
+    /// **仅在注入诊断缓冲时订阅**：无缓冲 = 检测器零开销（默认 nil 回调），
+    /// release 构建同理（缓冲的存储整段编译掉）。
+    private func subscribeToCandidateSnapshots() async {
+        guard let recorder = traceRecorder,
+              let reporting = detector as? any CandidateSnapshotReporting
+        else { return }
+        await reporting.setCandidateSnapshotHandler { snapshot in
+            recorder.recordCandidate(snapshot)
         }
     }
 
@@ -256,7 +277,14 @@ final class CaptureViewModel {
             // 实测日志对读，验收时核对缓存照片宽高比是否被逐帧校正。
             ZhixiaLog.geometry(video: geometry.videoAspect, photo: geometry.photoAspect)
             let pageID = replacePageID ?? UUID()
-            _ = try await fileStore.writeOriginal(session: sessionID, page: pageID, data: photo.jpegData)
+            let originalURL = try await fileStore.writeOriginal(
+                session: sessionID,
+                page: pageID,
+                data: photo.jpegData
+            )
+            // 诊断 trace（spec/guided-capture T001）：原图 URL 记入缓冲，
+            // 导出诊断包时随包附上（真机复现构图用）。
+            traceRecorder?.recordOriginal(originalURL)
             let quad: Quad
             if mode == .idCard {
                 // idCard 路径行为不变（FR-005）：固定窗口链保持现状，无门禁。
@@ -319,6 +347,9 @@ final class CaptureViewModel {
                 idFace = drafts.count >= 1 ? .back : .front
             }
             impact.impactOccurred()
+            // 诊断 trace（spec/guided-capture T001）：快门事实——裁切四角是
+            // 成片真值，与 `cropQuad` 日志同源（引导路径将写 `tag=guide`）。
+            recordCaptureTrace(quad: quad)
         } catch let zhixia as ZhixiaError {
             error = zhixia
         } catch {
@@ -400,6 +431,14 @@ final class CaptureViewModel {
         defer { isDetecting = false }
         let window = mode == .idCard ? Quad.idCardWindow : nil
         let detected = await detector.detect(frame: frame, idCardWindow: window)
+        // spec/guided-capture T003：低分辨率帧留样（1/3 帧采样 ≈10fps）——
+        // 诊断包「最近 5s 帧」的来源；仅诊断缓冲存在时采集。
+        if let recorder = traceRecorder {
+            traceFrameCounter += 1
+            if traceFrameCounter % 3 == 0, let data = CaptureFrameThumbnail.encode(frame.cgImage) {
+                recorder.recordFrameImage(data)
+            }
+        }
         // spec/frame-stability：文档形态 live **逐帧轻量贴边吸附**——每边吸到
         // 最近的亮度边缘（最近峰策略：左缘稳定命中折痕而不是更强的折脊轮廓），
         // 再交给 smoother 做时域稳定。1080p 帧 + 160 列栅格，单帧约 1–2ms；
@@ -432,6 +471,7 @@ final class CaptureViewModel {
             isAutoCaptureSuppressed = false
             // 确认窗（FR-006）：进入搜索 = 锁定解除，本次拍摄取消、计数清零。
             lockedFrameCount = 0
+            await recordTrace(track: track)
         case .tracking(let quad):
             frozenQuad = nil
             imageQuad = quad
@@ -441,6 +481,7 @@ final class CaptureViewModel {
             }
             // 确认窗（FR-006）：进入跟踪 = 锁定解除，计数清零、重新计时。
             lockedFrameCount = 0
+            await recordTrace(track: track)
         case .locked(let quad):
             let wasLocked = phaseIsLocked
             // spec/frame-truth FR-005（锁定冻结 + 精修上屏）：锁定态**首次**
@@ -509,6 +550,9 @@ final class CaptureViewModel {
             if !suspicious {
                 lockedFrameCount += 1
             }
+            // 诊断 trace（spec/guided-capture T001）：锁定帧事实——**记在自动
+            // 快门之前**，否则自动拍的复位段会把锁定态覆盖成搜索态。
+            await recordTrace(track: track)
             // 确认窗（FR-005~007）：连续非可疑锁定帧达阈值才自动快门——锁定
             // 视觉先呈现（默认 6 帧 ≈ 0.4s@15fps），窗内移开即取消；单锁定
             // 周期最多自动拍一次（didAutoCaptureThisLock 既有语义保持）；
@@ -528,5 +572,80 @@ final class CaptureViewModel {
     private func minimumEdgeMargin(of quad: Quad) -> Double {
         let bbox = quad.boundingRect
         return min(bbox.minX, bbox.minY, 1 - bbox.maxX, 1 - bbox.maxY)
+    }
+
+    /// 记录一帧取景事实（spec/guided-capture T001 / FR-007）——诊断缓冲不存在
+    /// 时立即返回（release 零开销）。候选快照取检测器**本帧**发出的那一份
+    /// （`latestCandidateSnapshot`），因此 trace 行与候选行严格同帧。
+    private func recordTrace(track: QuadTrackState) async {
+        guard let recorder = traceRecorder else { return }
+        let candidate = await latestCandidateSnapshot()
+        let timestamp = Date()
+        recorder.record(
+            CaptureTrace(
+                sessionID: sessionID,
+                timestamp: timestamp,
+                phase: CaptureTrace.phaseName(phase),
+                directive: CaptureTrace.directiveName(directive),
+                geometry: .init(
+                    videoAspect: geometry.videoAspect,
+                    photoAspect: geometry.photoAspect
+                ),
+                previewSize: .init(
+                    width: Double(previewSize.width),
+                    height: Double(previewSize.height)
+                ),
+                imageQuad: imageQuad,
+                frozenQuad: frozenQuad,
+                guide: nil,
+                cropQuad: nil,
+                sticky: candidate?.disposition.map { disposition in
+                    CaptureTrace.Sticky(
+                        disposition: disposition,
+                        missCount: candidate?.stickyMissCount ?? 0
+                    )
+                },
+                smoother: .init(
+                    track: CaptureTrace.trackName(track),
+                    area: track.quad?.area,
+                    frameDt: smoother.frameDt
+                ),
+                candidateSnapshot: candidate
+            )
+        )
+    }
+
+    /// 检测器最近一次候选快照（未订阅检测器时为 nil）。
+    private func latestCandidateSnapshot() async -> CandidateSnapshot? {
+        guard let reporting = detector as? any CandidateSnapshotReporting else { return nil }
+        return await reporting.latestCandidateSnapshot()
+    }
+
+    /// 记录快门事实（裁切四角 + 相位）。诊断缓冲不存在时立即返回。
+    private func recordCaptureTrace(quad: Quad) {
+        guard let recorder = traceRecorder else { return }
+        recorder.record(
+            CaptureTrace(
+                sessionID: sessionID,
+                timestamp: Date(),
+                phase: CaptureTrace.phaseName(.capturing),
+                directive: CaptureTrace.directiveName(directive),
+                geometry: .init(
+                    videoAspect: geometry.videoAspect,
+                    photoAspect: geometry.photoAspect
+                ),
+                previewSize: .init(
+                    width: Double(previewSize.width),
+                    height: Double(previewSize.height)
+                ),
+                imageQuad: imageQuad,
+                frozenQuad: nil,
+                guide: nil,
+                cropQuad: quad,
+                sticky: nil,
+                smoother: nil,
+                candidateSnapshot: nil
+            )
+        )
     }
 }

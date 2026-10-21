@@ -140,9 +140,33 @@ enum DetectionStrategy {
     }
 }
 
-actor VisionEdgeDetector: EdgeDetecting {
+actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
     /// 候选粘滞状态（仅 live 文档路径使用；actor 串行访问保证状态安全）。
     private var sticky = CandidateSticky()
+
+    #if DEBUG
+    /// 候选快照回调（spec/guided-capture T002 / FR-007）：默认 nil = **零开销**
+    /// （不构造快照、不排序、不分配）。订阅后才逐帧发出。
+    private var candidateSnapshotHandler: (@Sendable (CandidateSnapshot) -> Void)?
+    /// 最近一次已发出的快照（供调用方按帧取用）。
+    private var lastCandidateSnapshot: CandidateSnapshot?
+    #endif
+
+    // MARK: - 候选快照订阅（T002 / FR-007）
+
+    func setCandidateSnapshotHandler(_ handler: (@Sendable (CandidateSnapshot) -> Void)?) async {
+        #if DEBUG
+        candidateSnapshotHandler = handler
+        #endif
+    }
+
+    func latestCandidateSnapshot() async -> CandidateSnapshot? {
+        #if DEBUG
+        return lastCandidateSnapshot
+        #else
+        return nil
+        #endif
+    }
 
     func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? {
         detect(
@@ -287,6 +311,35 @@ actor VisionEdgeDetector: EdgeDetecting {
         } else {
             effective = selection
         }
+        // spec/guided-capture T002 / FR-007：候选快照落盘——**订阅时才构造**
+        // （默认 nil = 零开销：不排序、不分配）。载荷含全部 viable + top 8、
+        // 硬上限 16、droppedCount；V2 验证（docs/15 §九）据此判断
+        // 「右页在不在池」——在池但输给整书 = 评分/意图问题，不在池 = 检测问题。
+        #if DEBUG
+        if let handler = candidateSnapshotHandler {
+            let snapshot = CandidateSnapshotBuilder.build(
+                rawCandidates: rawCandidates,
+                selection: selection,
+                effective: effective,
+                disposition: stillImage ? nil : sticky.lastDisposition?.rawValue,
+                stickyMissCount: stillImage ? 0 : sticky.missCount,
+                path: stillImage ? .still : .live,
+                idCardMode: idCardWindow != nil,
+                timestamp: Date()
+            )
+            lastCandidateSnapshot = snapshot
+            ZhixiaLog.candidateDump(
+                path: snapshot.path.rawValue,
+                rawCount: snapshot.rawCount,
+                viableCount: snapshot.viableCount,
+                droppedCount: snapshot.droppedCount,
+                topArea: snapshot.maxArea,
+                selectionArea: snapshot.selectionArea,
+                disposition: snapshot.disposition
+            )
+            handler(snapshot)
+        }
+        #endif
         ZhixiaLog.detectionTier(
             still: stillImage,
             tier: effective?.tier ?? 0,

@@ -1652,6 +1652,70 @@
         }
       }
     },
+    "settings.diagnostics" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "诊断"
+          }
+        }
+      }
+    },
+    "settings.diagnostics.export" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export diagnostics package"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出诊断包"
+          }
+        }
+      }
+    },
+    "settings.diagnostics.failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics export failed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "诊断包导出失败"
+          }
+        }
+      }
+    },
+    "settings.diagnostics.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trace + candidates + originals + recent frames. Everything stays on this iPhone; no network."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "trace + 候选 + 原图 + 最近帧。全部留在这台 iPhone 上，不联网。"
+          }
+        }
+      }
+    },
     "settings.defaultFilter" : {
       "localizations" : {
         "en" : {

@@ -134,7 +134,7 @@ Zhixia/
   DesignSystem/
   Localizable.xcstrings
   Info.plist · Assets.xcassets
-ZhixiaTests/           44 个测试文件 / 397 个 @Test
+ZhixiaTests/           44 个测试文件 / 417 个 @Test
   QuadSmootherTests · ImagePipelineTests · DocumentStoreTests
   CaptureViewModelTests · OCRViewModelTests · ReconstructTests
   CropConsistencyGateTests · CandidateStickyTests · CropGateAtShutterTests   // WYSIWYG
@@ -357,7 +357,7 @@ Library
 | OCR | 中文质量、双图择优 |
 | 还原 | 场景路由、阅读序、段落、配图空洞、DOCX 含 `w:tbl` / `word/media`；端到端 `ReconstructEndToEndTests` + 金标准 `GoldenWorksheetEndToEndTests`（真实 Vision 链路）；丢字哨兵 `InkTextReconcilerTests` |
 
-全量 397 用例 = 396 passed + 1 expected failure + 0 failed（跑法与计数陷阱见
+全量 417 用例 = 396 passed + 1 expected failure + 0 failed（跑法与计数陷阱见
 [00 §7](00-getting-started.md#7-怎么测) 与 `Makefile`）。
 
 Preview：`PreviewSupport` 假相机 / 假识别器 / 内存 Store。

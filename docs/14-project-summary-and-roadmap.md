@@ -33,7 +33,7 @@ DesignSystem（Tokens / 组件，横切）
 
 - 依赖只向下；Domain 不 import Services/SwiftUI（`ZhixiaLog` 只作为注释提及）。
 - 所有副作用经 `Services/ServiceProtocols.swift` 协议注入（**铁律 ①：签名不可动**）。
-- 测试：Swift Testing，基线只增不减（**铁律 ②**）；当前 **397 = 396 passed + 1 expected failure + 0 failed**。
+- 测试：Swift Testing，基线只增不减（**铁律 ②**）；当前 **417 = 416 passed + 1 expected failure + 0 failed**。
 
 ## 三、实现原理（两条主链路）
 
