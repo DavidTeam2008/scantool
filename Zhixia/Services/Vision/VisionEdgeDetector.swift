@@ -22,8 +22,13 @@ enum DetectionStrategy {
     static let containmentThreshold: Double = 0.9
     /// 被包含候选的评分乘数（plan D5：约 0.35）。
     static let containmentPenalty: Double = 0.35
-    /// 候选面积下限（现状值）。
+    /// 候选面积下限（现状值；视频 FOV 归一化面积）。
     static let minArea: Double = 0.08
+    /// 「页面档」面积下限（spec/frame-truth FR-002，视频 FOV 归一化面积）：
+    /// 只有页面尺度的矩形才有资格否决文档分割/放宽档。0.08–0.24 的文字带/
+    /// 折痕条不再让两级恢复通道同时关闭（真机证据：0.08–0.093 带子一票否决）。
+    /// 与 `minArea` 解耦是刻意的——保留远摄检测能力与「太远」引导语义。
+    static let pageLikeMinArea: Double = 0.25
 
     struct Selection: Equatable {
         var quad: Quad
@@ -31,10 +36,20 @@ enum DetectionStrategy {
         var tier: Int
     }
 
+    /// 候选池单一真源（spec/frame-truth FR-001）：非退化 + 面积下限过滤。
+    ///
+    /// `select` 与 live 粘滞调用点**必须**共用本函数——上一周期的缺陷正是
+    /// sticky 分支④从**未过滤**的 rawCandidates 改选，能把 select 已淘汰的
+    /// 亚 minArea/退化候选重新推上屏（真机 selectedArea 0.056–0.077 的来源）。
+    /// 注意：本函数不按两级面积 tier 截断（调用点需要完整 viable 集合）。
+    static func viablePool(_ rawCandidates: [Quad]) -> [Quad] {
+        rawCandidates.filter { !$0.isDegenerate && $0.area > minArea }
+    }
+
     /// 对原始候选集执行「非退化/面积下限过滤 → 两级面积兜底 → 包含降权择优」。
     /// 证件窗口（比例窗）路径保持现状语义：IoU 匹配优先，无匹配返回窗口本身（FR-013）。
     static func select(rawCandidates: [Quad], idCardWindow: Quad?) -> Selection? {
-        let viable = rawCandidates.filter { !$0.isDegenerate && $0.area > minArea }
+        let viable = viablePool(rawCandidates)
         let (pool, tier) = twoTierPool(viable)
 
         if let window = idCardWindow {
@@ -60,14 +75,18 @@ enum DetectionStrategy {
         return (viable.filter { $0.area <= fallbackMaxArea }, 2)
     }
 
-    /// live 条件性文档分割门控（plan D6 / FR-004）：仅当矩形检测**无可信候选**
-    /// （无非退化、面积达标的候选）时才补跑 `VNDetectDocumentSegmentationRequest`。
+    /// live 条件性文档分割门控（plan D6 / FR-004；spec/frame-truth FR-002 改口径）：
+    /// 仅当矩形检测**无页面档候选**（无非退化且 area ≥ `pageLikeMinArea` 的候选）
+    /// 时才补跑 `VNDetectDocumentSegmentationRequest`。
     ///
-    /// 文档分割是神经网络请求，逐帧必跑在部分设备上会压帧率；矩形检测「找不到」
-    /// 恰是书类目标（圆角/低对比度）的失效信号——条件触发把算力花在需要的帧上。
+    /// 文档分割是神经网络请求，逐帧必跑在部分设备上会压帧率；矩形检测「找不到
+    /// 页面」恰是书类目标（圆角/低对比度）的失效信号——条件触发把算力花在
+    /// 需要的帧上。上一周期用 minArea(0.08) 作口径，一个 0.08–0.09 的文字带
+    /// 就能把两级恢复通道同时关闭（真机 candidates 常=1 的成因）——改为页面
+    /// 先验后，带子不再有一票否决权，页面每帧都有机会进入候选池。
     /// 检测器 actor 忙时丢帧机制（ViewModel 侧 `isDetecting`）不受影响。
     static func needsDocumentSegmentation(rectangles: [Quad]) -> Bool {
-        !rectangles.contains { !$0.isDegenerate && $0.area > minArea }
+        !rectangles.contains { !$0.isDegenerate && $0.area >= pageLikeMinArea }
     }
 
     /// live 第三级「放宽矩形」门控（spec/live-edge-crop，plan D2 / FR-001~002）：
@@ -159,12 +178,12 @@ actor VisionEdgeDetector: EdgeDetecting {
             orientation: orientation,
             relaxed: stillImage
         )
-        // 分割来源：still 必跑；live 仅在矩形检测无可信候选时条件触发（plan D6），
-        // 两条路径的结果并入同一 `DetectionStrategy.select` 统一择优。
+        // 分割来源：still 必跑；live 仅在矩形检测无页面档候选时条件触发（plan D6；
+        // spec/frame-truth FR-002 页面先验口径），两条路径的结果并入同一
+        // `DetectionStrategy.select` 统一择优。`gateSeg` 留存供遥测。
+        let gateSeg = stillImage || DetectionStrategy.needsDocumentSegmentation(rectangles: rectangles)
         let segmented: Quad?
-        if stillImage {
-            segmented = detectDocumentQuad(cgImage: cgImage, orientation: orientation)
-        } else if DetectionStrategy.needsDocumentSegmentation(rectangles: rectangles) {
+        if gateSeg {
             segmented = detectDocumentQuad(cgImage: cgImage, orientation: orientation)
         } else {
             segmented = nil
@@ -177,12 +196,13 @@ actor VisionEdgeDetector: EdgeDetecting {
         // 前两级长期落空的场景由此兜底出框。放宽档不做贴边吸附（still 专属）；
         // 证件模式（idCardWindow）不参与第三级，检测路径保持不变。
         var relaxedRectangles: [Quad] = []
+        var gateRelaxed = false
         if !stillImage, idCardWindow == nil {
-            let relaxedTriggered = DetectionStrategy.needsRelaxedRectangles(
+            gateRelaxed = DetectionStrategy.needsRelaxedRectangles(
                 rectangles: rectangles,
                 segmented: segmented
             )
-            if relaxedTriggered {
+            if gateRelaxed {
                 relaxedRectangles = detectRectangles(
                     cgImage: cgImage,
                     orientation: orientation,
@@ -190,7 +210,7 @@ actor VisionEdgeDetector: EdgeDetecting {
                 )
             }
             ZhixiaLog.relaxedLiveProbe(
-                triggered: relaxedTriggered,
+                triggered: gateRelaxed,
                 candidates: relaxedRectangles.count
             )
         }
@@ -204,22 +224,48 @@ actor VisionEdgeDetector: EdgeDetecting {
         // 且三级检测门控使两候选常以**存在性交替**出现（一帧池里只有右页、
         // 下一帧只有整书分割），v1 同池续锚分支结构性不触发——v2
         // hold-through-miss 在 miss 窗口内维持锚点（与 QuadSmoother miss
-        // 语义对齐），连续 3 帧无相似候选仍逃逸清锚（不粘死）。still（快门
+        // 语义对齐），连续 5 帧无相似候选仍逃逸清锚（不粘死）。still（快门
         // 重检）与证件模式路径不参与——still 是单帧无振荡问题，证件有比例
         // 窗语义。sticky 锚点在快门/still 路径不复位（plan D2：避免恢复后
         // 首帧重掷锚点抽签）。
+        // spec/folded-page-capture（FR-004）调用点覆盖两个参数（默认常量
+        // 不动——v1/v2 测试钉住默认语义，铁律 2）：
+        // - similarityThreshold 0.60→0.70：近摄制式下右页与整书外轮廓的
+        //   bbox IoU ∈ [0.60, 0.70)，0.60 阈值让分支③「相似跟随」吞掉
+        //   存在性交替——锚点在右页/整书之间逐帧棘轮，框永不锁定（regime
+        //   c）。0.70 之上：同候选跨帧抖动 IoU ≥0.85（跟随不受影响），
+        //   异候选 ≤0.426（远摄）/0.60~0.70（近摄）均判跳变走 hold。
+        // - missLimit 3→5：与 QuadSmoother(missLimit: 5) 对齐（检测间隙
+        //   呈现框不中途消失）；真机实测 ~29.5fps，5 帧 ≈0.17s < 0.5s
+        //   移场接受上限。
+        // spec/frame-truth（FR-001/003）调用点追加（默认语义由单测钉住）：
+        // - pool 改用 `viablePool`（与 select 同口径单一真源）——修复分支④
+        //   从未过滤原始池改选亚 minArea/退化框（真机 0.056–0.077 的来源）；
+        // - anchorMinArea 0.12（视频空间，≈照片 0.09）：文字带可显示但不得
+        //   起锚；reanchorConfirmFrames 3：escape/初锁后连续 3 帧相似才起锚
+        //   （消灭"escape 帧恰好是带子→单帧抽签"）；followMinAreaRatio 0.8：
+        //   分支③跟随限制 ≤20%/帧面积变化，堵包含链棘轮。
         let effective: DetectionStrategy.Selection?
         if !stillImage, idCardWindow == nil {
             let gated = sticky.apply(
                 selection: selection,
-                pool: rawCandidates,
-                holdThroughMiss: true
+                pool: DetectionStrategy.viablePool(rawCandidates),
+                similarityThreshold: 0.70,
+                missLimit: 5,
+                holdThroughMiss: true,
+                anchorMinArea: 0.12,
+                reanchorConfirmFrames: 3,
+                followMinAreaRatio: 0.8
             )
             switch sticky.lastDisposition {
             case .override:
                 // 同池共存交替：粘滞改选锚点相似候选（先稳者胜止跳证据）。
                 if let selection, let gated {
-                    ZhixiaLog.stickyOverride(iou: gated.quad.iou(with: selection.quad))
+                    ZhixiaLog.stickyOverride(
+                        iou: gated.quad.iou(with: selection.quad),
+                        heldArea: gated.quad.area,
+                        selectionArea: selection.quad.area
+                    )
                 }
             case .hold:
                 // 存在性交替：miss 窗口内维持锚点（v2 止跳证据——上轮复测
@@ -247,6 +293,28 @@ actor VisionEdgeDetector: EdgeDetecting {
             candidates: rawCandidates.count,
             selectedArea: effective?.quad.area ?? 0
         )
+        // spec/frame-truth FR-008：live 每帧候选来源遥测——上一周期两轮复盘
+        // 的最大盲区（池里有没有页面/门控是否触发只能猜）由此终结。
+        if !stillImage, idCardWindow == nil {
+            let viable = DetectionStrategy.viablePool(rawCandidates)
+            let strictMax = rectangles.map(\.area).max() ?? 0
+            let relaxedMax = relaxedRectangles.map(\.area).max() ?? 0
+            let viableMax = viable.map(\.area).max() ?? 0
+            ZhixiaLog.candidateProvenance(
+                strictCount: rectangles.count,
+                strictMaxArea: strictMax,
+                segArea: segmented?.area ?? -1,
+                relaxedCount: relaxedRectangles.count,
+                relaxedMaxArea: relaxedMax,
+                viableCount: viable.count,
+                viableMaxArea: viableMax,
+                gateSeg: gateSeg,
+                gateRelaxed: gateRelaxed,
+                preStickySelectionArea: selection?.quad.area ?? 0,
+                disposition: sticky.lastDisposition?.rawValue ?? "none",
+                heldArea: effective?.quad.area ?? 0
+            )
+        }
         guard var quad = effective?.quad else { return nil }
         // US6（plan D7）：still 路径择优后贴边吸附——检出框普遍内缩 1~3%，
         // 沿外法线恢复真实边缘。证件模式比例窗保持语义不变；live 路径不动。
@@ -265,13 +333,26 @@ actor VisionEdgeDetector: EdgeDetecting {
         cgImage: CGImage,
         orientation: CGImagePropertyOrientation
     ) -> Quad {
+        let logEdge: (EdgeSnapper.EdgeDiagnostic) -> Void = { diagnostic in
+            ZhixiaLog.snapEdge(
+                edge: diagnostic.edge,
+                g0: diagnostic.g0,
+                outward: diagnostic.outward,
+                inward: diagnostic.inward,
+                shift: diagnostic.shift
+            )
+        }
         if orientation == .up {
-            return EdgeSnapper.snap(quad: quad, image: cgImage, maxShiftRatio: 0.05)
+            return EdgeSnapper.snap(
+                quad: quad, image: cgImage, maxShiftRatio: 0.05, diagnostics: logEdge
+            )
         }
         guard let upright = uprightThumbnail(of: cgImage, orientation: orientation) else {
             return quad
         }
-        return EdgeSnapper.snap(quad: quad, image: upright, maxShiftRatio: 0.05)
+        return EdgeSnapper.snap(
+            quad: quad, image: upright, maxShiftRatio: 0.05, diagnostics: logEdge
+        )
     }
 
     /// EXIF 直立化的小尺寸缩略图（吸附栅格只要 ~160 列，无需全分辨率）。
@@ -293,13 +374,19 @@ actor VisionEdgeDetector: EdgeDetecting {
         orientation: CGImagePropertyOrientation,
         relaxed: Bool
     ) -> [Quad] {
+        // spec/folded-page-capture（FR-003）：live 严格档（relaxed=false）
+        // 最小尺寸 0.25→0.15、直角容差 20°→26°——折页书曲面页的角点常出画/
+        // 微弯，原参数下正确候选结构性不存在（池里只剩整书分割 blob 与放宽
+        // 档假矩形），稳定层只能在「稳定地错」与「抖动着错」之间二选一。
+        // 取严格档与放宽档（0.08/28°）之间的中间值，避免一步跳到放宽档的
+        // 噪声水平；still 路径首跑即放宽档、live 第三级放宽档均不动。
         let request = VNDetectRectanglesRequest()
         request.minimumConfidence = relaxed ? 0.35 : 0.6
         request.minimumAspectRatio = 0.2
         request.maximumAspectRatio = 1
-        request.minimumSize = relaxed ? 0.08 : 0.25
+        request.minimumSize = relaxed ? 0.08 : 0.15
         request.maximumObservations = relaxed ? 8 : 4
-        request.quadratureTolerance = relaxed ? 28 : 20
+        request.quadratureTolerance = relaxed ? 28 : 26
 
         let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
         do {

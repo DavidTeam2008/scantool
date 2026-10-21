@@ -49,6 +49,26 @@ struct QuadSmootherTests {
         }
     }
 
+    @Test("Lock hysteresis survives a small move but unlocks on a large one")
+    func lockHysteresis() {
+        // spec/scan-enhance：锁定后 2% 位移不解锁（白线不被打回红线），
+        // 4% 位移解锁（用户明显移动取景）。
+        var smoother = QuadSmoother(unlockEpsilon: 0.03, lockDuration: 0.2, frameDt: 0.1)
+        let base = rectQuad(0.2, 0.2, 0.8, 0.8)
+        for _ in 0..<6 { _ = smoother.ingest(base) }
+        let small = rectQuad(0.22, 0.2, 0.82, 0.8) // 2% 平移（面积不变）
+        let afterSmall = smoother.ingest(small)
+        if case .locked = afterSmall {
+        } else {
+            Issue.record("2% 位移不得解锁（迟滞 3%）")
+        }
+        let large = rectQuad(0.28, 0.2, 0.88, 0.8) // 6% 累计位移
+        let afterLarge = smoother.ingest(large)
+        if case .locked = afterLarge {
+            Issue.record("大位移必须解锁")
+        }
+    }
+
     // MARK: - Quad 扫描框边精度扩展（plan D5/D8，T006）
 
     private func rectQuad(_ x0: Double, _ y0: Double, _ x1: Double, _ y1: Double) -> Quad {

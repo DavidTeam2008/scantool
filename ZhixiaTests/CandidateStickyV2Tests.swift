@@ -373,6 +373,51 @@ struct CandidateStickyV2Tests {
         #expect(sticky.missCount == 0)
     }
 
+    // MARK: - 近摄制式（spec/folded-page-capture，FR-004 调用点参数语义）
+
+    @Test("近摄 IoU ∈ [0.60, 0.70) 判跳变不跟随：threshold 0.70 下 hold 维持锚点，miss 5 帧才逃逸")
+    func closeShotRatchetFrozenByCallSiteParams() {
+        // regime c 机理：近摄折页书时右页与整书外轮廓的 bbox IoU 升到
+        // [0.60, 0.70)——默认 threshold 0.60 下分支③「相似跟随」把存在性
+        // 交替吞成跟随，锚点在右页/整书间逐帧棘轮（框永不锁定）。
+        // live 调用点覆盖 similarityThreshold: 0.70 + missLimit: 5
+        // （VisionEdgeDetector live 路径，默认常量不动）——本用例以显式
+        // 参数钉住该语义：0.63 < 0.70 判跳变走 hold，且逃逸窗拉到 5 帧。
+        var sticky = CandidateSticky()
+        _ = sticky.apply(
+            selection: Self.rightPageSelection(tier: 1),
+            pool: [Self.rightPage],
+            similarityThreshold: 0.70,
+            missLimit: 5,
+            holdThroughMiss: true
+        )
+
+        // 近摄整书帧（IoU ≈ 0.63）：默认 0.60 会跟随棘轮；0.70 判跳变 →
+        // hold 维持右页锚点。连续 4 帧都在窗内。
+        for expectedMiss in 1...4 {
+            let held = sticky.apply(
+                selection: Self.closeSpreadSelection(tier: 1),
+                pool: [Self.closeSpread],
+                similarityThreshold: 0.70,
+                missLimit: 5,
+                holdThroughMiss: true
+            )
+            #expect(held?.quad == Self.rightPage,
+                    "miss \(expectedMiss) < 5：0.70 阈值下近摄整书判跳变，必须 hold 右页锚点")
+            #expect(sticky.missCount == expectedMiss)
+        }
+        // 第 5 帧达限逃逸（missLimit 5 生效——默认 3 在第 3 帧就已逃逸）。
+        let escaped = sticky.apply(
+            selection: Self.closeSpreadSelection(tier: 1),
+            pool: [Self.closeSpread],
+            similarityThreshold: 0.70,
+            missLimit: 5,
+            holdThroughMiss: true
+        )
+        #expect(escaped?.quad == Self.closeSpread, "miss 达 5 必须逃逸透传")
+        #expect(sticky.lastDisposition == .escape)
+    }
+
     // MARK: - Helpers
 
     /// 轴对齐矩形框（包围盒 IoU / score 手算用；与 CandidateStickyTests 同 fixture）。
@@ -393,6 +438,10 @@ struct CandidateStickyV2Tests {
         DetectionStrategy.Selection(quad: wholeSpread, tier: tier)
     }
 
+    private static func closeSpreadSelection(tier: Int) -> DetectionStrategy.Selection {
+        DetectionStrategy.Selection(quad: closeSpread, tier: tier)
+    }
+
     private static let rightPage = rectQuad(0.5, 0.1, 0.95, 0.9)
     // Case B 右页形态：0.45×0.8 = 0.36。
 
@@ -402,4 +451,8 @@ struct CandidateStickyV2Tests {
 
     private static let wholeSpread = rectQuad(0.02, 0.06, 0.98, 0.94)
     // 整书外轮廓：0.96×0.88 = 0.8448；IoU(rightPage) ≈ 0.426 < 0.60。
+
+    private static let closeSpread = rectQuad(0.30, 0.08, 0.98, 0.92)
+    // 近摄整书外轮廓：0.68×0.84 = 0.5712；IoU(rightPage) = 0.36/0.5712 ≈ 0.630
+    // ∈ [0.60, 0.70)——regime c（棘轮）制式带；rightPage 完全内含于其中。
 }

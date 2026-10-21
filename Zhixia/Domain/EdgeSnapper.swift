@@ -12,7 +12,33 @@ import Foundation
 /// 对四边各沿**外法线**以小步长采样亮度剖面，找到「亮 → 暗」梯度最强的位置，
 /// 把该边外推到那里（文档亮、桌面暗的真实边缘）；四个顶点 = 两条相邻边的
 /// 外推位移之和。任何一项校验失败都**原样返回**输入 quad——宁可不修，不可错修。
+///
+/// ## 最近峰策略（spec/frame-stability；取代「双向两阶段」的相序）
+/// 逐边独立：先测 s=0 的对称梯度 G0——检出边已压在真实边缘上则不动；否则
+/// 向外、向内各找**第一处**过阈值的「亮→暗」边并取该边的峰位，两相中
+/// **离检出位置最近**者胜出。
+/// - 折页书左缘：从页内向外的第一个边是**折痕**（折脊轮廓在更外侧且往往
+///   更强）——「全窗最强梯度」会跳过折痕、把折起来的部分留在框里；「第一个
+///   边」稳定命中折痕。三条外缘不受影响（第一个峰就是纸边）。
+/// - 内缩检出：向外第一个边 = 真实页边；越界检出：向内第一个边 = 真实页边。
+/// 内向相仍比外向保守：限幅减半（0.5×maxShift）、阈值 1.5×——内拉收缩裁切
+/// 范围，误吸文字笔画的代价是直接裁掉内容；沿边 5 点均值模糊孤立笔画。
 enum EdgeSnapper {
+    /// 单边吸附诊断（spec/frame-truth FR-008）——纯数据出参，由调用方决定是否
+    /// 落日志（Domain 保持无 Services 依赖）。
+    struct EdgeDiagnostic: Sendable, Equatable {
+        /// 边序号：0=上 1=右 2=下 3=左。
+        let edge: Int
+        /// 边当前位置（s=0）的对称梯度（双线性采样）。
+        let g0: Double
+        /// 外向相最强正梯度（无峰 = 0）。
+        let outward: Double
+        /// 内向相最强正梯度（无峰 = 0）。
+        let inward: Double
+        /// 实际位移（归一化距离；外向为正、内向为负、不动为 0）。
+        let shift: Double
+    }
+
     // MARK: - 不可变配置
 
     /// 栅格列数：约 0.5% 级采样分辨率，足以把 1~3% 的内缩恢复到误差 ≤ 短边 2%。
@@ -25,6 +51,12 @@ enum EdgeSnapper {
     static let edgeSampleCount = 5
     /// 外法线搜索步数（步长 = maxShift / 步数）。
     static let shiftStepCount = 12
+    /// 内向相触发阈值（FR-006）：1.5× gradientThreshold——内拉收缩裁切
+    /// 范围，误吸文字笔画 = 直接裁掉内容，必须比外推更保守。
+    static let inwardGradientThreshold = 0.12
+    /// 内向相搜索限幅（相对 maxShift）：0.5× ≈ 短边 2.5%（maxShiftRatio
+    /// 5% 时），页边距普遍远大于此——限幅内跨不过文字行。
+    static let inwardShiftRatio = 0.5
 
     // MARK: - 单一入口
 
@@ -33,7 +65,13 @@ enum EdgeSnapper {
     /// - `maxShiftRatio`：单边最大位移 = 比例 × quad 短边（任务带 3~5%）。
     /// - 四项校验（凸性 / 图像边界 / 最大位移 / 面积变化）任一失败 → 原样返回。
     /// - `image` 必须与 `quad` 同方向（直立）；调用方负责 EXIF 校正。
-    static func snap(quad: Quad, image: CGImage, maxShiftRatio: Double) -> Quad {
+    /// - `diagnostics`：逐边诊断出参（默认 nil = 不采集；调用方接线日志）。
+    static func snap(
+        quad: Quad,
+        image: CGImage,
+        maxShiftRatio: Double,
+        diagnostics: ((EdgeDiagnostic) -> Void)? = nil
+    ) -> Quad {
         guard maxShiftRatio.isFinite, maxShiftRatio > 0,
               !quad.isDegenerate,
               isConvex(quad),
@@ -57,13 +95,15 @@ enum EdgeSnapper {
             (quad.bottomRight, quad.bottomLeft),
             (quad.bottomLeft, quad.topLeft)
         ]
-        let shifts = edges.map { edge in
+        let shifts = edges.enumerated().map { index, edge in
             edgeShift(
                 from: edge.0,
                 to: edge.1,
                 centroid: centroid,
                 maxShift: maxShift,
-                raster: raster
+                edgeIndex: index,
+                raster: raster,
+                diagnostics: diagnostics
             )
         }
 
@@ -97,13 +137,16 @@ enum EdgeSnapper {
 
     // MARK: - 边级搜索
 
-    /// 单条边的外推位移向量：外法线方向 × 最强梯度距离；无有效梯度 → 零向量。
+    /// 单条边的吸附位移向量：外法线方向 × 最强梯度距离（外向相为正、内向相
+    /// 为负 = 沿内法线拉回）；两相均无有效梯度 → 零向量。
     private static func edgeShift(
         from start: CGPoint,
         to end: CGPoint,
         centroid: CGPoint,
         maxShift: Double,
-        raster: Raster
+        edgeIndex: Int,
+        raster: Raster,
+        diagnostics: ((EdgeDiagnostic) -> Void)?
     ) -> CGPoint {
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -120,8 +163,12 @@ enum EdgeSnapper {
             ny = -ny
         }
 
-        /// 沿边均匀取 `edgeSampleCount` 个点，取距边 `distance` 处的平均亮度。
-        func meanLuminance(atDistance distance: Double) -> Double {
+
+        // 沿边 5 点均值（双线性采样，spec/frame-truth FR-004）——±δ 仅约
+        // 0.37 栅格列，最近邻取整会把两个采样点采成同一像素（梯度被量化
+        // 成 0）；实时帧 405×720 / 栅格 160 列下这是外向相也失效的主因，
+        // 故三处梯度（G0/外向/内向）统一用双线性。
+        func meanLuminanceBilinear(atDistance distance: Double) -> Double {
             var total = 0.0
             for index in 0..<edgeSampleCount {
                 let t = (Double(index) + 0.5) / Double(edgeSampleCount)
@@ -129,26 +176,92 @@ enum EdgeSnapper {
                     x: start.x + dx * t + nx * distance,
                     y: start.y + dy * t + ny * distance
                 )
-                total += raster.luminance(atNormalized: point)
+                total += raster.luminanceBilinear(atNormalized: point)
             }
             return total / Double(edgeSampleCount)
         }
 
-        // 剖面梯度 G(s) = L(s−δ) − L(s+δ)：s 落在「亮→暗」边界时最大。
+        // 剖面梯度 G(s) = L(s−δ) − L(s+δ)：s−δ 比 s 更靠页内——页内亮、
+        // 页外暗的真实边缘无论落在 s 正侧还是负侧，G 都在边缘处取正峰。
         let delta = maxShift / Double(shiftStepCount)
-        var bestShift = 0.0
-        var bestGradient = 0.0
-        for step in 0...shiftStepCount {
-            let s = Double(step) * delta
-            guard s - delta >= 0, s + delta <= maxShift + 1e-9 else { continue }
-            let gradient = meanLuminance(atDistance: s - delta) - meanLuminance(atDistance: s + delta)
-            if gradient > bestGradient {
-                bestGradient = gradient
-                bestShift = s
-            }
+        // s=0 对称梯度（spec/frame-truth FR-004）：检出边当前位置是否已压在
+        // 真实边缘上——是则不动（外推/内拉都会被折脊/阴影带偏）。
+        let g0 = meanLuminanceBilinear(atDistance: -delta)
+            - meanLuminanceBilinear(atDistance: delta)
+        if g0 >= gradientThreshold {
+            diagnostics?(EdgeDiagnostic(
+                edge: edgeIndex, g0: g0, outward: 0, inward: 0, shift: 0
+            ))
+            return .zero
         }
-        guard bestGradient >= gradientThreshold else { return .zero }
-        return CGPoint(x: nx * bestShift, y: ny * bestShift)
+        /// 沿方向 `sign` 找**第一处**过阈值的边缘并取其峰位（最近峰策略，
+        /// spec/frame-stability）。折页书的折痕（页内一侧）与折脊轮廓
+        /// （更外侧、往往更强）都是「亮→暗」边——按「全窗最强梯度」会
+        /// 跳过折痕、命中折脊，把折起来的部分留在框/成片里；按「第一个
+        /// 过阈值的边」则稳定命中折痕，三条外缘也不受影响（第一个峰就是
+        /// 纸边）。越过第一峰即止，不追更远的边缘。
+        func firstEdgePeak(
+            sign: Double, steps: Int, threshold: Double, limit: Double
+        ) -> (shift: Double, gradient: Double)? {
+            var crossed = false
+            var peakShift = 0.0
+            var peakGradient = 0.0
+            for step in 1...steps {
+                let s = sign * Double(step) * delta
+                guard abs(s) + delta <= limit + 1e-9 else { break }
+                let gradient = meanLuminanceBilinear(atDistance: s - delta)
+                    - meanLuminanceBilinear(atDistance: s + delta)
+                if !crossed {
+                    if gradient >= threshold {
+                        crossed = true
+                        peakShift = s
+                        peakGradient = gradient
+                    }
+                } else if gradient > peakGradient {
+                    peakShift = s
+                    peakGradient = gradient
+                } else {
+                    break
+                }
+            }
+            return crossed ? (peakShift, peakGradient) : nil
+        }
+        let outward = firstEdgePeak(
+            sign: 1, steps: shiftStepCount,
+            threshold: gradientThreshold, limit: maxShift
+        )
+        let inward = firstEdgePeak(
+            sign: -1, steps: shiftStepCount / 2,
+            threshold: inwardGradientThreshold, limit: maxShift * inwardShiftRatio
+        )
+        // 最近峰胜出（|s| 更小者；同距外向优先）。
+        let chosen: (shift: Double, gradient: Double)?
+        switch (outward, inward) {
+        case let (o?, i?):
+            chosen = abs(o.shift) <= abs(i.shift) ? o : i
+        case let (o?, nil):
+            chosen = o
+        case let (nil, i?):
+            chosen = i
+        case (nil, nil):
+            chosen = nil
+        }
+        guard let chosen else {
+            diagnostics?(EdgeDiagnostic(
+                edge: edgeIndex, g0: g0,
+                outward: outward?.gradient ?? 0,
+                inward: inward?.gradient ?? 0,
+                shift: 0
+            ))
+            return .zero
+        }
+        diagnostics?(EdgeDiagnostic(
+            edge: edgeIndex, g0: g0,
+            outward: outward?.gradient ?? 0,
+            inward: inward?.gradient ?? 0,
+            shift: chosen.shift
+        ))
+        return CGPoint(x: nx * chosen.shift, y: ny * chosen.shift)
     }
 
     // MARK: - 校验辅助
@@ -236,10 +349,20 @@ enum EdgeSnapper {
             self.luminance = luminance
         }
 
-        func luminance(atNormalized point: CGPoint) -> Double {
-            let column = min(max(Int((point.x * CGFloat(columns)).rounded()), 0), columns - 1)
-            let row = min(max(Int((point.y * CGFloat(rows)).rounded()), 0), rows - 1)
-            return luminance[row * columns + column]
+        /// 双线性采样（spec/frame-truth FR-004）：s=0 守卫的 ±δ 仅约 0.37
+        /// 栅格列，最近邻会把两个采样点取整到同一像素（梯度被量化成 0）。
+        func luminanceBilinear(atNormalized point: CGPoint) -> Double {
+            let fx = min(max(point.x * CGFloat(columns) - 0.5, 0), CGFloat(columns - 1))
+            let fy = min(max(point.y * CGFloat(rows) - 0.5, 0), CGFloat(rows - 1))
+            let x0 = Int(fx.rounded(.down))
+            let y0 = Int(fy.rounded(.down))
+            let x1 = min(x0 + 1, columns - 1)
+            let y1 = min(y0 + 1, rows - 1)
+            let tx = Double(fx - CGFloat(x0))
+            let ty = Double(fy - CGFloat(y0))
+            let top = luminance[y0 * columns + x0] * (1 - tx) + luminance[y0 * columns + x1] * tx
+            let bottom = luminance[y1 * columns + x0] * (1 - tx) + luminance[y1 * columns + x1] * tx
+            return top * (1 - ty) + bottom * ty
         }
     }
 }

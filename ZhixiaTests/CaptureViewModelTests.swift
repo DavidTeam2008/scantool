@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
+import UIKit
 @testable import Zhixia
 
 @MainActor
@@ -163,6 +164,155 @@ struct ReviewViewModelTests {
         #expect(viewModel.drafts.first { $0.id == autoPage }?.quad == refinedQuad)
     }
 
+    @Test("Post-capture refine keeps the capture frame when the still detects another identity")
+    func autoRefineKeepsCaptureFrameOnIdentityMismatch() async throws {
+        // spec/scan-enhance FR-001：整理页重检带**身份锚定**——静帧候选与
+        // 拍摄框 IoU < 0.85 视为换了对象（如静帧选到「右页+折痕」外框），
+        // 保留拍摄框；`.fullImage` 兜底页无身份可言，直接采纳静帧结果。
+        let root = FileManager.default.temporaryDirectory.appending(path: "rev-gate-\(UUID().uuidString)")
+        let files = PageFileStore(root: root)
+        let session = UUID()
+        let gatePage = UUID()
+        let freePage = UUID()
+        _ = try await files.writeOriginal(session: session, page: gatePage, data: PreviewImages.jpeg())
+        _ = try await files.writeOriginal(session: session, page: freePage, data: PreviewImages.jpeg())
+
+        // 快门瞬间呈现框（右页）；PreviewDetector 的 still 固定框扮演
+        // 「静帧重检出整书」——refine 若执行会把它写进草稿。
+        let displayedQuad = CropGateQuads.rightPage
+        let stillRedetected = Quad(
+            topLeft: CGPoint(x: 0.1, y: 0.1),
+            topRight: CGPoint(x: 0.9, y: 0.12),
+            bottomRight: CGPoint(x: 0.88, y: 0.9),
+            bottomLeft: CGPoint(x: 0.08, y: 0.88)
+        )
+        #expect(stillRedetected != displayedQuad)
+
+        let defaults = UserDefaults(suiteName: "zhixia.review.gate.\(UUID().uuidString)") ?? .standard
+        let viewModel = ReviewViewModel(
+            drafts: [
+                PageDraft(id: gatePage, sessionID: session, quad: displayedQuad, enhancement: .original),
+                PageDraft(id: freePage, sessionID: session, quad: .fullImage, enhancement: .original)
+            ],
+            sessionID: session,
+            appendToDocumentID: nil,
+            renderer: ImagePipeline(),
+            detector: PreviewDetector(),
+            fileStore: files,
+            documentStore: InMemoryDocumentStore(),
+            preferences: PreferencesStore(defaults: defaults)
+        )
+
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.previewImage != nil })
+
+        // 身份不符页：quad 原样保留（身份锚定拒绝）。
+        #expect(viewModel.drafts.first { $0.id == gatePage }?.quad == displayedQuad)
+        // 对照组：未置位页被 refine 更新——证明 refine 确实执行，上一条的
+        // 「跳过」不是 refine 空转的假绿（与 autoRefineSkipsUserAdjustedQuad 同构）。
+        #expect(viewModel.drafts.first { $0.id == freePage }?.quad == stillRedetected)
+    }
+
+    @Test("Post-capture refine splits a spread into the right page (spine valley)")
+    func reviewSplitsSpreadToRightPage() async throws {
+        // spec/scan-enhance FR-002：摊开书场景候选池里只有整书一个候选，
+        // 「只拍右页」靠拍后按书脊拆分。合成图：两张亮页 + 中央暗脊。
+        let root = FileManager.default.temporaryDirectory.appending(path: "rev-spread-\(UUID().uuidString)")
+        let files = PageFileStore(root: root)
+        let session = UUID()
+        let page = UUID()
+        _ = try await files.writeOriginal(session: session, page: page, data: Self.spreadJPEG())
+        let spread = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.05),
+            topRight: CGPoint(x: 0.98, y: 0.05),
+            bottomRight: CGPoint(x: 0.98, y: 0.95),
+            bottomLeft: CGPoint(x: 0.02, y: 0.95)
+        )
+        let defaults = UserDefaults(suiteName: "zhixia.review.spread.\(UUID().uuidString)") ?? .standard
+        let viewModel = ReviewViewModel(
+            drafts: [PageDraft(id: page, sessionID: session, quad: spread, enhancement: .original)],
+            sessionID: session,
+            appendToDocumentID: nil,
+            renderer: ImagePipeline(),
+            detector: FixedStillDetector(quad: spread),
+            fileStore: files,
+            documentStore: InMemoryDocumentStore(),
+            preferences: PreferencesStore(defaults: defaults)
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.previewImage != nil })
+
+        let quad = try #require(viewModel.drafts.first?.quad)
+        #expect(quad.topLeft.x > 0.42 && quad.topLeft.x < 0.58,
+                "拆分后左缘应落在书脊（≈0.5），实际 \(quad.topLeft.x)")
+        #expect(quad.area < spread.area * 0.75, "拆分后应为单页面积（约整书一半）")
+    }
+
+    @Test("Post-capture refine trims a dark folded strip on the left")
+    func reviewTrimsFoldedLeftStrip() async throws {
+        // spec/scan-enhance FR-002 场景 2：折起部分在画面左侧是一条暗带
+        // （真机照片实测 u≈0.08、暗度 0.44）——拍后裁掉折条，右页左缘
+        // 落在第一个持续明亮列。
+        let root = FileManager.default.temporaryDirectory.appending(path: "rev-fold-\(UUID().uuidString)")
+        let files = PageFileStore(root: root)
+        let session = UUID()
+        let page = UUID()
+        _ = try await files.writeOriginal(session: session, page: page, data: Self.foldStripJPEG())
+        let captured = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.02),
+            topRight: CGPoint(x: 0.98, y: 0.02),
+            bottomRight: CGPoint(x: 0.98, y: 0.98),
+            bottomLeft: CGPoint(x: 0.02, y: 0.98)
+        )
+        let defaults = UserDefaults(suiteName: "zhixia.review.fold.\(UUID().uuidString)") ?? .standard
+        let viewModel = ReviewViewModel(
+            drafts: [PageDraft(id: page, sessionID: session, quad: captured, enhancement: .original)],
+            sessionID: session,
+            appendToDocumentID: nil,
+            renderer: ImagePipeline(),
+            detector: FixedStillDetector(quad: captured),
+            fileStore: files,
+            documentStore: InMemoryDocumentStore(),
+            preferences: PreferencesStore(defaults: defaults)
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.previewImage != nil })
+
+        let quad = try #require(viewModel.drafts.first?.quad)
+        #expect(quad.topLeft.x > 0.05 && quad.topLeft.x < 0.15,
+                "左缘应裁到折条右侧（≈0.10），实际 \(quad.topLeft.x)")
+        #expect(quad.area < captured.area * 0.97, "折条必须被裁掉")
+    }
+
+    /// 合成折页书：400×300，左侧 8% 暗折条 + 右侧亮页。
+    private static func foldStripJPEG() -> Data {
+        let size = CGSize(width: 400, height: 300)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(white: 0.2, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(white: 0.95, alpha: 1).setFill()
+            context.fill(CGRect(x: 32, y: 0, width: 368, height: 300))
+        }
+        return image.jpegData(compressionQuality: 0.9)!
+    }
+
+    /// 合成摊开书：400×300，左右亮页 + 中央暗脊（x 0.48..0.52，贯穿全高）。
+    private static func spreadJPEG() -> Data {
+        let size = CGSize(width: 400, height: 300)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(white: 0.15, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(white: 0.95, alpha: 1).setFill()
+            context.fill(CGRect(x: 20, y: 15, width: 172, height: 270))
+            context.fill(CGRect(x: 208, y: 15, width: 172, height: 270))
+            UIColor(white: 0.25, alpha: 1).setFill()
+            context.fill(CGRect(x: 192, y: 0, width: 16, height: 300))
+        }
+        return image.jpegData(compressionQuality: 0.9)!
+    }
+
     private func waitUntil(
         _ condition: @escaping () -> Bool,
         timeout: TimeInterval = 3
@@ -185,8 +335,11 @@ struct ReviewViewModelTests {
 /// 本套件**零源码改动**——纯测试锚定既有语义，防未来回归（D5 设计意图）。
 @MainActor
 struct CaptureFallbackChainTests {
-    @Test("Still re-detect success: the page is cropped with the re-detected quad")
-    func stillRedetectWins() async throws {
+    @Test("呈现框存在时成片 = 呈现框，静帧重检不再执行（冻结直裁）")
+    func displayedFrameWinsOverStill() async throws {
+        // 方向性翻转（spec/frame-truth FR-006，用户已批准）：上一周期分支 ①
+        // 「静帧重检胜出」被移除——快门后不再有任何隐藏换框；贴边精度由
+        // 锁定瞬间的可见吸附承担（FR-005）。
         let detector = ChainDetector(liveQuad: ChainQuads.live, stillQuad: ChainQuads.still)
         let viewModel = makeViewModel(detector: detector)
 
@@ -194,9 +347,9 @@ struct CaptureFallbackChainTests {
         #expect(await waitUntil { viewModel.imageQuad != nil })
         await viewModel.capture()
 
-        // 分支 ①：精度优先，still 重检框胜出（与 live 框的细微差异已被用户接受）。
         #expect(viewModel.drafts.count == 1)
-        #expect(viewModel.drafts.first?.quad == ChainQuads.still)
+        #expect(viewModel.drafts.first?.quad == ChainQuads.live)
+        #expect(await detector.stillDetectCount == 0)
     }
 
     @Test("Still re-detect failure: the page falls back to the live quad")
@@ -236,7 +389,8 @@ struct CaptureFallbackChainTests {
     private func makeViewModel(detector: any EdgeDetecting) -> CaptureViewModel {
         let defaults = UserDefaults(suiteName: "zhixia.chain.\(UUID().uuidString)") ?? .standard
         let preferences = PreferencesStore(defaults: defaults)
-        // 与自动快门解耦：回退链由手动快门触发（autoCapture 默认开，须显式关）。
+        // 与自动快门解耦：回退链由手动快门触发（spec/folded-page-capture 起
+        // 默认即关；显式赋值与历史语义保持一致，防默认值再翻转时静默变绿）。
         preferences.autoCapture = false
         return CaptureViewModel(
             launch: .fresh,
@@ -314,6 +468,8 @@ private final class ChainCamera: CameraCapturing, @unchecked Sendable {
 private actor ChainDetector: EdgeDetecting {
     private let liveQuad: Quad?
     private let stillQuad: Quad?
+    /// 静帧重检次数（spec/frame-truth FR-006）。
+    private(set) var stillDetectCount = 0
 
     init(liveQuad: Quad?, stillQuad: Quad?) {
         self.liveQuad = liveQuad
@@ -321,7 +477,10 @@ private actor ChainDetector: EdgeDetecting {
     }
 
     func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? { liveQuad }
-    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { stillQuad }
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? {
+        stillDetectCount += 1
+        return stillQuad
+    }
 }
 
 private enum ChainQuads {
@@ -674,8 +833,12 @@ struct CropGateAtShutterTests {
         #expect(viewModel.drafts.last?.quad != CropGateQuads.wholeSpread)
     }
 
-    @Test("锁定 + 静帧一致 → 静帧精修采纳（平整精度不回归，US4 语义）")
-    func lockedConsistentStillRefines() async throws {
+    @Test("锁定 + 静帧一致 → 成片仍 = 呈现框（冻结直裁，不重检）")
+    func lockedFrameCropsDisplayedWithoutRedetect() async throws {
+        // 方向性翻转（spec/frame-truth FR-006，用户已批准）：上一周期此处
+        // 期望静帧精修胜出（+14.33% 面积的隐藏换框）；frame-truth 改为
+        // 「呈现框唯一真值」——有呈现框时快门后完全不重检，贴边精度改由
+        // 锁定瞬间的可见吸附（FR-005）承担。
         let (viewModel, camera, detector) = makeFixture(
             liveSequence: Array(repeating: CropGateQuads.rightPage, count: 12),
             stillQuad: CropGateQuads.refined
@@ -685,11 +848,51 @@ struct CropGateAtShutterTests {
         await feed(12, camera: camera, detector: detector)
         #expect(viewModel.overlayIsLocked)
 
-        // 手动快门：静帧精修框（贴边吸附级外扩，IoU ≈ 0.8746 ≥ 0.70）→
-        // 采纳静帧精修——平整文档高分辨率裁切精度与修复前一致（SC-003）。
         await viewModel.capture()
         #expect(viewModel.drafts.count == 1)
-        #expect(viewModel.drafts.last?.quad == CropGateQuads.refined)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.rightPage,
+                "成片必须等于快门瞬间呈现框——静帧精修不得在快门后换框")
+        #expect(await detector.stillDetectCount == 0,
+                "有呈现框时不得调用静帧重检（冻结直裁）")
+    }
+
+    // MARK: - 门禁决策标记（spec/folded-page-capture，FR-007）
+
+    @Test("冻结直裁三态矩阵：有呈现框不重检；搜索态走静帧检测")
+    func capturePathRedetectMatrix() async throws {
+        // spec/frame-truth FR-006 + spec/scan-enhance：快门时刻有呈现框时
+        // 不重检（成片=框）；搜索态自由检测；整理页的拍后增强由
+        // ReviewViewModelTests 单独覆盖（身份锚定 + 书页拆分）。
+        let (viewModel, camera, detector) = makeFixture(
+            liveSequence: Array(repeating: CropGateQuads.rightPage, count: 12),
+            stillQuad: CropGateQuads.wholeSpread
+        )
+        await viewModel.start()
+        await feed(12, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.rightPage)
+        #expect(await detector.stillDetectCount == 0)
+
+        let (viewModel2, camera2, detector2) = makeFixture(
+            liveSequence: Array(repeating: CropGateQuads.rightPage, count: 12),
+            stillQuad: CropGateQuads.refined
+        )
+        await viewModel2.start()
+        await feed(12, camera: camera2, detector: detector2)
+        await viewModel2.capture()
+        #expect(viewModel2.drafts.last?.quad == CropGateQuads.rightPage)
+        #expect(await detector2.stillDetectCount == 0)
+
+        let (viewModel3, camera3, detector3) = makeFixture(
+            liveSequence: [],
+            stillQuad: CropGateQuads.wholeSpread
+        )
+        await viewModel3.start()
+        await feed(3, camera: camera3, detector: detector3)
+        await viewModel3.capture()
+        #expect(viewModel3.drafts.last?.quad == CropGateQuads.wholeSpread)
+        #expect(await detector3.stillDetectCount == 1)
     }
 
     // MARK: - US2 组：呈现框即裁切框·全状态统一
@@ -767,7 +970,8 @@ struct CropGateAtShutterTests {
     ) -> (viewModel: CaptureViewModel, camera: CropGateCamera, detector: CropGateDetector) {
         let defaults = UserDefaults(suiteName: "zhixia.cropgate.\(UUID().uuidString)") ?? .standard
         let preferences = PreferencesStore(defaults: defaults)
-        // 与自动快门解耦：门禁语义由手动快门触发（autoCapture 默认开，须显式关）。
+        // 与自动快门解耦：门禁语义由手动快门触发（spec/folded-page-capture 起
+        // 默认即关；显式赋值与历史语义保持一致，防默认值再翻转时静默变绿）。
         preferences.autoCapture = false
         let camera = CropGateCamera()
         let detector = CropGateDetector(liveSequence: liveSequence, stillQuad: stillQuad)
@@ -878,6 +1082,8 @@ private actor CropGateDetector: EdgeDetecting {
     private var liveIndex = 0
     private let stillQuad: Quad?
     private(set) var liveDetectCount = 0
+    /// 静帧重检次数（spec/frame-truth FR-006 断言「有呈现框时不重检」）。
+    private(set) var stillDetectCount = 0
 
     init(liveSequence: [Quad?], stillQuad: Quad?) {
         self.liveSequence = liveSequence
@@ -894,7 +1100,10 @@ private actor CropGateDetector: EdgeDetecting {
         return quad
     }
 
-    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { stillQuad }
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? {
+        stillDetectCount += 1
+        return stillQuad
+    }
 }
 
 private enum CropGateQuads {
@@ -943,4 +1152,309 @@ private enum CropGateQuads {
         bottomRight: CGPoint(x: 0.7, y: 0.6),
         bottomLeft: CGPoint(x: 0.3, y: 0.6)
     )
+}
+
+// MARK: - spec/frame-truth：无效框承诺与锁定冻结（FR-005/007）
+
+@MainActor
+struct FrameTruthCaptureTests {
+    @Test("太远（closer）锁定态不可拍摄：无锁定视觉、不自动拍；手动拍走静帧检测")
+    func closerLockIsNotCapturable() async throws {
+        let defaults = UserDefaults(suiteName: "zhixia.frameTruth.\(UUID().uuidString)") ?? .standard
+        let preferences = PreferencesStore(defaults: defaults)
+        preferences.autoCapture = true // 显式开启：无效框也不得自动拍
+        let camera = CropGateCamera()
+        // 中央小框 0.2×0.25 = 0.05（照片空间 <0.07）：FarHysteresis 进入 closer。
+        let small = Quad(
+            topLeft: CGPoint(x: 0.4, y: 0.35),
+            topRight: CGPoint(x: 0.6, y: 0.35),
+            bottomRight: CGPoint(x: 0.6, y: 0.6),
+            bottomLeft: CGPoint(x: 0.4, y: 0.6)
+        )
+        let detector = CropGateDetector(
+            liveSequence: Array(repeating: small, count: 18),
+            stillQuad: CropGateQuads.wholeSpread
+        )
+        let viewModel = CaptureViewModel(
+            launch: .fresh,
+            camera: camera,
+            detector: detector,
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "frametruth-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: preferences
+        )
+        await viewModel.start()
+        await feed(18, camera: camera, detector: detector)
+
+        // 轨道相位可以锁定（smoother 只看稳定性），但「可拍摄」承诺必须撤销：
+        // 不显示锁定框/震动、不自动拍（确认窗早已满 6 帧）。
+        if case .locked = viewModel.phase {
+            // 相位锁定 = 本用例的预期前置（smoother 稳定 0.55s）。
+        } else {
+            Issue.record("小框稳定 18 帧后应进入 locked 相位（前置条件）")
+        }
+        #expect(viewModel.overlayIsLocked == false,
+                "closer 时不得显示可拍摄的锁定框（FR-007）")
+        #expect(viewModel.drafts.isEmpty,
+                "closer 锁定帧不得自动拍（即使 autoCapture 开启）")
+
+        // 手动拍：无效框按搜索态处理 → 走静帧自由检测。
+        await viewModel.capture()
+        #expect(viewModel.drafts.count == 1)
+        #expect(await detector.stillDetectCount == 1)
+        #expect(viewModel.drafts.last?.quad == CropGateQuads.wholeSpread)
+    }
+
+    @Test("锁定瞬间冻结框 = 当前帧检测的有界吸附结果（精修上屏）")
+    func lockFreezesSnappedQuad() async throws {
+        let camera = GradientCamera()
+        // 内缩 1% 的四边（块边界 0.2..0.8 × 0.15..0.85）；shortSide 0.58 →
+        // maxShift 0.04×0.58 = 0.0232 > 0.01 → 四边都应外推到块边界。
+        let inset = Quad(
+            topLeft: CGPoint(x: 0.21, y: 0.16),
+            topRight: CGPoint(x: 0.79, y: 0.16),
+            bottomRight: CGPoint(x: 0.79, y: 0.84),
+            bottomLeft: CGPoint(x: 0.21, y: 0.84)
+        )
+        let detector = CropGateDetector(
+            liveSequence: Array(repeating: inset, count: 14),
+            stillQuad: nil
+        )
+        let viewModel = CaptureViewModel(
+            launch: .fresh,
+            camera: camera,
+            detector: detector,
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "frametruth-snap-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: PreferencesStore(
+                defaults: UserDefaults(suiteName: "zhixia.frameTruth.snap.\(UUID().uuidString)") ?? .standard
+            )
+        )
+        await viewModel.start()
+        await feedGradient(14, camera: camera, detector: detector)
+        #expect(viewModel.overlayIsLocked)
+
+        // 冻结框应已吸附到块边界（容差 0.02）；不再是内缩的原始检测。
+        let frozen = try #require(viewModel.imageQuad)
+        #expect(abs(frozen.topLeft.x - 0.2) <= 0.02)
+        #expect(abs(frozen.topLeft.y - 0.15) <= 0.02)
+        #expect(abs(frozen.bottomRight.x - 0.8) <= 0.02)
+        #expect(abs(frozen.bottomRight.y - 0.85) <= 0.02)
+
+        // 快门直裁 = 冻结框。
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == frozen)
+    }
+
+    @Test("Displayed quad and crop are clamped to the preview's visible region")
+    func previewClampExcludesInvisibleContent() async throws {
+        // spec/scan-enhance：预览 aspectFill 只显示照片中央 ~62% 宽度；折叠
+        // 部分在"镜头外"却仍在照片里——呈现框/裁切必须钳制到可见区。
+        let camera = ClampCamera()
+        let quad = Quad(
+            topLeft: CGPoint(x: 0.05, y: 0.2),
+            topRight: CGPoint(x: 0.95, y: 0.2),
+            bottomRight: CGPoint(x: 0.95, y: 0.8),
+            bottomLeft: CGPoint(x: 0.05, y: 0.8)
+        )
+        let viewModel = CaptureViewModel(
+            launch: .fresh,
+            camera: camera,
+            detector: FixedLiveDetector(quad: quad),
+            fileStore: PageFileStore(
+                root: FileManager.default.temporaryDirectory.appending(path: "clamp-\(UUID().uuidString)")
+            ),
+            permissions: PreviewPermissions(),
+            preferences: PreferencesStore(
+                defaults: UserDefaults(suiteName: "zhixia.clamp.\(UUID().uuidString)") ?? .standard
+            )
+        )
+        await viewModel.start()
+        viewModel.previewSize = CGSize(width: 390, height: 844)
+        for _ in 0..<4 { await camera.yieldFrame() }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        let displayed = try #require(viewModel.imageQuad)
+        // 390×844 视图、0.75 视频：可见 x ∈ [0.192, 0.808]。
+        #expect(displayed.topLeft.x >= 0.19 && displayed.topLeft.x <= 0.20,
+                "左缘必须钳到可见边界，实际 \(displayed.topLeft.x)")
+        #expect(displayed.topRight.x <= 0.81 && displayed.topRight.x >= 0.80,
+                "右缘必须钳到可见边界，实际 \(displayed.topRight.x)")
+        #expect(displayed.bottomLeft.y <= 0.81 && displayed.topLeft.y >= 0.19,
+                "纵向无裁切（视图更高）")
+    }
+
+    // MARK: - Helpers
+
+    private func feed(
+        _ count: Int,
+        camera: CropGateCamera,
+        detector: CropGateDetector
+    ) async {
+        let before = await detector.liveDetectCount
+        for _ in 0..<count {
+            await camera.yieldFrame()
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if await detector.liveDetectCount >= before + count { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+
+    private func feedGradient(
+        _ count: Int,
+        camera: GradientCamera,
+        detector: CropGateDetector
+    ) async {
+        let before = await detector.liveDetectCount
+        for _ in 0..<count {
+            await camera.yieldFrame()
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if await detector.liveDetectCount >= before + count { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+}
+
+/// 亮度块相机（spec/frame-truth FR-005 冻结吸附用例）：深色背景 + 亮块
+/// [0.2, 0.8]×[0.15, 0.85]，供 EdgeSnapper 找到真实边缘。
+private final class GradientCamera: CameraCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<VideoFrame>.Continuation?
+    private var frameIndex = 0
+
+    func start() async throws {}
+    func stop() async {}
+    func capturePhoto() async throws -> CapturedPhoto {
+        CapturedPhoto(
+            jpegData: PreviewImages.jpeg(),
+            pixelSize: CGSize(width: 160, height: 280)
+        )
+    }
+    func setTorch(enabled: Bool) async throws {}
+    func setFlashAuto(_ enabled: Bool) async {}
+
+    var frames: AsyncStream<VideoFrame> {
+        AsyncStream { continuation in
+            self.lock.withLock { self.continuation = continuation }
+        }
+    }
+
+    func geometry() async -> CaptureGeometry { .identity }
+
+    func yieldFrame() async {
+        let image = Self.blockImage
+        while true {
+            let continuation = lock.withLock { self.continuation }
+            if let continuation {
+                frameIndex += 1
+                continuation.yield(VideoFrame(cgImage: image, timestamp: TimeInterval(frameIndex) / 15.0))
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    /// 160×280：深灰背景（0.15）+ 亮块（0.85），归一化 [0.2,0.8]×[0.15,0.85]。
+    private static let blockImage: CGImage = {
+        let width = 160
+        let height = 280
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // CGContext 原点左下；EdgeSnapper 栅格内部翻转，归一化 y 从顶部计。
+        // 目标（归一化左上原点）[0.2,0.8]×[0.15,0.85] → 绘制 y ∈ [0.15,0.85] 高度 0.7。
+        context.setFillColor(CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1))
+        context.fill(CGRect(
+            x: 0.2 * Double(width),
+            y: (1 - 0.85) * Double(height),
+            width: 0.6 * Double(width),
+            height: 0.7 * Double(height)
+        ))
+        return context.makeImage()!
+    }()
+}
+
+/// 固定静帧结果检测器（spec/scan-enhance 整理页用例）：live 恒 nil。
+private actor FixedStillDetector: EdgeDetecting {
+    private let quad: Quad
+    init(quad: Quad) { self.quad = quad }
+    func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? { nil }
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { quad }
+}
+
+/// 预览钳制用例相机：几何 0.75/0.75（与真机一致），可逐帧喂投。
+private final class ClampCamera: CameraCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<VideoFrame>.Continuation?
+    private var frameIndex = 0
+
+    func start() async throws {}
+    func stop() async {}
+    func capturePhoto() async throws -> CapturedPhoto {
+        CapturedPhoto(jpegData: PreviewImages.jpeg(), pixelSize: CGSize(width: 810, height: 1080))
+    }
+    func setTorch(enabled: Bool) async throws {}
+    func setFlashAuto(_ enabled: Bool) async {}
+
+    var frames: AsyncStream<VideoFrame> {
+        AsyncStream { continuation in
+            self.lock.withLock { self.continuation = continuation }
+        }
+    }
+
+    func geometry() async -> CaptureGeometry {
+        CaptureGeometry(videoAspect: 0.75, photoAspect: 0.75)
+    }
+
+    func yieldFrame() async {
+        let image = Self.plainImage
+        while true {
+            let continuation = lock.withLock { self.continuation }
+            if let continuation {
+                frameIndex += 1
+                continuation.yield(VideoFrame(cgImage: image, timestamp: TimeInterval(frameIndex) / 15.0))
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private static let plainImage: CGImage = {
+        let width = 8
+        let height = 14
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }()
+}
+
+private actor FixedLiveDetector: EdgeDetecting {
+    private let quad: Quad
+    init(quad: Quad) { self.quad = quad }
+    func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad? { quad }
+    func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? { nil }
 }

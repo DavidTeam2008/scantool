@@ -186,7 +186,11 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(buffer) else { return }
         var ciImage = CIImage(cvPixelBuffer: imageBuffer).oriented(.right)
         let extent = ciImage.extent
-        let scale = min(1, 720 / max(extent.width, extent.height))
+        // spec/frame-truth：分析帧长边 720→1080（1.5×线性）。真机证据：
+        // 720p 帧上贴边吸附的逐边梯度峰值仅 0.05–0.07（阈值 0.08）——
+        // 下采样把纸边糊成斜坡，锁定吸附全部零位移、框停在纸内。升到
+        // 1080p 提升边缘锐度；检测请求按相对尺寸归一化，语义不变。
+        let scale = min(1, 1080 / max(extent.width, extent.height))
         if scale < 1 {
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }

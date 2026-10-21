@@ -106,7 +106,7 @@ enum TableGridV2Detector {
         // 8. 数字-单位合并（同一列内、垂直 gap < 0.7×rowHeight 的相邻行合并）
         let rowHeight = rowGap  // 行聚类 maxGap ≈ 行高
         let mergeThreshold = rowHeight * 0.70
-        for r in 0..<(sortedRows.count - 1) {
+        for _ in 0..<(sortedRows.count - 1) {
             // 同一列内，仅合并「本格空」+「下一格存在」的相邻行
             // 不在这里做：M2 当前样张「1429 千焦」本身已是一行，无需合并；接口预留
             _ = mergeThreshold

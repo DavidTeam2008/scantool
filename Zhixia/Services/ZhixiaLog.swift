@@ -15,7 +15,7 @@ enum ZhixiaLog {
 
     /// 档位与切换：当前档位 + 是否默认档。
     static func reconstructTier(_ tier: R2OutputTier, isDefault: Bool) {
-        reconstruct.debug(
+        reconstruct.notice(
             "tier=\(tier.rawValue, privacy: .public) isDefault=\(isDefault, privacy: .public)"
         )
     }
@@ -23,10 +23,10 @@ enum ZhixiaLog {
     /// 底座：路径尾段 + 像素尺寸。nil = 无底座（画布退化白底）。
     static func reconstructBaseImage(path: String?, pixelWidth: Int, pixelHeight: Int) {
         guard let path else {
-            reconstruct.debug("baseImage=missing fallback=whiteCanvas")
+            reconstruct.notice("baseImage=missing fallback=whiteCanvas")
             return
         }
-        reconstruct.debug(
+        reconstruct.notice(
             "baseImage=\(path, privacy: .public) pixels=\(pixelWidth)x\(pixelHeight)"
         )
     }
@@ -34,24 +34,24 @@ enum ZhixiaLog {
     /// 覆盖 mask：覆盖矩形数 + 首个填充色采样（RGB 0~255）。
     static func reconstructMask(rectCount: Int, sampleColorRGB: (Int, Int, Int)?) {
         guard let sampleColorRGB else {
-            reconstruct.debug("mask rectCount=\(rectCount) fill=none")
+            reconstruct.notice("mask rectCount=\(rectCount) fill=none")
             return
         }
-        reconstruct.debug(
+        reconstruct.notice(
             "mask rectCount=\(rectCount) fillRGB=\(sampleColorRGB.0),\(sampleColorRGB.1),\(sampleColorRGB.2)"
         )
     }
 
     /// 乱码区域判定：候选行数 / 证据墨块数 / 判定成立区域数 / 双门控证据值（最小 confidence）。
     static func reconstructArtwork(candidateLines: Int, inkEvidence: Int, confirmedRegions: Int, lowestConfidence: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "artwork candidateLines=\(candidateLines) inkEvidence=\(inkEvidence) confirmed=\(confirmedRegions) lowestConfidence=\(lowestConfidence, format: .fixed(precision: 3), privacy: .public)"
         )
     }
 
     /// 条码去重：去重前后计数（figure / barcode / URL 降级三通道归一）。
     static func reconstructDedup(beforeFigures: Int, beforeBarcodes: Int, afterFigures: Int, afterBarcodes: Int) {
-        reconstruct.debug(
+        reconstruct.notice(
             "dedup figures \(beforeFigures)→\(afterFigures) barcodes \(beforeBarcodes)→\(afterBarcodes)"
         )
     }
@@ -65,20 +65,20 @@ enum ZhixiaLog {
 
     /// 碰撞消解：本轮让位块数与总平移量（平移量为归一化页高单位，一轮消解一条）。
     static func layoutYield(count: Int, totalShift: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout yield count=\(count) totalShift=\(totalShift, format: .fixed(precision: 4), privacy: .public)"
         )
     }
 
     /// 跨栏宽行拆分：本页拆分的块数。
     static func layoutSplit(count: Int) {
-        reconstruct.debug("layout split count=\(count)")
+        reconstruct.notice("layout split count=\(count)")
     }
 
     /// 溢出阶梯①缩放：块内文字按实测行高放不下，字号缩到能容纳为止
     /// （estimated ≤ available 后才走这条；estimated/available 为归一化页高）。
     static func layoutOverflowShrink(blockID: UUID, estimated: Double, available: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout overflowShrink block=\(blockID.uuidString, privacy: .public) estimated=\(estimated, format: .fixed(precision: 4), privacy: .public) available=\(available, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -86,7 +86,7 @@ enum ZhixiaLog {
     /// 溢出阶梯②扩展：缩放后仍溢出，bbox 向下扩展（expandBy = Δ 高度，归一化页高；
     /// 以页尾空白间隙封顶）。
     static func layoutOverflowExpand(blockID: UUID, expandBy: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout overflowExpand block=\(blockID.uuidString, privacy: .public) expandBy=\(expandBy, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -94,7 +94,7 @@ enum ZhixiaLog {
     /// 溢出阶梯③极端：扩展到空白上限仍放不下 —— 文字永不截断的保底路径
     /// （estimated/available 为归一化页高）。
     static func layoutOverflowExtreme(blockID: UUID, estimated: Double, available: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout overflowExtreme block=\(blockID.uuidString, privacy: .public) estimated=\(estimated, format: .fixed(precision: 4), privacy: .public) available=\(available, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -102,7 +102,7 @@ enum ZhixiaLog {
     /// 表格行高策略升级：exact → atLeast（某行内容放不下，整表行高转增长；
     /// triggeredByRow = 触发升级的行下标）。
     static func layoutTableGrowthUpgrade(blockID: UUID, triggeredByRow: Int) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout tableGrowthUpgrade block=\(blockID.uuidString, privacy: .public) row=\(triggeredByRow)"
         )
     }
@@ -110,7 +110,7 @@ enum ZhixiaLog {
     /// figure 收缩：与 table 相让时 figure 被裁掉的高度（归一化页高；
     /// 收缩 = 裁剪保原像素比例，不缩放图像）。
     static func layoutFigureShrink(figureID: UUID, clipHeight: Double) {
-        reconstruct.debug(
+        reconstruct.notice(
             "layout figureShrink figure=\(figureID.uuidString, privacy: .public) clipHeight=\(clipHeight, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -124,7 +124,7 @@ enum ZhixiaLog {
 
     /// 取景几何：视频流帧与照片输出的竖屏宽高比（运行时实测，不硬编码）。
     static func geometry(video: Double, photo: Double) {
-        capture.debug(
+        capture.notice(
             "geometry videoAspect=\(video, format: .fixed(precision: 4), privacy: .public) photoAspect=\(photo, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -141,25 +141,25 @@ enum ZhixiaLog {
         let scaleY = Double(analytic.scaleY)
         let offsetX = Double(analytic.offsetX)
         let offsetY = Double(analytic.offsetY)
-        capture.debug(
+        capture.notice(
             "overlayProbeAnalytic viewSize=\(width, format: .fixed(precision: 1), privacy: .public)x\(height, format: .fixed(precision: 1), privacy: .public) scaleX=\(scaleX, format: .fixed(precision: 2), privacy: .public) scaleY=\(scaleY, format: .fixed(precision: 2), privacy: .public) offsetX=\(offsetX, format: .fixed(precision: 2), privacy: .public) offsetY=\(offsetY, format: .fixed(precision: 2), privacy: .public)"
         )
         guard let probe else {
-            capture.debug("overlayProbeDelta probe=unavailable")
+            capture.notice("overlayProbeDelta probe=unavailable")
             return
         }
         let dScaleX = Double(analytic.scaleX - probe.scaleX)
         let dScaleY = Double(analytic.scaleY - probe.scaleY)
         let dOffsetX = Double(analytic.offsetX - probe.offsetX)
         let dOffsetY = Double(analytic.offsetY - probe.offsetY)
-        capture.debug(
+        capture.notice(
             "overlayProbeDelta dScaleX=\(dScaleX, format: .fixed(precision: 2), privacy: .public) dScaleY=\(dScaleY, format: .fixed(precision: 2), privacy: .public) dOffsetX=\(dOffsetX, format: .fixed(precision: 2), privacy: .public) dOffsetY=\(dOffsetY, format: .fixed(precision: 2), privacy: .public)"
         )
     }
 
     /// 候选择优：两级面积兜底触发层级（1 = 常规 0.96 上限；2 = 放宽 ≤1.0 兜底）。
     static func detectionTier(still: Bool, tier: Int, candidates: Int, selectedArea: Double) {
-        capture.debug(
+        capture.notice(
             "detectionTier path=\(still ? "still" : "live", privacy: .public) tier=\(tier) candidates=\(candidates) selectedArea=\(selectedArea, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -175,14 +175,14 @@ enum ZhixiaLog {
     /// 文档分割双落空），`candidates` = 放宽档命中候选数（未触发恒 0）。
     /// still 路径不记录（首跑已是放宽参数，无第三级概念）。
     static func relaxedLiveProbe(triggered: Bool, candidates: Int) {
-        capture.debug(
+        capture.notice(
             "relaxedLiveProbe triggered=\(triggered, privacy: .public) candidates=\(candidates)"
         )
     }
 
     /// 可疑锁定判定：自动快门被抑制时的原因数值（面积 / 最小边距）。
     static func suspiciousLock(area: Double, minMargin: Double) {
-        capture.debug(
+        capture.notice(
             "suspiciousLock area=\(area, format: .fixed(precision: 4), privacy: .public) minMargin=\(minMargin, format: .fixed(precision: 4), privacy: .public) autoCapture=suppressed"
         )
     }
@@ -198,17 +198,33 @@ enum ZhixiaLog {
     /// `iou` 为 -1 表示无可度量对（呈现框或静帧框缺失，门禁走了直通分支）。
     /// 文档模式每次快门一条，摊开书/折页书验收时与成片对照读。
     static func cropGate(displayedArea: Double, stillArea: Double, iou: Double, acceptedStill: Bool) {
-        capture.debug(
+        capture.notice(
             "cropGate displayedArea=\(displayedArea, format: .fixed(precision: 4), privacy: .public) stillArea=\(stillArea, format: .fixed(precision: 4), privacy: .public) iou=\(iou, format: .fixed(precision: 4), privacy: .public) acceptedStill=\(acceptedStill, privacy: .public)"
         )
     }
 
-    /// 候选粘滞改写逐帧择优：粘滞候选替换当前最优时的相似度 IoU
-    /// （新选择与被替换选择的 bbox IoU——摊开书双候选**同池**振荡场景的
-    /// 止跳证据；v2 起仅同池改写分支发射，hold/逃逸走下方两通道）。
-    static func stickyOverride(iou: Double) {
-        capture.debug(
-            "stickyOverride iou=\(iou, format: .fixed(precision: 4), privacy: .public)"
+    /// 整理页拍后增强诊断（spec/scan-enhance FR-001/002）：每页一行。
+    /// `iou` = 静帧候选 vs 拍摄框（-1 = 无静帧候选）；`acceptedStill` =
+    /// 身份锚定是否采纳；`aspect` = 四边形像素宽高比；`spineU/prominence/
+    /// continuity` = 书脊谷（-1/0/0 = 未找到）；`splitApplied` = 是否拆为右页。
+    static func refineStage(
+        capturedArea: Double, stillArea: Double, iou: Double, acceptedStill: Bool,
+        aspect: Double, reason: String, trimU: Double, trimDepth: Double,
+        spineU: Double, prominence: Double, continuity: Double, splitApplied: Bool
+    ) {
+        capture.notice(
+            "refineStage capturedArea=\(capturedArea, format: .fixed(precision: 4), privacy: .public) stillArea=\(stillArea, format: .fixed(precision: 4), privacy: .public) iou=\(iou, format: .fixed(precision: 4), privacy: .public) acceptedStill=\(acceptedStill, privacy: .public) aspect=\(aspect, format: .fixed(precision: 3), privacy: .public) reason=\(reason, privacy: .public) trimU=\(trimU, format: .fixed(precision: 4), privacy: .public) trimDepth=\(trimDepth, format: .fixed(precision: 3), privacy: .public) spineU=\(spineU, format: .fixed(precision: 4), privacy: .public) prominence=\(prominence, format: .fixed(precision: 3), privacy: .public) continuity=\(continuity, format: .fixed(precision: 3), privacy: .public) splitApplied=\(splitApplied, privacy: .public)"
+        )
+    }
+
+    /// 候选粘滞改写逐帧择优（spec/frame-truth FR-008 增记面积）：
+    /// `iou` = 改选框与当帧原始择优的 bbox IoU；`heldArea` = 改写后的框面积；
+    /// `selectionArea` = 被拦截的原始择优面积。判读重点从 iou 移到面积比：
+    /// 改写框面积 ≪ 择优面积（如 0.08 vs 0.45）＝ 小候选替换页面（病态）；
+    /// 近似同档（Case B 右页/整书外轮廓）＝ 正常止跳。
+    static func stickyOverride(iou: Double, heldArea: Double, selectionArea: Double) {
+        capture.notice(
+            "stickyOverride iou=\(iou, format: .fixed(precision: 4), privacy: .public) heldArea=\(heldArea, format: .fixed(precision: 4), privacy: .public) selectionArea=\(selectionArea, format: .fixed(precision: 4), privacy: .public)"
         )
     }
 
@@ -221,7 +237,7 @@ enum ZhixiaLog {
     /// = v2 未生效（对照 CandidateStickyV2Tests 是否绿）。上轮复测
     /// stickyOverride 整段缺失即 miss 路径零遥测所致，本通道补缺。
     static func stickyHold(missCount: Int, heldArea: Double, selectionArea: Double) {
-        capture.debug(
+        capture.notice(
             "stickyHold miss=\(missCount) heldArea=\(heldArea, format: .fixed(precision: 4), privacy: .public) selectionArea=\(selectionArea, format: .fixed(precision: 4), privacy: .public)"
         )
     }
@@ -233,8 +249,61 @@ enum ZhixiaLog {
     /// 判读：取景期短暂失焦/遮挡（≥3 连续零候选帧）会产生一条
     /// afterMisses=3 属设计内间隙逃逸，连发或 afterMisses≠3 才是异常。
     static func stickyEscape(afterMisses: Int) {
-        capture.debug(
+        capture.notice(
             "stickyEscape afterMisses=\(afterMisses)"
+        )
+    }
+
+    /// 逐边吸附诊断（spec/frame-truth FR-004/008）：每次 EdgeSnapper.snap 每边
+    /// 一行。`g0` = 边当前位置的对称梯度（双线性）；`outward`/`inward` = 两相
+    /// 最强峰；`shift` = 实际位移（正=外推，负=内拉，0=不动）。
+    /// 判读：左缘 `g0` 强且 shift=0 = s=0 守卫阻止了折脊外拉（预期新行为）；
+    /// 左缘 shift 为负 = 内拉修正；shifts 全 0 = 该帧无有效梯度。
+    static func snapEdge(edge: Int, g0: Double, outward: Double, inward: Double, shift: Double) {
+        capture.notice(
+            "snapEdge edge=\(edge) g0=\(g0, format: .fixed(precision: 3), privacy: .public) outward=\(outward, format: .fixed(precision: 3), privacy: .public) inward=\(inward, format: .fixed(precision: 3), privacy: .public) shift=\(shift, format: .fixed(precision: 4), privacy: .public)"
+        )
+    }
+
+    /// 锁定吸附（spec/frame-truth FR-005：精修上屏）：锁定瞬间以当前帧检测为
+    /// 种子做一次有界吸附，结果冻结为呈现框。记录修正前后面积与四角，
+    /// 真机判读「锁定时的可见一跳」与「成片四角 = 冻结框四角」。
+    static func snapOnLock(seedArea: Double, postArea: Double, seed: [Double], post: [Double]) {
+        let seedCorners = seed.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        let postCorners = post.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        capture.notice(
+            "snapOnLock seedArea=\(seedArea, format: .fixed(precision: 4), privacy: .public) postArea=\(postArea, format: .fixed(precision: 4), privacy: .public) seed=[\(seedCorners, privacy: .public)] post=[\(postCorners, privacy: .public)]"
+        )
+    }
+
+    /// 快门四角快照（spec/frame-truth FR-008）：`tag` = "displayed" / "still"；
+    /// 四个角按 TL,TR,BR,BL 顺序展开（照片空间归一化坐标）。
+    static func cropQuad(tag: String, quad: Quad?) {
+        guard let quad else {
+            capture.notice("cropQuad tag=\(tag, privacy: .public) quad=nil")
+            return
+        }
+        let values = [quad.topLeft.x, quad.topLeft.y,
+                      quad.topRight.x, quad.topRight.y,
+                      quad.bottomRight.x, quad.bottomRight.y,
+                      quad.bottomLeft.x, quad.bottomLeft.y]
+            .map { String(format: "%.4f", $0) }
+            .joined(separator: ",")
+        capture.notice("cropQuad tag=\(tag, privacy: .public) corners=[\(values, privacy: .public)]")
+    }
+
+    /// 候选来源遥测（spec/frame-truth FR-008）：live 每帧一行——上一周期的
+    /// 两轮复盘最大的盲区就是「池里有没有页面、门控是否触发」只能靠猜。
+    /// 面积均为视频 FOV 归一化空间；`preStickySelectionArea` 是粘滞前择优。
+    static func candidateProvenance(
+        strictCount: Int, strictMaxArea: Double,
+        segArea: Double, relaxedCount: Int, relaxedMaxArea: Double,
+        viableCount: Int, viableMaxArea: Double,
+        gateSeg: Bool, gateRelaxed: Bool,
+        preStickySelectionArea: Double, disposition: String, heldArea: Double
+    ) {
+        capture.notice(
+            "candidateProvenance strictCount=\(strictCount, privacy: .public) strictMaxArea=\(strictMaxArea, format: .fixed(precision: 4), privacy: .public) segArea=\(segArea, format: .fixed(precision: 4), privacy: .public) relaxedCount=\(relaxedCount, privacy: .public) relaxedMaxArea=\(relaxedMaxArea, format: .fixed(precision: 4), privacy: .public) viableCount=\(viableCount, privacy: .public) viableMaxArea=\(viableMaxArea, format: .fixed(precision: 4), privacy: .public) gateSeg=\(gateSeg, privacy: .public) gateRelaxed=\(gateRelaxed, privacy: .public) preStickySelectionArea=\(preStickySelectionArea, format: .fixed(precision: 4), privacy: .public) disposition=\(disposition, privacy: .public) heldArea=\(heldArea, format: .fixed(precision: 4), privacy: .public)"
         )
     }
 
@@ -273,7 +342,7 @@ enum ZhixiaLog {
     /// 页标识用 pageID（`DocumentParsing` 协议签名冻结，解析层拿不到页索引；
     /// 与 `reconstructBaseImage` 的像素尺寸行按 pageID 对账）。
     static func reconstructPath(pageID: UUID, path: ReconstructPath, reason: ReconstructPathReason) {
-        reconstruct.debug(
+        reconstruct.notice(
             "reconstructPath page=\(pageID.uuidString, privacy: .public) path=\(path.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
         )
     }
@@ -290,7 +359,7 @@ enum ZhixiaLog {
         edgeBand: Int,
         likelyMissed: Int
     ) {
-        reconstruct.debug(
+        reconstruct.notice(
             "textSentinel page=\(page) gaps=\(gaps) figureOverlap=\(figureOverlap) structureSwallow=\(structureSwallow) edgeBand=\(edgeBand) likelyMissed=\(likelyMissed)"
         )
     }
@@ -300,7 +369,7 @@ enum ZhixiaLog {
     /// rescued > 0 = 有行的文字不在结构输出里 —— 静默丢字被拦截的第一手计数，
     /// 真机排查丢字时先看这条。
     static func reconstructContainment(removed: Int, rescued: Int) {
-        reconstruct.debug(
+        reconstruct.notice(
             "containment removed=\(removed) rescued=\(rescued, privacy: .public)"
         )
     }

@@ -59,6 +59,17 @@ struct CandidateSticky: Sendable {
     private(set) var missCount: Int
     /// 最近一次 `apply` 的判定去向（nil = 尚未判定过）。
     private(set) var lastDisposition: Disposition?
+    /// 起锚确认候选与连续相似帧数（spec/frame-truth FR-003：
+    /// `reanchorConfirmFrames > 1` 时生效——escape/初锁后需连续 K 帧相似择优
+    /// 才起锚，消灭"escape 帧恰好是带子→单帧抽签"；默认 1 为 v1/v2 直通语义）。
+    private var pendingPick: Quad?
+    private var pendingCount: Int = 0
+    /// 上次 `apply` 时刻（spec/frame-truth FR-003 生命周期）：帧间隔 > 1s
+    /// （会话边界/停顿）自动清锚，避免跨会话继承旧锚点。同步调用（单测）
+    /// 间隔远小于 1s，不受影响。
+    private var lastApplyAt: Date?
+    /// 帧间隔超过该值视为新会话/停顿，自动清锚（秒）。
+    static let anchorStaleInterval: TimeInterval = 1.0
 
     init() {
         lastPick = nil
@@ -74,6 +85,8 @@ struct CandidateSticky: Sendable {
         lastPick = nil
         lastTier = 0
         missCount = 0
+        pendingPick = nil
+        pendingCount = 0
         lastDisposition = nil
     }
 
@@ -108,8 +121,19 @@ struct CandidateSticky: Sendable {
         pool: [Quad],
         similarityThreshold: Double = CandidateSticky.defaultSimilarityThreshold,
         missLimit: Int = CandidateSticky.defaultMissLimit,
-        holdThroughMiss: Bool = false
+        holdThroughMiss: Bool = false,
+        anchorMinArea: Double = 0,
+        reanchorConfirmFrames: Int = 1,
+        followMinAreaRatio: Double = 0
     ) -> DetectionStrategy.Selection? {
+        // ⓪ 生命周期（spec/frame-truth FR-003）：帧间隔 > 1s = 会话边界/停顿，
+        // 自动清锚——生产代码无（也不能加，铁律 1）协议级 reset，跨会话旧
+        // 锚点不得继承。同步单测调用间隔远小于 1s，零影响。
+        let now = Date()
+        if let lastApplyAt, now.timeIntervalSince(lastApplyAt) > Self.anchorStaleInterval {
+            reset()
+        }
+        lastApplyAt = now
         // ① 检测间隙：计 miss，达限清空锚点。逃逸仅在锚点真实放弃的这一帧
         // 判定（`lastPick != nil` 守卫）——持续间隙下锚点已弃，后续 nil 帧
         // 回落 gapMiss：否则 `stickyEscape` 逐帧重发且 afterMisses 无界爬升，
@@ -125,19 +149,49 @@ struct CandidateSticky: Sendable {
             }
             return nil
         }
-        // ② 无锚点：直通起锚（初锁/逃逸后）。
+        // ② 无锚点：先过锚点准入与起锚确认，再直通起锚（初锁/逃逸后）。
         guard let anchor = lastPick else {
+            // 锚点准入（FR-003）：亚页面候选可显示（透传），但不得成为锚点——
+            // 文字带既不保护自己、也不进入分支④的续命循环。
+            if selection.quad.area < anchorMinArea {
+                lastDisposition = .passthrough
+                return selection
+            }
+            // 起锚确认（FR-003）：连续 K 帧相似择优才起锚（默认 1 = 立即起锚，
+            // v1/v2 语义）。未达标期间逐帧透传，显示跟随检测但不占用锚点。
+            if reanchorConfirmFrames > 1 {
+                if let pending = pendingPick,
+                   selection.quad.iou(with: pending) >= similarityThreshold {
+                    pendingCount += 1
+                } else {
+                    pendingPick = selection.quad
+                    pendingCount = 1
+                }
+                if pendingCount < reanchorConfirmFrames {
+                    lastDisposition = .passthrough
+                    return selection
+                }
+            }
             lastPick = selection.quad
             lastTier = selection.tier
             missCount = 0
+            pendingPick = nil
+            pendingCount = 0
             lastDisposition = .anchored
             return selection
         }
         // ③ 相似跟随：锚点随小幅漂移更新，miss 清零。
-        if selection.quad.iou(with: anchor) >= similarityThreshold {
+        // 面积比守卫（FR-003，默认 0 = 关闭）：分支③允许 IoU≥阈值的候选逐帧
+        // 收缩至多 30% 面积——包含链棘轮会把锚点从 0.45 一路缩到 0.09
+        // （0.45×0.7^n）。面积比 < ratio 的"相似"候选不跟随，交④/⑤处理。
+        let followsArea = followMinAreaRatio <= 0
+            || Self.areaRatio(selection.quad.area, anchor.area) >= followMinAreaRatio
+        if selection.quad.iou(with: anchor) >= similarityThreshold, followsArea {
             lastPick = selection.quad
             lastTier = selection.tier
             missCount = 0
+            pendingPick = nil
+            pendingCount = 0
             lastDisposition = .follow
             return selection
         }
@@ -167,5 +221,11 @@ struct CandidateSticky: Sendable {
         }
         lastDisposition = .passthrough
         return selection
+    }
+
+    /// 两框面积比（小 / 大，∈ (0, 1]）；任一非正时返回 0（守卫按拒绝处理）。
+    private static func areaRatio(_ lhs: Double, _ rhs: Double) -> Double {
+        guard lhs > 0, rhs > 0 else { return 0 }
+        return min(lhs, rhs) / max(lhs, rhs)
     }
 }

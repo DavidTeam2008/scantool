@@ -5,9 +5,10 @@
 > AI agent 请从 [`AGENTS.md`](../AGENTS.md) 进入（铁律与命令速查）；人读细节下钻
 > [`09 接手手册`](09-project-handbook.md)。
 >
-> 更新：2026-10-17 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
+> 更新：2026-10-18 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
 > （wysiwyg-crop + wps-parity-layout 两周期产物入库点）+ case-b-sticky-v2 周期
-> 改动（§2.2 修复，待入库）
+> 改动（§2.2 修复，待入库）+ folded-page-capture 周期改动（§2.1 第一轮定案与修复）
+> + frame-truth 周期改动（§2.1 第二轮：框真相与冻结直裁，待入库）
 
 ---
 
@@ -23,10 +24,10 @@
 | bundle id | `com.david.Zhixia` |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构分层 | App → Features（SwiftUI MVVM）→ Domain（纯函数）→ Services（actor 副作用），依赖只向下 |
-| 代码规模 | 148 个 Swift 文件（主工程 107 / 测试 41）/ 主工程约 14.5k 行 |
-| 质量现状 | **368 用例 = 367 passed + 1 expected failure + 0 failed**（Swift Testing，39 个含用例文件 + 2 个纯 fixture；基线只增不减） |
+| 代码规模 | 150 个 Swift 文件（主工程 107 / 测试 43）/ 主工程约 14.5k 行 |
+| 质量现状 | **386 用例 = 385 passed + 1 expected failure + 0 failed**（Swift Testing，41 个含用例文件 + 2 个纯 fixture；基线只增不减） |
 
-### 1.1 SDD 周期一览（9 个已交付 + 1 个进行中）
+### 1.1 SDD 周期一览（9 个已交付 + 3 个进行中）
 
 | # | 周期 | 主题 | 关键交付 | 基线 | 验收 |
 |---|---|---|---|---|---|
@@ -39,27 +40,62 @@
 | 7 | `wysiwyg-crop` | 所见即所得 | R4 快门裁切门禁 `CropConsistencyGate`、R5 候选粘滞 `CandidateSticky` | 302→317 | 同名目录（⚠️ 真机复测未达效，见 §2） |
 | 8 | `wps-parity-layout` | 默认导出对标 WPS | 流式档默认 / v1 假表聚类器退役 / 丢字哨兵 `textSentinel` / `FlowParagraphSplitter` 段落收敛 / 漫画条内联 / `reconstructPath` 通路日志 / 金标准端到端套件 | 317→357 | 同名目录（真机取证待做，见 §2.4） |
 | 9 | `agent-handover` | 交接与项目 Agent 化 | 复测结论落盘、AGENTS.md + Makefile、全量文档同步、本文 | 357 不变 | `spec/agent-handover/` |
-| 10 | `case-b-sticky-v2`（进行中） | Case B 粘滞 v2 hold-through-miss | 池交替根因代码级定案、`CandidateSticky` v2 参数门控、`stickyHold`/`stickyEscape` 遥测补缺、存在性交替单测 ×11 | 357→368 | `spec/case-b-sticky-v2/`（真机复测待做） |
+| 10 | `case-b-sticky-v2`（进行中） | Case B 粘滞 v2 hold-through-miss | 池交替根因代码级定案、`CandidateSticky` v2 参数门控、`stickyHold`/`stickyEscape` 遥测补缺、存在性交替单测 ×11 | 357→368 | `spec/case-b-sticky-v2/`（真机复测并入周期 11） |
+| 11 | `folded-page-capture`（进行中） | 折页书四痛点：框抖 / 边框捕获 / 自动拍 / 折痕入片 | 四链路根因定案（regime c 近摄交替被相似跟随吞并等）、autoCapture 默认关（零迁移）、live 严格档放宽（0.15/26°）、粘滞调用点 0.70/5 止棘轮、`EdgeSnapper` 双向两阶段内拉、`gateRejectedStill` 贯穿 WYSIWYG | 368→377 | `spec/folded-page-capture/`（真机验收已被周期 12 取代） |
+| 12 | `frame-truth`（进行中） | 框真相：框锁局部带 / 成片越界 | 逐帧遥测定案（门控一票否决 + 粘滞④改选 + 逃逸抽签）、`viablePool` 单一真源、页面先验门控 0.25、锚点治理（0.12/3帧/0.8）、EdgeSnapper s=0 守卫（双线性）、**锁定冻结 + 精修上屏 + 成片=呈现框**、无效框承诺、来源/四角遥测 | 377→386 | `spec/frame-truth/`（真机验收待做，合并 Case B 复测 + L1 取证） |
 
 ---
 
 ## 2. 当前卡点（诚实清单，按优先级）
 
-### 2.1 🔴 P0 · Case A：折页书成片仍含折起部分（R4 修复未达效）
+### 2.1 🔴 P0 · Case A：折页书（两轮定案；frame-truth 冻结直裁已交付，真机验收待做）
+
+> **第二轮（2026-10-17 真机复测 → `spec/frame-truth`）**：第一轮修复后「框不抖 ✅、
+> 不自动拍 ✅」，但暴露两个新症状：①框只捕获右页一部分、调角度也不恢复；②成片比
+> 实际区域大、且露出取景框外内容（用户确认四周/左侧折痕边露背景）。逐帧遥测
+> （2082 帧）定案四条机理：**a. 门控一票否决**——任一 area>0.08 的严格矩形（文字带
+> 0.08–0.093 完全能通过）让文档分割与放宽档**同时不运行**，页面候选不是检不出而是
+> 「从未被请求」（页面档 0.45–0.48 连续 18 秒、still 0.4056 为证）；**b. 粘滞放大器**
+> ——分支④从**未过滤原始池**改选（0.056–0.077 低于 select.minArea，只能来自这里），
+> 21:55:28–31 期间 select 几乎每帧选中页面（0.34–0.56）却被带子 override（505 条、
+> IoU 0.00–0.15）；escape 后单帧起锚（抽签）；hold 保护错锚点——「不抖」部分是
+> 「稳定地错」；**c. 呈现矛盾**——面积 0.06 时引导 `.closer` 与白色锁定框/震动同屏，
+> 自动拍门禁不看引导；**d. 快门隐藏换框**——still 是无身份锚的全局重选（包含降权
+> 使「右页+折痕」外框胜出），且吸附只在 still 发生、外向相从不测 s=0（已贴边的检出
+> 被继续外推 δ~1–2%），门禁只有 bbox IoU 无法分辨合法精修与越界。
+> **修复（frame-truth，386 全绿）**：`viablePool` 单一真源；页面先验门控 0.25；
+> 锚点治理（anchorMinArea 0.12 / 起锚 3 帧确认 / 跟随面积比 0.8 / 1s 清锚）；
+> EdgeSnapper s=0 守卫（双线性 G0）；**锁定瞬间吸附上屏并冻结、成片=呈现框**
+> （快门后不重检）；无效框（closer）不画锁定框/不自动拍/手动拍走搜索态；
+> `candidateProvenance`/`cropQuad`/`snapEdge`/`snapOnLock` 遥测。验收主清单：
+> `spec/frame-truth/device-acceptance.md`（T011 待做）。
+
+### 2.1.1 第一轮记录（folded-page-capture）
 
 - **现象**：折页书翻中间、左侧折起拍右页，成片包含折起部分（2026-09-26 复测用户逐字：
-  「case A，还是会有折起部分」）。
-- **根因**：**未定案**。两个假设：**H1 显示侧**——呈现框本身锁定了含折起的整书外轮廓，
-  门禁按契约工作、错在锁定对象；**H2 门禁侧**——快门静帧重检误纳 / 路径未命中。
-  R4 修复（裁切门禁「呈现框 = 裁切基准」，IoU ≥ 0.70 才允许静帧精修胜出）在单测级
-  全绿，但真机验收标准下未达效。
-- **证据**：`spec/wysiwyg-crop/spec.md`（FR/SC 定义）· `spec/agent-handover/device-retest-20260926.md`
-  （复测逐字记录与归因）· [09 §6.11/§6.13](09-project-handbook.md)。
-- **复测状态**：2026-09-26 新包真机复测 ✗（与 2026-09-21 验收 ✗ 同因复发）；
-  **`cropGate` 日志从未取得**——两轮修复都在无定案状态下动刀，这是共同短板。
-- **建议方向**：真机实时抓 `cropGate` 日志定案 H1/H2（步骤：
-  `spec/wysiwyg-crop/device-acceptance.md` §0）；若 H1 成立 → 修检测候选择优/锁定策略
-  （门禁契约不动）；若 H2 成立 → 修门禁静帧纳入条件。**取证前不要再动刀。**
+  「case A，还是会有折起部分」；2026-10-17 最新反馈逐字：「取景框一直在抖动，没有捕获到
+  页面边框，会自动拍，拍出来的效果左边折痕还是有一点，其它地方沿着边框裁剪的」）。
+- **根因（2026-10-17 四链路合成定案，understand-folded-book 工作流 wf_ff79605d-f9e）**：
+  四条独立机理——① **抖动**：近摄制式右页/整书 bbox IoU ∈ [0.60, 0.70)，粘滞分支③
+  「相似跟随」（阈值 0.60）把存在性交替吞成跟随，锚点逐帧棘轮、areaJump 反复重置、
+  永不锁定（regime c，case-b-sticky-v2 未覆盖的制式）；② **边框捕获失败**：live 严格
+  矩形档（minSize 0.25/容差 20°）对折页曲面页结构性过严，正确候选不在池中；
+  ③ **自动拍**：整书 quad（面积 0.85~0.94）绕过 `isSuspiciousForAutoCapture`，6 帧
+  确认窗后自动拍出废片；④ **折痕入片**：`EdgeSnapper` 仅外向搜索，检出左缘越过
+  折痕带时真实边缘在内侧够不着；外加 WYSIWYG 穿透：门禁「呈现框优先」决策在整理页
+  被 `refineQuads` 无条件 still 重检改写。原 H1/H2 之争收敛为 H1 家族（显示侧 +
+  检测侧），门禁契约本身未被判错。
+- **修复（folded-page-capture 周期，已交付）**：autoCapture 默认关（零迁移翻转 +
+  可疑提示门控）；live 严格档放宽 minSize 0.15/容差 26°；粘滞调用点
+  `similarityThreshold: 0.70, missLimit: 5`（默认常量不动）止近摄棘轮；
+  `EdgeSnapper` 双向两阶段（外向优先，内向相 ≤0.5×maxShift @ 阈值 0.12）；
+  `PageDraft.gateRejectedStill` 随草稿落盘、整理页 refine 跳过置位页。全量 377 全绿。
+- **证据**：`spec/folded-page-capture/`（四件套：四痛点机理图 / D1~D7 决策 /
+  验收清单）；`spec/wysiwyg-crop/spec.md` · `spec/agent-handover/device-retest-20260926.md`。
+- **复测状态**：代码与单测交付（2026-10-17）；**真机验收待做**——按
+  `spec/folded-page-capture/device-acceptance.md`：折页书四痛点复测（§1）+ 默认不自动拍
+  与设置保留（§2）+ 平整文档防回归（§3），同会话合并 Case B 复测与 `reconstructPath`
+  L1 取证（§4），日志判读口径见该文。
 
 ### 2.2 🟠 P0 · Case B：摊开书实线框持续跳动、手动拍含左页大半（粘滞 v2 已交付，真机复测待做）
 
@@ -82,10 +118,11 @@
   集成锁定与对照组机理钉住）。全量 367 全绿。
 - **证据**：`spec/case-b-sticky-v2/`（四件套：根因证据链 / D1~D5 决策 /
   复测清单）；`ZhixiaTests/CandidateStickyV2Tests.swift`。
-- **复测状态**：代码与单测交付（2026-10-17）；**真机复测待做**——按
-  `spec/case-b-sticky-v2/device-acceptance.md`：≤5s 稳定不跳可锁定 / 手动拍
-  成片=呈现框 / `stickyHold`+`cropGate` 日志归档，同会话顺带 `reconstructPath`
-  （§2.4 L1 取证）。
+- **复测状态**：代码与单测交付（2026-10-17）；**真机复测待做，已并入
+  frame-truth 同一真机会话**——按 `spec/case-b-sticky-v2/device-acceptance.md`：
+  ≤5s 稳定不跳可锁定 / 手动拍成片=呈现框 / `stickyHold`+`cropGate` 日志归档
+  （`stickyEscape` 口径随本周期 missLimit 5 更新为 afterMisses=5），同会话顺带
+  `reconstructPath`（§2.4 L1 取证）。
 
 ### 2.3 🟠 P1 · WPS 对标剩余差距（总体观感未达）
 
@@ -130,7 +167,7 @@
 
 | 阶段 | 内容 | 前置 |
 |---|---|---|
-| **P0 裁剪质量** | Case B：✅ 池交替代码级定案 + 粘滞 v2 已交付（case-b-sticky-v2，368 全绿）→ **真机复测**（`spec/case-b-sticky-v2/device-acceptance.md`，一趟抄齐 `stickyHold`/`stickyEscape`/`cropGate`）；Case A：真机 `cropGate` 取证定案 H1/H2（可与 Case B 复测同会话）→ 若 H1 修候选择优/锁定策略（门禁契约不动）→ 真机复测 | Case B 修复已入库待复测；Case A 步骤 `spec/wysiwyg-crop/device-acceptance.md` §0 |
+| **P0 裁剪质量** | Case A：✅ 两轮定案 + frame-truth 已交付（386 全绿：候选池单一真源 / 页面先验门控 / 锚点治理 / s=0 守卫 / **锁定冻结+成片=呈现框** / 无效框承诺）→ **真机验收**（`spec/frame-truth/device-acceptance.md`）；Case B：✅ 粘滞 v2 已交付 → **真机复测并入同一会话**（一趟抄齐 `stickyHold`/`stickyEscape`/`candidateProvenance`/`snapOnLock`） | 三周期修复均已交付待入库；验收主清单 `spec/frame-truth/device-acceptance.md`（含合并项 §4） |
 | **P1 真机取证与对标收尾** | L1 通路取证（`reconstructPath`，可与 P0 同一会话）；iOS 26 表格真机验证；阴影场景 OCR 预处理档验证；条码真机验证（模拟器恒 0）；取证后评审「常驻框范式」周期 2（wps-parity-capture，需 WPS 取景录屏） | P0 日志会话顺带完成取证 |
 | **P2 老系统兜底与工程债** | 表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter；导出层表格样式（`w:tblPr`/表头加粗/数值右对齐）与 `gridSpan`/`vMerge`；Library/Review/SwiftData 工程债 | P0/P1 收尾后 |
 | **P3 云通路** | 接通 TextIn（低置信 block 走 `ReconstructRepairing`，禁止整页 LLM 重打表数字）；手写 / 勾选识别 | **独立周期评审**——纯离线是铁律，云通路须单独立项（含隐私披露与用户确认 UX） |
@@ -192,7 +229,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 
 ## 5. 证据索引
 
-### 5.1 spec/ 周期工件（9 个已交付周期 + 当前周期）
+### 5.1 spec/ 周期工件（9 个已交付周期 + 3 个进行中周期）
 
 | 周期 | 四件套位置 | 一句话 |
 |---|---|---|
@@ -205,7 +242,9 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | wysiwyg-crop | `spec/wysiwyg-crop/` | 裁切门禁 + 候选粘滞（**§0 = 日志取证步骤，下轮必读**） |
 | wps-parity-layout | `spec/wps-parity-layout/` | 默认导出对标 WPS（**§A = L1 取证步骤**） |
 | agent-handover | `spec/agent-handover/` | 复测落盘（`device-retest-20260926.md`）+ Agent 化 |
-| case-b-sticky-v2 | `spec/case-b-sticky-v2/` | Case B 池交替根因定案 + 粘滞 v2 hold-through-miss（真机复测待做） |
+| case-b-sticky-v2 | `spec/case-b-sticky-v2/` | Case B 池交替根因定案 + 粘滞 v2 hold-through-miss（真机复测并入下行周期） |
+| folded-page-capture | `spec/folded-page-capture/` | 第一轮：默认不自动拍 / 检测放宽 / 粘滞 0.70·5 / 双向吸附（验收单已被 frame-truth 取代） |
+| frame-truth | `spec/frame-truth/` | 第二轮框真相：候选供给 / 锚点治理 / s=0 守卫 / 冻结直裁 / 无效框承诺（**真机验收单 = 下一趟真机会话主清单**） |
 
 ### 5.2 docs/ 索引
 
@@ -225,6 +264,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | [11](11-wps-parity-research.md) | WPS 对标调研：docx 取证 / 差距分析（L1~L7 / C1~C4）/ 周期规划 / §7 复测闭环 |
 | [12](12-handover.md) | 本文 |
 | [13](13-mcp-quickref.md) | MCP 使用速查：6 server 分工 / 配置落点 / 场景对照 / 项目铁律叠加 |
+| [14](14-project-summary-and-roadmap.md) | **项目全面总结 + 完整优化路线图**（2026-10-21：取景稳定性 / 拍后裁切校准 / 竞品对标 / 工程债） |
 
 ### 5.3 提交锚点
 

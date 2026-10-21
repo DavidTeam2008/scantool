@@ -16,7 +16,7 @@ struct PageDraft: Identifiable, Equatable, Sendable, Hashable {
         enhancement: Enhancement,
         rotationTurns: Int = 0,
         userAdjustedQuad: Bool = false,
-        userAdjustedFilter: Bool = false
+        userAdjustedFilter: Bool = false,
     ) {
         self.id = id
         self.sessionID = sessionID

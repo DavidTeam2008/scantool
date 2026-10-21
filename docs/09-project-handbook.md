@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-10-17 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 368 用例 = 367 passed + 1 expected failure + 0 failed（基线 357 → 368，case-b-sticky-v2）· 当前最大卡点：取景 WYSIWYG 真机复测未达效（§6.13）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
+> 最后更新：2026-10-18 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 386 用例 = 385 passed + 1 expected failure + 0 failed（基线 377 → 386，frame-truth）· 当前最大卡点：框真相（frame-truth）与 Case B 粘滞 v2 均已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
 
 ---
 
@@ -17,8 +17,9 @@
 **现状一句话**：**扫描主链路（拍、框、拉正、增强、OCR、导出图片 PDF）已经可用**；
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
 实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12）；
-**但取景 WYSIWYG 经 2026-09-26 真机复测未达效**（折页书 Case A 成片仍含折起部分、摊开书
-Case B 实线框仍跳且手动拍含左页大半——当前最大卡点，§6.13）；**iOS 18~25 仍走几何兜底、
+**取景 WYSIWYG 的 Case A/B 根因已定案、修复已交付**（case-b-sticky-v2 +
+folded-page-capture + frame-truth，386 全绿；真机验收待做，主清单
+`spec/frame-truth/device-acceptance.md`，§6.13）；**iOS 18~25 仍走几何兜底、
 真机依旧出不了表**；iOS 26 结构化通路真机接通性未验证（L1 疑案，§6.12 已知限制 ③）——见 §6。
 
 ### 仓库地图
@@ -33,9 +34,9 @@ scantool/
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             41 个测试文件 / 368 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── ZhixiaTests/             43 个测试文件 / 386 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
 ├── docs/                    本文 + 专题文档（00~12；12 为交接文档单入口）
-├── spec/                    SDD 周期工件（10 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
+├── spec/                    SDD 周期工件（12 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
 │   └── pdf-ocr-dump/        **从导出的 PDF 反解真机 OCR**（排障利器，见 §8.3）
@@ -335,10 +336,17 @@ SC-004 证据链）、`detectionTier`（候选层级）、`suspiciousLock`
 呈现框/静帧面积、IoU 与 acceptedStill 采纳方向，文档模式每次拍摄一行，`iou=-1` 表示
 无可测对）、`stickyOverride`（live 粘滞改写帧，双候选**同池**振荡止跳证据）、
 `stickyHold`（v2 hold-through-miss 维持帧：miss 计数 / 锚点面积 / 被拦截择优面积——
-存在性交替被吸收的直接证据，spec/case-b-sticky-v2）、`stickyEscape`（粘滞达限清锚，
-FR-007 不粘死证据）。真机验收步骤见
+存在性交替被吸收的直接证据，spec/case-b-sticky-v2；folded-page-capture 起调用点
+missLimit 5，N 可到 4）、`stickyEscape`（粘滞达限清锚，
+FR-007 不粘死证据；口径随 missLimit 5 更新为 afterMisses=5）、
+`candidateProvenance`（live 每帧候选来源：strict/seg/relaxed/viable 数量与面积、
+门控布尔、粘滞前择优、disposition——spec/frame-truth）、`cropQuad`（快门时
+呈现框/静帧四角）、`snapEdge`（逐边 G0/两相峰/位移）、`snapOnLock`（锁定吸附
+前后面积与四角；冻结直裁证据）。真机验收步骤见
 `spec/scan-edge-accuracy/device-acceptance.md`、`spec/live-edge-crop/device-acceptance.md`、
-`spec/wysiwyg-crop/device-acceptance.md` 与 `spec/case-b-sticky-v2/device-acceptance.md`。
+`spec/wysiwyg-crop/device-acceptance.md`、`spec/case-b-sticky-v2/device-acceptance.md`
+与 `spec/frame-truth/device-acceptance.md`（**下一趟真机会话主清单**：框真相四痛点
+复测 + 无效框承诺 + 冻结直裁四角核对 + Case B 复测 + L1 取证合并执行）。
 
 - `QuadSmoother` 对连续帧的四边形做平滑，避免实时框抖动（未动）。
 - 证件模式（`ScanMode.idCard`）用一个固定比例窗约束检测（语义未动）。
@@ -544,7 +552,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 |---|---|---|
 | 取景 | 实时框边（三级检测兜底：严格矩形 → 条件分割 → 放宽矩形；连续实线整框：跟踪细实线 / 锁定粗双线）、手动对焦/曝光、闪光灯、连拍、相册导入 | ✅ |
 | 取景 | 自动快门 6 帧确认窗（锁定后 ≈0.4s 才拍；suspicious 冻结、解锁清零、手动快门不受限）+ 四态引导（对准 / 太远 / 可疑 / 寻找，面积滞回防闪烁） | ✅ 新增（spec/overlay-frame-visibility、spec/scan-fidelity，§6.9/§6.10） |
-| 取景 | **WYSIWYG 裁切契约**：快门裁切门禁 `CropConsistencyGate`（呈现框 = 裁切基准，静帧仅一致精修可胜出）+ live 候选粘滞 `CandidateSticky`（相似候选优先延续，3 帧无相似逃逸清锚） | ✅ 单测钉死（spec/wysiwyg-crop，§6.11）；⚠️ **真机 Case A/B 复测未达效**（§6.13，当前最大卡点） |
+| 取景 | **框真相契约**（spec/frame-truth 起）：呈现框唯一真值——有呈现框时快门后不重检、成片=呈现框；锁定瞬间吸附上屏并冻结（精修可见）；候选池单一真源 + 页面先验门控 + 锚点治理；`closer` 无效框不承诺可拍。`CropConsistencyGate` 保留为搜索态/回退（文档主路径不再使用） | ✅ 单测钉死（spec/wysiwyg-crop + case-b-sticky-v2 + folded-page-capture + frame-truth，§6.11/§6.13）；⏳ **真机验收待做**（主清单 spec/frame-truth/device-acceptance.md） |
 | 取景 | 证件模式比例窗 | ✅ |
 | 整理 | 拖角校正、五档滤镜、旋转 | ✅ |
 | 库 | 文件夹、搜索、收藏、加页、删除、存储占用统计 | ✅ |
@@ -569,7 +577,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- 41 个测试文件 / 368 个 `@Test`，全量 **367 passed + 0 failed + 1 expected failure**
+- 43 个测试文件 / 386 个 `@Test`，全量 **385 passed + 0 failed + 1 expected failure**
   （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的
@@ -871,7 +879,14 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 
 ---
 
-### 6.13 未解决：Case A / Case B 真机复测未达效（**当前最大卡点**，2026-09-26）
+### 6.13 未解决：Case A / Case B 真机复测未达效（2026-09-26；**2026-10-17 起根因已定案、修复已交付，真机验收待做**）
+
+> **2026-10-17 更新**：Case B 池交替盲区经 case-b-sticky-v2 代码级定案并修复
+> （粘滞 v2 hold-through-miss）；Case A 经 understand-folded-book 四链路合成定案
+> （H1 家族：检测过严 + 近摄制式 regime c 棘轮 + 自动拍误触 + 单向吸附 + 整理页
+> 穿透），folded-page-capture 周期交付全套修复（377 全绿）。两周期真机验收合并为
+> 同一趟会话，主清单 `spec/folded-page-capture/device-acceptance.md`。以下为
+> 2026-09-26 复测时的历史记录，保留备查。
 
 > 逐字原文与完整归因：`spec/agent-handover/device-retest-20260926.md`；
 > 上轮验收记录与待定案假设：`spec/wysiwyg-crop/device-acceptance.md`（含 2026-09-26
@@ -900,11 +915,23 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 
 ## 7. 后续优化方向
 
+> **2026-10-21**：最新完整优化路线图见
+> [`docs/14-project-summary-and-roadmap.md`](14-project-summary-and-roadmap.md)
+>（取景稳定性 / 拍后裁切校准 / 竞品对标 / 工程债；含真机数值与优先级）。
+
+
 > 2026-09-12 更新：原 P0/P1/P3 大部分已完成（见 §6.7 与下方「已完成」）。
 > 2026-09-26 更新：wysiwyg-crop 的 R4/R5 修复经真机复测**未达效**（Case A/B，§6.13）
 > ——新增 **P0-0 取景裁剪取证与修复**置顶（当前最大卡点），下轮必须**先实时抓
 > `cropGate` / `stickyOverride` 日志定案再动刀**。取景范式的「常驻框」替代路线见
 > [11 §4.2/§7](11-wps-parity-research.md)。
+> 2026-10-17 更新：P0-0 已落地——Case B（case-b-sticky-v2）与 Case A
+> （folded-page-capture）根因均定案、修复均交付（377 全绿）；**2026-10-18
+> 追加**：第二轮真机复测暴露「框锁局部带 / 成片越界」，逐帧遥测定案并交付
+> frame-truth（386 全绿：候选池单一真源 / 页面先验 / 锚点治理 / s=0 守卫 /
+> 锁定冻结 + 成片=呈现框）；当前唯一待办是
+> **真机验收**（主清单 `spec/folded-page-capture/device-acceptance.md`，一趟合并
+> Case B 复测与 L1 取证），验收结论决定「常驻框范式」周期 2 是否立项。
 > 下面按**当前**的真实缺口重排。
 
 ### 已完成（2026-09-12）

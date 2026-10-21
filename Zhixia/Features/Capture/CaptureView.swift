@@ -25,6 +25,17 @@ struct CaptureView: View {
                 isLocked: viewModel.overlayIsLocked,
                 mode: viewModel.mode
             )
+            // spec/frame-truth 真机复测（2026-10-18）：叠加层**必须**与预览层
+            // 共用同一全屏坐标系——此前缺这一行，overlay 的 GeometryReader
+            // 拿到安全区内尺寸（约 390×763 vs 全屏 390×844），屏幕框被整体
+            // 缩小 ~10% 并下移 47pt：用户看到的框永远比 imageQuad 小一圈
+            // （「其它三边没贴到书边」「成片比框大」的显示侧根因）。
+            .ignoresSafeArea()
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: { size in
+                viewModel.previewSize = size
+            }
             if viewModel.isFlashVisible {
                 Color.white.opacity(0.7).ignoresSafeArea()
             }

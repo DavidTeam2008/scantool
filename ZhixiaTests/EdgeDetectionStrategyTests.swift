@@ -282,4 +282,43 @@ struct EdgeDetectionStrategyTests {
         )
         #expect(selection?.quad == outer)
     }
+
+    // MARK: - spec/frame-truth FR-001/002：池单一真源与页面先验门控
+
+    @Test("viablePool filters sub-minimum and degenerate candidates (single source for select and sticky)")
+    func viablePoolFiltersSubMinimum() {
+        let band = rectQuad(0.4, 0.4, 0.6, 0.55) // 0.2×0.15 = 0.03 < minArea
+        let degenerate = rectQuad(0.49, 0.49, 0.51, 0.51) // 面积 0.0004
+        let page = rectQuad(0.2, 0.2, 0.8, 0.8) // 0.36
+        let pool = DetectionStrategy.viablePool([band, degenerate, page])
+        #expect(pool == [page], "只有通过 select 同口径过滤的候选能进入粘滞池")
+
+        // 与 select 的实际使用口径一致：viable 集合中的候选才可能胜出。
+        let selection = DetectionStrategy.select(
+            rawCandidates: [band, degenerate, page],
+            idCardWindow: nil
+        )
+        #expect(selection?.quad == page)
+    }
+
+    @Test("Page-like prior: a sub-page band no longer vetoes document segmentation")
+    func pageLikeGateIgnoresSubPageBand() {
+        // 真机证据：0.08–0.093 的文字带一票否决了分割与放宽档（页面候选
+        // 从未被请求）。pageLikeMinArea=0.25 后：带子不再是「可信页面」。
+        let band = rectQuad(0.3, 0.3, 0.7, 0.55) // 0.4×0.25 = 0.10（> minArea、< pageLike）
+        #expect(band.area > DetectionStrategy.minArea)
+        #expect(band.area < DetectionStrategy.pageLikeMinArea)
+        #expect(DetectionStrategy.needsDocumentSegmentation(rectangles: [band]),
+                "sub-page 带子必须触发分割（页面先验口径）")
+        #expect(DetectionStrategy.needsRelaxedRectangles(rectangles: [band], segmented: nil),
+                "sub-page 带子同样不得阻挡放宽档")
+
+        // 边界：0.24（0.6×0.4）触发；0.25（0.5×0.5）抑制。
+        let justBelow = rectQuad(0.2, 0.3, 0.8, 0.7) // 0.6×0.4 = 0.24
+        let atThreshold = rectQuad(0.25, 0.25, 0.75, 0.75) // 0.5×0.5 = 0.25
+        #expect(abs(justBelow.area - 0.24) < 1e-9)
+        #expect(abs(atThreshold.area - 0.25) < 1e-9)
+        #expect(DetectionStrategy.needsDocumentSegmentation(rectangles: [justBelow]))
+        #expect(!DetectionStrategy.needsDocumentSegmentation(rectangles: [atThreshold]))
+    }
 }
