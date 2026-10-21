@@ -67,7 +67,26 @@ final class CaptureViewModel {
     private(set) var geometry: CaptureGeometry = .identity
     /// 取景视图尺寸（spec/scan-enhance：预览可见域钳制）。由视图
     /// `onGeometryChange` 写入；`.zero` = 尚未测量（不钳制，既有语义）。
-    var previewSize: CGSize = .zero
+    ///
+    /// 画布几何变化 → **引导框失效**（spec/guided-capture D3：几何变化时重置）：
+    /// 旧框的屏幕位置已不再对应同一片画面，继续沿用会把成片裁到别处。
+    var previewSize: CGSize = .zero {
+        didSet {
+            guard previewSize != oldValue else { return }
+            resetGuide()
+        }
+    }
+    /// 取景模式（spec/guided-capture T010 / D1）——自动 / 引导；默认 `.auto`。
+    private(set) var captureMode: CaptureMode
+    /// 拍摄意图（spec/guided-capture T010 / D1）——右页 / 左页 / 整页。
+    private(set) var captureIntent: CaptureIntent
+    /// 引导框（**照片空间**，spec/guided-capture D3）——引导模式唯一的框状态；
+    /// 屏幕上的框是它的派生渲染值（`OverlaySpaceMap.screenQuad`），不存第二份。
+    private(set) var guidePhotoQuad: Quad?
+    /// 自动对位前的框快照（一次撤销用）。
+    private var guideUndoSnapshot: Quad?
+    /// 最近一帧（引导模式的「自动对位」用；引导路径**不跑逐帧检测**）。
+    private var latestFrame: VideoFrame?
     /// 诊断 trace 缓冲（spec/guided-capture T001 / FR-007）——**可选注入**：
     /// 默认 nil（既有测试零改动、release 不采集）。注入后逐帧记录事实 +
     /// 候选快照 + 低分辨率帧，供诊断包导出与离线回放。
@@ -95,6 +114,8 @@ final class CaptureViewModel {
         self.preferences = preferences
         self.autoCaptureHoldFrames = autoCaptureHoldFrames
         self.traceRecorder = traceRecorder
+        self.captureMode = preferences.captureMode
+        self.captureIntent = preferences.captureIntent
     }
 
     var canFinish: Bool { !drafts.isEmpty }
@@ -233,6 +254,9 @@ final class CaptureViewModel {
             return
         }
         phase = .idle
+        // spec/guided-capture D3：会话结束 → 引导框生命周期结束。
+        guidePhotoQuad = nil
+        guideUndoSnapshot = nil
     }
 
     func setMode(_ mode: ScanMode) {
@@ -247,6 +271,233 @@ final class CaptureViewModel {
         lockedFrameCount = 0
         imageQuad = mode == .idCard ? Quad.idCardWindow : nil
         phase = .previewing
+        // spec/guided-capture D3：切模式 → 引导框重置（证件模式不显示引导 UI）。
+        resetGuide()
+        ensureGuide()
+    }
+
+    // MARK: - 引导取景（spec/guided-capture T012~T015 / plan D3、D4）
+
+    /// 引导框最小面积（照片空间归一化）——D3：照片面积 ≥ 0.02。
+    static let minimumGuideArea: Double = 0.02
+    /// 引导框最小边长（相对屏幕短边）——D3：屏幕任一边 ≥ 8% 短边。
+    static let minimumGuideSideRatio: Double = 0.08
+    /// 贴边吸附限幅（相对框短边）——D3 / FR-006：≤ 3%。
+    static let guideSnapMaxShiftRatio: Double = 0.03
+
+    /// 引导框是否就绪（可拍摄）：模式 + 画布几何 + 合法框三者齐备。
+    /// 几何未就绪（首帧 `previewSize == .zero`）时为 false → 快门置灰（D2）。
+    var isGuideReady: Bool {
+        guard captureMode == .guided, mode == .document else { return false }
+        guard previewSize.width > 0, previewSize.height > 0 else { return false }
+        guard let guide = guidePhotoQuad else { return false }
+        return isValidGuide(photoQuad: guide, screenQuad: screenQuad(for: guide))
+    }
+
+    /// 引导框的屏幕空间派生值（屏幕框是照片框的派生，不存第二份——D3）。
+    func screenQuad(for guide: Quad) -> Quad {
+        OverlaySpaceMap.screenQuad(
+            fromPhotoQuad: guide,
+            geometry: geometry,
+            viewSize: previewSize
+        )
+    }
+
+    /// 切换取景模式（自动 ↔ 引导）。证件模式不提供引导（UI 不显示入口）。
+    func setCaptureMode(_ mode: CaptureMode) {
+        guard mode != captureMode else { return }
+        captureMode = mode
+        preferences.captureMode = mode
+        if mode == .guided {
+            ensureGuide()
+        } else {
+            guidePhotoQuad = nil
+            guideUndoSnapshot = nil
+        }
+    }
+
+    /// 切换拍摄意图（右页 / 左页 / 整页）→ 默认框重算（用户可再拖）。
+    func setCaptureIntent(_ intent: CaptureIntent) {
+        guard intent != captureIntent else { return }
+        captureIntent = intent
+        preferences.captureIntent = intent
+        guidePhotoQuad = nil
+        ensureGuide()
+    }
+
+    /// 重置引导框（清空；随后按意图重建默认框）。
+    func resetGuide() {
+        guard captureMode == .guided else {
+            guidePhotoQuad = nil
+            guideUndoSnapshot = nil
+            return
+        }
+        guidePhotoQuad = nil
+        guideUndoSnapshot = nil
+        ensureGuide()
+    }
+
+    /// 引导框缺失时按意图给出默认框（屏幕比例 → 逆映射到照片空间）。
+    private func ensureGuide() {
+        guard captureMode == .guided, mode == .document, guidePhotoQuad == nil else { return }
+        guard previewSize.width > 0, previewSize.height > 0 else { return }
+        let rect = captureIntent.defaultScreenRect
+        let screenQuad = Quad(
+            topLeft: CGPoint(x: rect.minX * previewSize.width, y: rect.minY * previewSize.height),
+            topRight: CGPoint(x: rect.maxX * previewSize.width, y: rect.minY * previewSize.height),
+            bottomRight: CGPoint(x: rect.maxX * previewSize.width, y: rect.maxY * previewSize.height),
+            bottomLeft: CGPoint(x: rect.minX * previewSize.width, y: rect.maxY * previewSize.height)
+        )
+        let photoQuad = OverlaySpaceMap.photoQuad(
+            fromScreenQuad: screenQuad,
+            geometry: geometry,
+            viewSize: previewSize
+        )
+        guard isValidGuide(photoQuad: photoQuad, screenQuad: screenQuad) else { return }
+        guidePhotoQuad = photoQuad
+    }
+
+    /// 拖动中更新引导框（屏幕空间 → 照片空间）。
+    /// 非法（自交/近退化/过小/越界）→ **拒绝该次更新**，保留上一有效框（D3）。
+    func updateGuide(fromScreenQuad screenQuad: Quad) {
+        guard captureMode == .guided, mode == .document else { return }
+        let photoQuad = OverlaySpaceMap.photoQuad(
+            fromScreenQuad: screenQuad,
+            geometry: geometry,
+            viewSize: previewSize
+        )
+        guard isValidGuide(photoQuad: photoQuad, screenQuad: screenQuad) else {
+            let photoText = corners(of: photoQuad).map { String(format: "%.4f", $0) }.joined(separator: ",")
+            let screenText = corners(of: screenQuad).map { String(format: "%.2f", $0) }.joined(separator: ",")
+            let previewWidth = Double(previewSize.width)
+            let previewHeight = Double(previewSize.height)
+            let videoAspect = geometry.videoAspect
+            let photoAspect = geometry.photoAspect
+            ZhixiaLog.capture.debug(
+                "guideAdjust invalid photo=[\(photoText, privacy: .public)] screen=[\(screenText, privacy: .public)] preview=\(previewWidth, format: .fixed(precision: 1), privacy: .public)x\(previewHeight, format: .fixed(precision: 1), privacy: .public) aspect=\(videoAspect, format: .fixed(precision: 3), privacy: .public)/\(photoAspect, format: .fixed(precision: 3), privacy: .public)"
+            )
+            ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "invalid-geometry")
+            return
+        }
+        guidePhotoQuad = photoQuad
+    }
+
+    /// 松手提交：一次贴边吸附（限幅 3%）——先 photo→video，吸附，再 video→photo。
+    /// 吸附失败/退化 → 保留用户框（宁可不修，不可错修——`EdgeSnapper` 契约）。
+    func commitGuide() {
+        guard captureMode == .guided, let guide = guidePhotoQuad else { return }
+        guard let frame = latestFrame else {
+            ZhixiaLog.guideAdjust(before: corners(of: guide), after: corners(of: guide), shift: 0, rejected: "no-frame")
+            return
+        }
+        let videoQuad = FOVLayout.convert(
+            quad: guide,
+            fromAspect: geometry.photoAspect,
+            toAspect: geometry.videoAspect
+        )
+        let snappedVideo = EdgeSnapper.snap(
+            quad: videoQuad,
+            image: frame.cgImage,
+            maxShiftRatio: Self.guideSnapMaxShiftRatio
+        )
+        let snappedPhoto = FOVLayout.convert(
+            quad: snappedVideo,
+            fromAspect: geometry.videoAspect,
+            toAspect: geometry.photoAspect
+        )
+        guard !snappedPhoto.isDegenerate,
+              snappedPhoto.area >= Self.minimumGuideArea,
+              isValidGuide(photoQuad: snappedPhoto, screenQuad: screenQuad(for: snappedPhoto))
+        else {
+            ZhixiaLog.guideAdjust(before: corners(of: guide), after: corners(of: guide), shift: 0, rejected: "snap-degenerate")
+            return
+        }
+        guidePhotoQuad = snappedPhoto
+        ZhixiaLog.guideAdjust(
+            before: corners(of: guide),
+            after: corners(of: snappedPhoto),
+            shift: Self.maxCornerShift(before: guide, after: snappedPhoto)
+        )
+    }
+
+    /// 自动对位：点一次跑**一次** detector（最近一帧），候选经视频→照片换算、
+    /// 钳制到可见域后作为新引导框；无候选/退化 → no-op（不改变当前框）。
+    func autoFitGuide() async {
+        guard captureMode == .guided, mode == .document else { return }
+        guard let frame = latestFrame else {
+            ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "no-frame")
+            return
+        }
+        let detected = await detector.detect(frame: frame, idCardWindow: nil)
+        guard let detected, !detected.isDegenerate else {
+            ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "no-candidate")
+            return
+        }
+        let photoQuad = clampedToPreview(
+            FOVLayout.convert(
+                quad: detected,
+                fromAspect: geometry.videoAspect,
+                toAspect: geometry.photoAspect
+            )
+        )
+        guard photoQuad.area >= Self.minimumGuideArea,
+              isValidGuide(photoQuad: photoQuad, screenQuad: screenQuad(for: photoQuad))
+        else {
+            ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "degenerate")
+            return
+        }
+        let before = guidePhotoQuad
+        guideUndoSnapshot = before
+        guidePhotoQuad = photoQuad
+        ZhixiaLog.guideAdjust(
+            before: corners(of: before),
+            after: corners(of: photoQuad),
+            shift: Self.maxCornerShift(before: before, after: photoQuad)
+        )
+    }
+
+    /// 撤销自动对位（一次，回到对位前的框）。
+    func undoAutoFit() {
+        guard captureMode == .guided else { return }
+        guard let snapshot = guideUndoSnapshot else { return }
+        guideUndoSnapshot = nil
+        guidePhotoQuad = snapshot
+        ZhixiaLog.guideAdjust(before: [], after: corners(of: snapshot), shift: 0, rejected: "undo")
+    }
+
+    /// 是否还有可撤销的对位。
+    var canUndoAutoFit: Bool { guideUndoSnapshot != nil }
+
+    /// 引导框合法性（照片空间 + 屏幕空间双口径，D3）：
+    /// - 照片空间：非退化、面积 ≥ 0.02、四角落在照片域内；
+    /// - 屏幕空间：任一边 ≥ 短边 8%（太小的框没法对位）。
+    private func isValidGuide(photoQuad: Quad, screenQuad: Quad) -> Bool {
+        guard !photoQuad.isDegenerate, photoQuad.area >= Self.minimumGuideArea else { return false }
+        let corners = [
+            photoQuad.topLeft, photoQuad.topRight,
+            photoQuad.bottomRight, photoQuad.bottomLeft
+        ]
+        guard corners.allSatisfy({ $0.x >= -0.0001 && $0.x <= 1.0001 && $0.y >= -0.0001 && $0.y <= 1.0001 })
+        else { return false }
+        let bbox = screenQuad.boundingRect
+        let shortSide = min(bbox.width, bbox.height)
+        guard shortSide > 0 else { return false }
+        let minimum = shortSide * Self.minimumGuideSideRatio
+        return bbox.width >= minimum && bbox.height >= minimum
+    }
+
+    /// 两个框之间的最大角点位移（归一化；日志用）。
+    private static func maxCornerShift(before: Quad?, after: Quad) -> Double {
+        guard let before else { return 0 }
+        let pairs = [
+            (before.topLeft, after.topLeft),
+            (before.topRight, after.topRight),
+            (before.bottomRight, after.bottomRight),
+            (before.bottomLeft, after.bottomLeft)
+        ]
+        return pairs.map { pair in
+            hypot(pair.0.x - pair.1.x, pair.0.y - pair.1.y)
+        }.max() ?? 0
     }
 
     func toggleTorch() async {
@@ -259,6 +510,12 @@ final class CaptureViewModel {
     }
 
     func capture() async {
+        // spec/guided-capture D4：引导路径**独立分支**——成片 = 引导框，
+        // 不重检静帧、不走 CropConsistencyGate、不拆分。自动路径逐行保持现状。
+        if captureMode == .guided, mode == .document {
+            await captureGuided()
+            return
+        }
         guard phase != .capturing else { return }
         // WYSIWYG 门禁呈现框快照（spec/wysiwyg-crop，plan D2 / FR-001）：入口
         // 读取 `imageQuad`——必须在任何复位段之前（capture() 末尾会清空）。
@@ -369,6 +626,109 @@ final class CaptureViewModel {
         imageQuad = mode == .idCard ? Quad.idCardWindow : nil
     }
 
+    /// 引导拍摄（spec/guided-capture T014 / FR-005 / plan D4）。
+    ///
+    /// 顺序：**引导框 → 快门 → 原图落盘 → 成片**：
+    /// 1. 读当前引导框（缺失/退化 → 不拍，提示重新对位）；
+    /// 2. `camera.capturePhoto()`；
+    /// 3. 写原图；
+    /// 4. `quad = guidePhotoQuad`——**不调用** `detector.detect(imageData:)`，
+    ///    **不调用** `CropConsistencyGate`；
+    /// 5. `PageDraft(userAdjustedQuad: true)`（复用既有字段 → Review 跳过
+    ///    自动重检/拆分；不新增持久化字段、不做数据迁移）；
+    /// 6. 记 `guidedCapture` / `cropQuad(tag:"guide")` /
+    ///    `cropGate(stillArea: -1, iou: -1, acceptedStill: false)`；
+    /// 7. 复位相位/闪光，**保留引导框**（下一张继续用）。
+    private func captureGuided() async {
+        guard phase != .capturing else { return }
+        guard let guide = guidePhotoQuad, !guide.isDegenerate else {
+            ZhixiaLog.guidedCapture(
+                intent: captureIntent.rawValue,
+                guide: [],
+                crop: [],
+                canvasError: -1,
+                durationMs: 0,
+                rejected: "no-guide"
+            )
+            return
+        }
+        phase = .capturing
+        isFlashVisible = true
+        let started = Date()
+        do {
+            let photo = try await camera.capturePhoto()
+            ZhixiaLog.geometry(video: geometry.videoAspect, photo: geometry.photoAspect)
+            let pageID = replacePageID ?? UUID()
+            let originalURL = try await fileStore.writeOriginal(
+                session: sessionID,
+                page: pageID,
+                data: photo.jpegData
+            )
+            traceRecorder?.recordOriginal(originalURL)
+            // 成片裁切框 = 引导框（WYSIWYG 由构造保证，不再依赖门禁仲裁）。
+            ZhixiaLog.cropQuad(tag: "guide", quad: guide)
+            ZhixiaLog.cropGate(
+                displayedArea: guide.area,
+                stillArea: -1,
+                iou: -1,
+                acceptedStill: false
+            )
+            ZhixiaLog.guidedCapture(
+                intent: captureIntent.rawValue,
+                guide: corners(of: guide),
+                crop: corners(of: guide),
+                canvasError: canvasRoundTripError(guide: guide),
+                durationMs: Date().timeIntervalSince(started) * 1000
+            )
+            let draft = PageDraft(
+                id: pageID,
+                sessionID: sessionID,
+                quad: guide,
+                enhancement: preferences.defaultEnhancement,
+                userAdjustedQuad: true
+            )
+            if let replacePageID, let index = drafts.firstIndex(where: { $0.id == replacePageID }) {
+                drafts[index] = draft
+                self.replacePageID = nil
+            } else {
+                drafts.append(draft)
+            }
+            impact.impactOccurred()
+            recordCaptureTrace(quad: guide)
+        } catch let zhixia as ZhixiaError {
+            error = zhixia
+        } catch {
+            self.error = .captureFailed
+        }
+        isFlashVisible = false
+        phase = .previewing
+        // 引导框保持：连续拍摄用同一个框（FR-005：拍摄后保留框）。
+    }
+
+    /// 引导框的画布 round-trip 误差（相对短边；>0.005 即判失败，SC-004）。
+    /// 几何未就绪时返回 -1（不可判读）。
+    private func canvasRoundTripError(guide: Quad) -> Double {
+        guard previewSize.width > 0, previewSize.height > 0 else { return -1 }
+        let screen = screenQuad(for: guide)
+        let back = OverlaySpaceMap.photoQuad(
+            fromScreenQuad: screen,
+            geometry: geometry,
+            viewSize: previewSize
+        )
+        let pairs = [
+            (back.topLeft, guide.topLeft),
+            (back.topRight, guide.topRight),
+            (back.bottomRight, guide.bottomRight),
+            (back.bottomLeft, guide.bottomLeft)
+        ]
+        let maxDistance = pairs.map { pair in
+            hypot(pair.0.x - pair.1.x, pair.0.y - pair.1.y)
+        }.max() ?? 0
+        let shortSide = min(guide.boundingRect.width, guide.boundingRect.height)
+        guard shortSide > 0 else { return -1 }
+        return maxDistance / shortSide
+    }
+
     func importImageData(_ data: Data) async {
         let pageID = UUID()
         do {
@@ -427,6 +787,16 @@ final class CaptureViewModel {
 
     private func consume(_ frame: VideoFrame) async {
         guard phase != .capturing, !isDetecting else { return }
+        // spec/guided-capture D1：引导模式下**提前返回**——不跑 detector、
+        // 不跑粘滞/平滑/冻结状态机；只留最近一帧，供显式「自动对位」用一次。
+        // 引导框是用户意图的载体，逐帧检测对它没有意义（还会把框拽走）。
+        if captureMode == .guided, mode == .document {
+            latestFrame = frame
+            if phase != .capturing {
+                phase = .previewing
+            }
+            return
+        }
         isDetecting = true
         defer { isDetecting = false }
         let window = mode == .idCard ? Quad.idCardWindow : nil

@@ -2,8 +2,8 @@
 
 **Input**: Design documents from `spec/guided-capture/`
 **Prerequisites**: `spec.md`（US1~US5 / FR-001~010）、`plan.md`（D1~D10）
-**测试基线**: **417 = 416 passed + 1 expected failure + 0 failed**（2026-10-21 实测；
-T000 时为 397，Phase 0 新增 20 条诊断/回放用例）
+**测试基线**: **436 = 435 passed + 1 expected failure + 0 failed**（2026-10-21 实测；
+T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画布/偏好））
 **构建/测试**: T000 前用
 `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`；
 T000 后直接 `make test`。局部：`make test-only T=<Suite>`
@@ -80,44 +80,100 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
   `docs/15-capture-recovery-assessment.md` §九与 `device-acceptance.md` §0。
   **Checkpoint 0**：T000 全绿 + T001~T004 单测绿 + V1/V2/V3 有结论；
   未过不得进 Phase 1。依赖 T001~T004。
-  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 417 = 416 passed +
+  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 436 = 435 passed +
   1 expected failure + 0 failed）；**V1/V2/V3 待真机会话**（iPhone 13 · iOS 26.7，
   需人工配合 1 小时）——本机无真机，**不得用模拟器结果冒充**。
 
 ## Phase 1: 引导框 MVP（US1 / US2）
 
-- [ ] **T010** 取景模式与意图（D1 / FR-001）：新增
+- [X] **T010** 取景模式与意图（D1 / FR-001）：新增
   `Zhixia/Domain/Models/CaptureMode.swift`、`CaptureIntent.swift`；
   `PreferencesStore` 增 `captureMode`/`captureIntent` 键（默认 `.auto` /
   `.rightPage`）；`PreferencesStoreTests` 追加默认值/持久化/未知值回退。
   依赖 T000。
-- [ ] **T011** 画布逆映射（D2 / FR-004）：`OverlaySpaceMap` 增
+  **交付（2026-10-22）**：`CaptureMode`（auto/guided）、`CaptureIntent`
+  （rightPage/leftPage/wholePage，附 D3 的默认屏幕比例）、`PreferencesStore`
+  两个键（未知值回退默认，不崩溃）、显示名放 DesignSystem
+  （`CaptureModeTitles.swift`，与 `Enhancement.title` 同模式）。
+  单测：`PreferencesStoreTests` +3（默认值 / 持久化 / 未知值回退）。
+- [X] **T011** 画布逆映射（D2 / FR-004）：`OverlaySpaceMap` 增
   `photoPoint(fromScreenPoint:)` / `photoQuad(fromScreenQuad:)`；
   复用 `FOVLayout.convert` 逆参数。单测 ≥6：四角 round-trip、同/异宽高比、
   屏幕边缘、零/退化输入、越界钳制语义。依赖 T010。
-- [ ] **T012** 引导框 UI（D1/D3 / FR-002）：新增
+  **交付（2026-10-22）**：`OverlaySpaceMap.photoPoint/photoQuad`（逐段取逆：
+  屏幕 → 视频（除以 aspectFill 放置矩形）→ 照片（`FOVLayout.convert`
+  video→photo））；退化输入原样返回；**越界不钳制**（静默钳制会把越界拖动
+  伪装成合法框，破坏 WYSIWYG）。单测：`OverlaySpaceMapTests` +6（四角
+  round-trip 全组合 / 点级互逆 / 屏幕边缘→可见域边界 / 退化输入 / 越界不钳制 /
+  屏幕矩形→照片框落在可见域内）。
+  **⚠️ 走查发现（已修）**：父层 `onGeometryChange` 量到的是**安全区尺寸**
+  （真机 402×778），而叠加层在 `.ignoresSafeArea()` 下的渲染空间是**全屏**
+  （402×874）——两者不一致会让引导框恒判非法（模拟器实测：拖动被
+  `rejected=invalid-geometry` 全部拒绝）。引导路径改为由
+  `GuideOverlayView` 自己的 GeometryReader 上报尺寸（渲染同空间）；
+  **自动路径保持原测量口径不变**（FR-009），该口径差异另记为待办（见
+  「方向性翻转清单」下方「待办」段）。
+- [X] **T012** 引导框 UI（D1/D3 / FR-002）：新增
   `Zhixia/Features/Capture/GuideOverlayView.swift`；四边 + 四角 44pt 命中区；
   白实线 + 暗描边；“重置/自动对位”按钮；`CaptureView` 增加“自动/引导”与
   “右页/左页/整页”入口，guided 分支显示引导框、隐藏自动四态提示，auto 隐藏
   引导框；证件模式都不显示。拖动写回 `guidePhotoQuad`，非法拖动回退。
   依赖 T011。
-- [ ] **T013** 自动对位与松手吸附（D3 / FR-006）：`CaptureViewModel`
+  **交付（2026-10-22）**：`GuideOverlayView`（白实线 2.5pt + 暗描边 5pt；
+  四角 44pt 圆手柄 + 四边 44pt 宽条手柄；边拖动只取法线分量；
+  拖动中本地跟手、合法性交 ViewModel 判定）；`CaptureView` 顶部控制条
+  （自动/引导 + 右页/左页/整页 + 重置/自动对位/撤销，证件模式整行隐藏）；
+  guided 分支隐藏自动四态提示、改为固定对位提示；**画布未就绪时快门置灰**
+  （`isGuideReady`）。
+- [X] **T013** 自动对位与松手吸附（D3 / FR-006）：`CaptureViewModel`
   保存最近帧；`autoFitGuide()` 只调用一次 detector；松手吸附先 photo→video
   再 `EdgeSnapper.snap`（限幅 0.03）后 video→photo；一次撤销快照；
   `guideAdjust` 日志。无候选 no-op。单测：对位成功/无候选/退化/撤销/
   吸附限幅/双空间换算。依赖 T012。
-- [ ] **T014** 引导拍摄分支（D4 / FR-005）：`CaptureViewModel.capture()`
+  **交付（2026-10-22）**：`autoFitGuide()`（一次 detector → 视频→照片换算 →
+  钳制到可见域 → 校验 → 替换框，存一次撤销快照）、`undoAutoFit()`、
+  `commitGuide()`（松手一次 `EdgeSnapper.snap(maxShiftRatio: 0.03)`，
+  photo→video→吸附→video→photo；退化保留用户框）、`ZhixiaLog.guideAdjust`
+  （before/after/shift/rejected）+ 非法更新的 debug 诊断行。
+  单测（`GuidedCaptureTests`）：对位只跑一次 detector、无候选 no-op、
+  撤销一次、非法拖动（自交/过小）被拒绝、合法拖动生效。
+- [X] **T014** 引导拍摄分支（D4 / FR-005）：`CaptureViewModel.capture()`
   guided 分支直接用 `guidePhotoQuad`；不调用 detector / CropConsistencyGate；
   `PageDraft.userAdjustedQuad = true`；`guidedCapture`/`cropQuad tag=guide`/
   `cropGate stillArea=-1` 日志；拍摄后保留框。单测 ≥4：裁切=引导框、零
   detector 调用、非法框不拍、拍摄后框保持。依赖 T013。
-- [ ] **T015** 框生命周期（D3 / FR-002）：翻页/连续拍摄保持；`setMode`、
+  **交付（2026-10-22）**：`captureGuided()` 独立分支（成片 = 引导框；
+  零 detector / 零门禁；`userAdjustedQuad = true`；`cropQuad tag=guide` +
+  `cropGate(stillArea=-1, iou=-1, acceptedStill=false)` + `guidedCapture`
+  （intent/框/canvasError/耗时）；拍摄后**保留框**）。
+  单测：裁切=引导框、零 detector 调用（live + still）、无框不拍、
+  拍摄后框保持。
+- [X] **T015** 框生命周期（D3 / FR-002）：翻页/连续拍摄保持；`setMode`、
   证件模式、会话结束、`previewSize` 变化时重置；默认框按 intent 屏幕比例
   生成。单测：模式切换、几何失效、重置、右/左/整页默认位置。依赖 T014。
-- [ ] **T016** Phase 1 验证：新增测试全绿；`make test-only
+  **交付（2026-10-22）**：`resetGuide()` / `ensureGuide()`（按 intent 的默认
+  屏幕比例 → 逆映射到照片空间）；`setMode`（切证件清空、切回文档恢复）、
+  `previewSize` 变化（`didSet` → 重置）、会话结束（`stop()` 清空）；
+  翻页/连续拍摄保持（`captureGuided` 不动框）。
+  单测：模式切换、几何失效重置、默认框按意图（右/左/整页）。
+- [X] **T016** Phase 1 验证：新增测试全绿；`make test-only
   T=CaptureViewModelTests` + `T=OverlaySpaceMapTests`；模拟器手工走
   “切引导 → 拖角 → 拍 → 切回自动”无崩溃。**Checkpoint 1**：SC-001~004
   的模拟器部分通过；真机 20 张待 T030。依赖 T010~T015。
+  **交付（2026-10-22）**：`make test` → **436 = 435 passed + 1 expected
+  failure + 0 failed**（基线 417 → 436，+19）。
+  模拟器走查（iPhone 17 Pro · iOS 26.4.1，agent-device 驱动）：
+  切引导 ✓（引导框 + 意图条 + 重置/自动对位出现）→ 拖角 ✓（左上角拖动，
+  框跟手且随拖动变形）→ 切意图 ✓（左页：框整体移到左侧）→ 拍 ✓ → 切回自动 ✓
+  （引导框消失、自动提示恢复、进程存活无崩溃）。
+  **走查中修掉的两个真问题**：
+  ① 画布尺寸口径不一致（安全区 vs 全屏）→ 引导框恒判非法（T011 记录）；
+  ② `AVCameraSession.capturePhoto()` 在会话未运行时抛 **ObjC 异常**
+  （Swift 不可捕获 → SIGABRT 崩溃；模拟器无相机时按快门必现，**自动路径同样
+  中招**）→ 前置守卫改为抛 `ZhixiaError.cameraUnavailable`（用户可见提示，
+  不崩溃）。属既有健壮性缺陷，本周期顺带修复。
+  **Checkpoint 1 状态**：SC-001~004 的**模拟器部分**通过；真机 20 张待 T030；
+  Checkpoint 0 的 V1/V2/V3 仍待真机会话（T005）。
 
 ## Phase 2: Review 拆分确认（US4）
 
@@ -193,11 +249,23 @@ T040 / T041 在 T034 之后单独立项，不计入本周期依赖图与验收�
 
 | 测试 | 旧断言 | 新断言 | 理由 | 任务 |
 |---|---|---|---|---|
-| （待填） | | | | |
+| （无） | | | | Phase 0/1 新增 39 条用例，既有断言零修改；Review 拆分翻转将在 T022 记录 |
+
+## 待办（记录在案，不在本周期实施）
+
+- **自动路径的画布尺寸口径**（T011 走查发现）：自动模式的 `previewSize`
+  来自父层 `onGeometryChange`（**安全区**尺寸，真机 402×778），而叠加层
+  渲染空间是**全屏**（402×874）——`EdgeOverlayView` 的边框渲染与
+  `visiblePhotoRect` 钳制用的不是同一尺寸。影响：钳制略保守（框可能被多裁
+  一点），**不涉及**检测/粘滞/平滑/冻结逻辑。本周期按 FR-009「自动路径零
+  改动」不动它；修复需单独记一条并评估对既有真机验收数据的影响。
+- **`CaptureFallbackTests.normalLockAutoCaptures()` 时序敏感**：3s 超时 +
+  15 帧脚本流，机器繁忙时偶发超时（2026-10-22 全量并行时观察到 1 次，
+  单独重跑 3/3 通过，**非回归**）。后续可加宽脚本帧数或改确定性等待。
 
 ## 验收门
 
-1. **Checkpoint 0**：`make test` 417 基线可复现；trace 可导出/回放；V1/V2/V3
+1. **Checkpoint 0**：`make test` 436 基线可复现；trace 可导出/回放；V1/V2/V3
    有结论。
 2. **Checkpoint 1**：引导拍摄 20/20 只含框内内容；框零自动移动；画布
    round-trip ≤0.5%；引导路径无 detector 调用。

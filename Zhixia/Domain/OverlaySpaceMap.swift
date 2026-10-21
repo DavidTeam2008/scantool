@@ -77,4 +77,76 @@ enum OverlaySpaceMap {
             height: displayHeight
         )
     }
+
+    // MARK: - 逆映射（spec/guided-capture T011 / FR-004 / plan D2）
+
+    /// 屏幕点 → 照片归一化点（正向链 `screenQuad` 的逆）。
+    ///
+    /// 逆链与正向链**逐段取逆**（不另写一套宽高比公式）：
+    /// 屏幕点 →（除以 aspectFill 放置矩形）→ 视频归一化点 →
+    /// `FOVLayout.convert(video → photo)` → 照片归一化点。
+    ///
+    /// ## 退化与越界语义
+    /// - 退化输入（aspect ≤ 0 / 非有限 / viewSize 退化）→ **原样返回入参**
+    ///   （与 `screenQuad` 的容错契约一致：调用方不崩溃、不变形）；
+    /// - 越界（屏幕点在视图外）→ **不钳制**：照片坐标可以出界，调用方
+    ///   （`CaptureViewModel` 的引导框校验）据此判定非法并回退——
+    ///   「静默钳制」会把越界拖动伪装成合法框，破坏 WYSIWYG 承诺。
+    static func photoPoint(
+        fromScreenPoint point: CGPoint,
+        geometry: CaptureGeometry,
+        viewSize: CGSize
+    ) -> CGPoint {
+        guard geometry.videoAspect.isFinite, geometry.videoAspect > 0,
+              geometry.photoAspect.isFinite, geometry.photoAspect > 0,
+              viewSize.width > 0, viewSize.height > 0
+        else {
+            return point
+        }
+        let placement = videoFramePlacement(geometry: geometry, viewSize: viewSize)
+        guard placement.width > 0, placement.height > 0 else { return point }
+        let videoX = (Double(point.x) - placement.minX) / placement.width
+        let videoY = (Double(point.y) - placement.minY) / placement.height
+        let videoPoint = Quad(
+            topLeft: CGPoint(x: videoX, y: videoY),
+            topRight: CGPoint(x: videoX, y: videoY),
+            bottomRight: CGPoint(x: videoX, y: videoY),
+            bottomLeft: CGPoint(x: videoX, y: videoY)
+        )
+        return FOVLayout.convert(
+            quad: videoPoint,
+            fromAspect: geometry.videoAspect,
+            toAspect: geometry.photoAspect
+        ).topLeft
+    }
+
+    /// 屏幕四边形 → 照片空间四边形（逐角逆映射）。
+    static func photoQuad(
+        fromScreenQuad screenQuad: Quad,
+        geometry: CaptureGeometry,
+        viewSize: CGSize
+    ) -> Quad {
+        Quad(
+            topLeft: photoPoint(
+                fromScreenPoint: screenQuad.topLeft,
+                geometry: geometry,
+                viewSize: viewSize
+            ),
+            topRight: photoPoint(
+                fromScreenPoint: screenQuad.topRight,
+                geometry: geometry,
+                viewSize: viewSize
+            ),
+            bottomRight: photoPoint(
+                fromScreenPoint: screenQuad.bottomRight,
+                geometry: geometry,
+                viewSize: viewSize
+            ),
+            bottomLeft: photoPoint(
+                fromScreenPoint: screenQuad.bottomLeft,
+                geometry: geometry,
+                viewSize: viewSize
+            )
+        )
+    }
 }

@@ -15,32 +15,13 @@ struct CaptureView: View {
             Tokens.preview.ignoresSafeArea()
             CameraPreviewRepresentable(attacher: environment.previewAttacher)
                 .ignoresSafeArea()
-            EdgeOverlayView(
-                imageQuad: viewModel.imageQuad,
-                geometry: viewModel.geometry,
-                // T022：预览层探针降级为诊断对照（SC-004 证据链），不再参与渲染。
-                diagnosticProbe: { size in
-                    environment.previewAttacher.overlayTransform(forViewSize: size)
-                },
-                isLocked: viewModel.overlayIsLocked,
-                mode: viewModel.mode
-            )
-            // spec/frame-truth 真机复测（2026-10-18）：叠加层**必须**与预览层
-            // 共用同一全屏坐标系——此前缺这一行，overlay 的 GeometryReader
-            // 拿到安全区内尺寸（约 390×763 vs 全屏 390×844），屏幕框被整体
-            // 缩小 ~10% 并下移 47pt：用户看到的框永远比 imageQuad 小一圈
-            // （「其它三边没贴到书边」「成片比框大」的显示侧根因）。
-            .ignoresSafeArea()
-            .onGeometryChange(for: CGSize.self) { proxy in
-                proxy.size
-            } action: { size in
-                viewModel.previewSize = size
-            }
+            overlayLayer
             if viewModel.isFlashVisible {
                 Color.white.opacity(0.7).ignoresSafeArea()
             }
             VStack {
                 chromeTop
+                guideControls
                 Spacer()
                 hint
                 filmstrip
@@ -75,6 +56,53 @@ struct CaptureView: View {
         }
     }
 
+    /// 取景叠加层（spec/guided-capture T012 / D1）——**互斥**两态：
+    /// - 自动模式：既有 `EdgeOverlayView`（只读框，逐帧跟随检测结果）；
+    /// - 引导模式：新的 `GuideOverlayView`（可拖动的静态框）。
+    ///
+    /// 两者不同时出现，也不共用交互状态——自动框 `allowsHitTesting(false)`，
+    /// 引导框独立持有拖动状态（D1：避免状态语言互相污染）。
+    ///
+    /// ## 画布尺寸来源（spec/frame-truth 真机复测的延续）
+    /// 叠加层**必须**与预览层共用同一全屏坐标系（`.ignoresSafeArea()`）。
+    /// 但**尺寸回调必须来自叠加层自己的 GeometryReader**——父层的
+    /// `onGeometryChange` 量到的是安全区尺寸（真机 402×778 vs 全屏 402×874），
+    /// 用它做屏幕↔照片换算会让引导框整体偏移（照片框 y 越界 → 恒判非法）。
+    /// 自动路径保持原有测量口径不变（FR-009：自动路径零改动）。
+    @ViewBuilder
+    private var overlayLayer: some View {
+        if viewModel.captureMode == .guided, viewModel.mode == .document {
+            GuideOverlayView(
+                guidePhotoQuad: viewModel.guidePhotoQuad,
+                geometry: viewModel.geometry,
+                onSizeChange: { viewModel.previewSize = $0 },
+                onDrag: { viewModel.updateGuide(fromScreenQuad: $0) },
+                onCommit: { quad in
+                    viewModel.updateGuide(fromScreenQuad: quad)
+                    viewModel.commitGuide()
+                }
+            )
+            .ignoresSafeArea()
+        } else {
+            EdgeOverlayView(
+                imageQuad: viewModel.imageQuad,
+                geometry: viewModel.geometry,
+                // T022：预览层探针降级为诊断对照（SC-004 证据链），不再参与渲染。
+                diagnosticProbe: { size in
+                    environment.previewAttacher.overlayTransform(forViewSize: size)
+                },
+                isLocked: viewModel.overlayIsLocked,
+                mode: viewModel.mode
+            )
+            .ignoresSafeArea()
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: { size in
+                viewModel.previewSize = size
+            }
+        }
+    }
+
     private var chromeTop: some View {
         HStack {
             Button("common.close") { attemptCancel() }
@@ -103,6 +131,66 @@ struct CaptureView: View {
         .foregroundStyle(viewModel.mode == mode ? Color.white : Color.white.opacity(0.45))
     }
 
+    /// 引导取景控制条（spec/guided-capture T012）——文档模式才出现：
+    /// 取景模式（自动 / 引导）+ 拍摄意图（右页 / 左页 / 整页）+ 框操作
+    /// （重置 / 自动对位 / 撤销）。证件模式整行隐藏（D1）。
+    @ViewBuilder
+    private var guideControls: some View {
+        if viewModel.mode == .document {
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    ForEach(CaptureMode.allCases, id: \.self) { mode in
+                        guideChip(title: mode.title, isOn: viewModel.captureMode == mode) {
+                            viewModel.setCaptureMode(mode)
+                        }
+                    }
+                    Spacer()
+                }
+                if viewModel.captureMode == .guided {
+                    HStack(spacing: 6) {
+                        ForEach(CaptureIntent.allCases, id: \.self) { intent in
+                            guideChip(title: intent.title, isOn: viewModel.captureIntent == intent) {
+                                viewModel.setCaptureIntent(intent)
+                            }
+                        }
+                        Spacer()
+                        Button("capture.guide.reset") {
+                            viewModel.resetGuide()
+                        }
+                        Button("capture.guide.autoFit") {
+                            Task { await viewModel.autoFitGuide() }
+                        }
+                        if viewModel.canUndoAutoFit {
+                            Button("capture.guide.undo") {
+                                viewModel.undoAutoFit()
+                            }
+                        }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.top, 6)
+        }
+    }
+
+    /// 引导模式胶囊按钮（选中 = 白底黑字，未选中 = 半透明底白字）。
+    private func guideChip(
+        title: LocalizedStringResource,
+        isOn: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isOn ? Color.white.opacity(0.85) : Color.black.opacity(0.25))
+                .foregroundStyle(isOn ? Color.black.opacity(0.85) : Color.white.opacity(0.9))
+                .clipShape(Capsule())
+        }
+    }
+
     private var hint: some View {
         Text(hintText)
             .font(.system(size: 15, weight: .medium))
@@ -115,6 +203,11 @@ struct CaptureView: View {
         // 证件模式：正/反面提示优先（模式语义，不参与四态引导）。
         if viewModel.mode == .idCard {
             return viewModel.idFace == .front ? "capture.hint.front" : "capture.hint.back"
+        }
+        // 引导模式（spec/guided-capture T012）：隐藏自动四态提示（那是检测语义，
+        // 与「用户框住什么就拍什么」冲突），改为固定对位提示。
+        if viewModel.captureMode == .guided {
+            return viewModel.isGuideReady ? "capture.hint.guided" : "capture.hint.guidedNotReady"
         }
         // US6（spec/scan-fidelity / FR-010）：文档模式四态方向引导——
         // 太近/可疑后退 · 太远靠近 · 对准 · 寻找；面积滞回防闪烁
@@ -154,7 +247,7 @@ struct CaptureView: View {
                     .frame(width: 52)
             }
             Spacer()
-            ShutterButton(enabled: viewModel.phase != .capturing) {
+            ShutterButton(enabled: shutterEnabled) {
                 Task { await viewModel.capture() }
             }
             Spacer()
@@ -175,8 +268,17 @@ struct CaptureView: View {
         .padding(.bottom, 18)
     }
 
-    private var permissionBanner: some View {
-        VStack(spacing: 12) {
+    /// 快门可用性（spec/guided-capture T012 / D2）：引导模式下**画布未就绪
+    /// 或框非法时置灰**——「首次就绪前快门置灰」，不猜映射、不拍错片。
+    private var shutterEnabled: Bool {
+        guard viewModel.phase != .capturing else { return false }
+        if viewModel.captureMode == .guided, viewModel.mode == .document {
+            return viewModel.isGuideReady
+        }
+        return true
+    }
+
+    private var permissionBanner: some View {        VStack(spacing: 12) {
             Text("error.cameraDenied")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Color.white)

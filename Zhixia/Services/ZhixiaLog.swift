@@ -327,6 +327,43 @@ enum ZhixiaLog {
         )
     }
 
+    /// 引导框调整（spec/guided-capture FR-006 / T013）：拖动提交、自动对位、
+    /// 贴边吸附的判读行。`before`/`after` = 照片空间四角（TL,TR,BR,BL）；
+    /// `shift` = 两框之间的最大角点位移（归一化）；`rejected` 非空 = 本次
+    /// 更新被拒绝的原因（invalid-geometry / no-candidate / no-frame /
+    /// snap-degenerate / undo）。
+    static func guideAdjust(
+        before: [Double],
+        after: [Double],
+        shift: Double,
+        rejected: String? = nil
+    ) {
+        let beforeText = before.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        let afterText = after.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        capture.notice(
+            "guideAdjust before=[\(beforeText, privacy: .public)] after=[\(afterText, privacy: .public)] shift=\(shift, format: .fixed(precision: 4), privacy: .public) rejected=\(rejected ?? "none", privacy: .public)"
+        )
+    }
+
+    /// 引导拍摄（spec/guided-capture FR-005 / T014）：成片 = 引导框的证据行。
+    /// `guide` = 引导框四角（照片空间）；`crop` = 实际裁切四角（应与 guide
+    /// 相同，允许 ≤0.5% 映射误差）；`canvasError` = 画布 round-trip 误差
+    /// （相对短边，-1 = 不可判读）；`durationMs` = 快门耗时。
+    static func guidedCapture(
+        intent: String,
+        guide: [Double],
+        crop: [Double],
+        canvasError: Double,
+        durationMs: Double,
+        rejected: String? = nil
+    ) {
+        let guideText = guide.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        let cropText = crop.map { String(format: "%.4f", $0) }.joined(separator: ",")
+        capture.notice(
+            "guidedCapture intent=\(intent, privacy: .public) guide=[\(guideText, privacy: .public)] crop=[\(cropText, privacy: .public)] canvasError=\(canvasError, format: .fixed(precision: 5), privacy: .public) durationMs=\(durationMs, format: .fixed(precision: 1), privacy: .public) rejected=\(rejected ?? "none", privacy: .public)"
+        )
+    }
+
     // MARK: - 版面还原对标 WPS 结构化诊断（spec/wps-parity-layout，plan D5/D9 / FR-002、FR-006）    //
     // 两个可观测通道，真机验收（SC-002/SC-006）用 Console.app 检索：
     // - `reconstructPath`：每页解析的通路决策（结构化 vs 几何回退 + 原因分类）；

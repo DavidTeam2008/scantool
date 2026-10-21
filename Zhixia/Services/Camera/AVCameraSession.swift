@@ -86,6 +86,16 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
     func capturePhoto() async throws -> CapturedPhoto {
         let photo: CapturedPhoto = try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async {
+                // 会话未运行/未配置时，`AVCapturePhotoOutput.capturePhoto` 会抛
+                // **ObjC 异常**（Swift 侧无法捕获 → 直接 SIGABRT 崩溃）。模拟器无
+                // 相机、或相机启动失败后用户仍按快门时必现（2026-10-21 模拟器
+                // 走查实测崩溃：`-[AVCapturePhotoOutput capturePhotoWithSettings:delegate:]`
+                // → `objc_exception_throw` → abort）。这里前置守卫：不可用时抛
+                // Swift 错误，由调用方转成用户可见提示。
+                guard self.configured, self.session.isRunning else {
+                    continuation.resume(throwing: ZhixiaError.cameraUnavailable)
+                    return
+                }
                 let settings = AVCapturePhotoSettings()
                 if self.photoOutput.supportedFlashModes.contains(.auto), self.flashAuto {
                     settings.flashMode = .auto

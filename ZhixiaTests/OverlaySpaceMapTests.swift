@@ -245,4 +245,181 @@ struct OverlaySpaceMapTests {
             "照片 aspect 非法不应影响视频帧放置"
         )
     }
+
+    // MARK: - 逆映射（spec/guided-capture T011 / FR-004 / plan D2）
+
+    @Test("四角 round-trip：照片 → 屏幕 → 照片（异宽高比，逐角一致）")
+    func photoScreenRoundTrip() {
+        // 落在**视频可见子区间**内的照片框（4:3 照片 vs 16:9 视频 → x ∈ [0.125, 0.875]）
+        // 才可能无损往返：可见域外的照片内容在屏幕上根本看不到。
+        let probe = Quad(
+            topLeft: CGPoint(x: 0.20, y: 0.10),
+            topRight: CGPoint(x: 0.80, y: 0.08),
+            bottomRight: CGPoint(x: 0.78, y: 0.92),
+            bottomLeft: CGPoint(x: 0.22, y: 0.90)
+        )
+        for video in Self.aspects {
+            for photo in Self.aspects {
+                for viewSize in Self.viewSizes {
+                    let geometry = Self.geometry(video: video, photo: photo)
+                    // 先把探针投到「视频可见子区间」内，保证它在屏幕上可见。
+                    let visible = Self.clampToVideoVisible(probe, geometry: geometry)
+                    let screen = OverlaySpaceMap.screenQuad(
+                        fromPhotoQuad: visible,
+                        geometry: geometry,
+                        viewSize: viewSize
+                    )
+                    let back = OverlaySpaceMap.photoQuad(
+                        fromScreenQuad: screen,
+                        geometry: geometry,
+                        viewSize: viewSize
+                    )
+                    let pairs = [
+                        (back.topLeft, visible.topLeft),
+                        (back.topRight, visible.topRight),
+                        (back.bottomRight, visible.bottomRight),
+                        (back.bottomLeft, visible.bottomLeft)
+                    ]
+                    for pair in pairs {
+                        #expect(
+                            abs(pair.0.x - pair.1.x) < 1e-9 && abs(pair.0.y - pair.1.y) < 1e-9,
+                            "video=\(video) photo=\(photo) view=\(viewSize)：round-trip 角点 \(pair.1) → \(pair.0)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("逆映射与正向映射共用同一条 FOV 链（点级互逆）")
+    func photoPointIsInverseOfScreenQuad() {
+        let geometry = Self.geometry(video: 0.5625, photo: 0.75)
+        let viewSize = CGSize(width: 390, height: 844)
+        let point = CGPoint(x: 120, y: 300)
+        let photo = OverlaySpaceMap.photoPoint(
+            fromScreenPoint: point,
+            geometry: geometry,
+            viewSize: viewSize
+        )
+        let screen = OverlaySpaceMap.screenQuad(
+            fromPhotoQuad: Quad(
+                topLeft: photo,
+                topRight: photo,
+                bottomRight: photo,
+                bottomLeft: photo
+            ),
+            geometry: geometry,
+            viewSize: viewSize
+        ).topLeft
+        #expect(abs(screen.x - point.x) < 1e-9 && abs(screen.y - point.y) < 1e-9)
+    }
+
+    @Test("屏幕边缘点：映到照片可见域的对应边界（不越出照片）")
+    func screenEdgeMapsToVisiblePhotoBounds() {
+        // 4:3 照片 vs 16:9 视频：视频视野 = 照片 x ∈ [0.125, 0.875]。
+        let geometry = Self.geometry(video: 0.5625, photo: 0.75)
+        let viewSize = CGSize(width: 390, height: 844)
+        let placement = OverlaySpaceMap.videoFramePlacement(geometry: geometry, viewSize: viewSize)
+        // 放置矩形左缘（视频帧左缘）→ 照片可见域左界。
+        let left = OverlaySpaceMap.photoPoint(
+            fromScreenPoint: CGPoint(x: placement.minX, y: 0),
+            geometry: geometry,
+            viewSize: viewSize
+        )
+        #expect(abs(left.x - 0.125) < 1e-9)
+        #expect(abs(left.y - 0) < 1e-9)
+        // 放置矩形右缘 → 照片可见域右界。
+        let right = OverlaySpaceMap.photoPoint(
+            fromScreenPoint: CGPoint(x: placement.maxX, y: placement.height),
+            geometry: geometry,
+            viewSize: viewSize
+        )
+        #expect(abs(right.x - 0.875) < 1e-9)
+        #expect(abs(right.y - 1) < 1e-9)
+    }
+
+    @Test("退化输入：逆映射原样返回（不崩溃、不变形）")
+    func degenerateInverseIsInert() {
+        let point = CGPoint(x: 12, y: 34)
+        let viewSize = CGSize(width: 390, height: 844)
+        let degenerate: [CaptureGeometry] = [
+            CaptureGeometry(videoAspect: 0, photoAspect: 0.75),
+            CaptureGeometry(videoAspect: 0.5625, photoAspect: 0),
+            CaptureGeometry(videoAspect: .nan, photoAspect: 0.75),
+            CaptureGeometry(videoAspect: 0.5625, photoAspect: .infinity)
+        ]
+        for geometry in degenerate {
+            #expect(
+                OverlaySpaceMap.photoPoint(
+                    fromScreenPoint: point,
+                    geometry: geometry,
+                    viewSize: viewSize
+                ) == point,
+                "video=\(geometry.videoAspect) photo=\(geometry.photoAspect) 应原样返回"
+            )
+        }
+        #expect(
+            OverlaySpaceMap.photoPoint(
+                fromScreenPoint: point,
+                geometry: Self.geometry(video: 0.5625, photo: 0.75),
+                viewSize: .zero
+            ) == point
+        )
+    }
+
+    @Test("越界不静默钳制：屏幕外的点映到照片域外（由调用方判非法）")
+    func outOfScreenIsNotClamped() {
+        // 静默钳制会把越界拖动伪装成合法框 → 破坏 WYSIWYG 承诺（D2 退化保护）。
+        let geometry = Self.geometry(video: 0.5625, photo: 0.75)
+        let viewSize = CGSize(width: 390, height: 844)
+        let outside = OverlaySpaceMap.photoPoint(
+            fromScreenPoint: CGPoint(x: -400, y: -200),
+            geometry: geometry,
+            viewSize: viewSize
+        )
+        #expect(outside.x < 0, "屏幕左侧外的点应映到照片域外，实际 \(outside.x)")
+        #expect(outside.y < 0, "屏幕上方的点应映到照片域外，实际 \(outside.y)")
+    }
+
+    @Test("屏幕矩形 → 照片框完全落在可见域内（默认引导框不会含不可见内容）")
+    func screenRectMapsInsideVisiblePhotoRegion() {
+        let geometry = Self.geometry(video: 0.5625, photo: 0.75)
+        let viewSize = CGSize(width: 390, height: 844)
+        let rect = CGRect(x: 0.50, y: 0.12, width: 0.48, height: 0.80)
+        let screenQuad = Quad(
+            topLeft: CGPoint(x: rect.minX * viewSize.width, y: rect.minY * viewSize.height),
+            topRight: CGPoint(x: rect.maxX * viewSize.width, y: rect.minY * viewSize.height),
+            bottomRight: CGPoint(x: rect.maxX * viewSize.width, y: rect.maxY * viewSize.height),
+            bottomLeft: CGPoint(x: rect.minX * viewSize.width, y: rect.maxY * viewSize.height)
+        )
+        let photo = OverlaySpaceMap.photoQuad(
+            fromScreenQuad: screenQuad,
+            geometry: geometry,
+            viewSize: viewSize
+        )
+        let xs = [photo.topLeft.x, photo.topRight.x, photo.bottomRight.x, photo.bottomLeft.x]
+        let ys = [photo.topLeft.y, photo.topRight.y, photo.bottomRight.y, photo.bottomLeft.y]
+        #expect((xs.min() ?? 0) >= 0.125 - 1e-9, "左缘必须落在照片可见域内")
+        #expect((xs.max() ?? 1) <= 0.875 + 1e-9, "右缘必须落在照片可见域内")
+        #expect((ys.min() ?? 0) >= -1e-9 && (ys.max() ?? 1) <= 1 + 1e-9)
+    }
+
+    /// 把照片框夹到**视频可见子区间**内（否则屏幕上看不到，round-trip 必然失真）。
+    private static func clampToVideoVisible(_ quad: Quad, geometry: CaptureGeometry) -> Quad {
+        let visible = FOVLayout.convert(
+            quad: .fullImage,
+            fromAspect: geometry.photoAspect,
+            toAspect: geometry.videoAspect
+        )
+        let xs = [visible.topLeft.x, visible.topRight.x, visible.bottomRight.x, visible.bottomLeft.x]
+        let minX = xs.min() ?? 0
+        let maxX = xs.max() ?? 1
+        func clampX(_ x: Double) -> Double { min(max(x, minX), maxX) }
+        return Quad(
+            topLeft: CGPoint(x: clampX(quad.topLeft.x), y: quad.topLeft.y),
+            topRight: CGPoint(x: clampX(quad.topRight.x), y: quad.topRight.y),
+            bottomRight: CGPoint(x: clampX(quad.bottomRight.x), y: quad.bottomRight.y),
+            bottomLeft: CGPoint(x: clampX(quad.bottomLeft.x), y: quad.bottomLeft.y)
+        )
+    }
 }

@@ -34,4 +34,38 @@ struct PreferencesStoreTests {
         #expect(defaults.object(forKey: "zhixia.autoCapture") == nil,
                 "init 不得写入默认键——didSet 在 init 内不触发是零迁移设计的前提")
     }
+
+    // MARK: - 取景模式 / 拍摄意图（spec/guided-capture T010 / FR-001）
+
+    @Test("取景模式与拍摄意图默认值：auto / rightPage")
+    func captureModeDefaults() {
+        let defaults = UserDefaults(suiteName: "zhixia.prefs.\(UUID().uuidString)") ?? .standard
+        let preferences = PreferencesStore(defaults: defaults)
+        #expect(preferences.captureMode == .auto, "默认仍是自动路径（翻转需 A/B 数据）")
+        #expect(preferences.captureIntent == .rightPage, "折页书右页是主场景意图")
+    }
+
+    @Test("取景模式与拍摄意图持久化：重启后读回")
+    func captureModePersists() {
+        let defaults = UserDefaults(suiteName: "zhixia.prefs.\(UUID().uuidString)") ?? .standard
+        let first = PreferencesStore(defaults: defaults)
+        first.captureMode = .guided
+        first.captureIntent = .wholePage
+
+        let relaunched = PreferencesStore(defaults: defaults)
+        #expect(relaunched.captureMode == .guided)
+        #expect(relaunched.captureIntent == .wholePage)
+    }
+
+    @Test("未知持久化值回退默认（老版本残留 / 手改存储不崩溃）")
+    func unknownCaptureModeFallsBack() {
+        let suiteName = "zhixia.prefs.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.set("wps-style", forKey: "zhixia.captureMode")
+        defaults.set("diagonal", forKey: "zhixia.captureIntent")
+
+        let preferences = PreferencesStore(defaults: defaults)
+        #expect(preferences.captureMode == .auto)
+        #expect(preferences.captureIntent == .rightPage)
+    }
 }

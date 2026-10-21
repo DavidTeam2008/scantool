@@ -8,6 +8,8 @@ final class PreferencesStore {
         static let autoCapture = "zhixia.autoCapture"
         static let defaultFilter = "zhixia.defaultFilter"
         static let keepOriginals = "zhixia.keepOriginals"
+        static let captureMode = "zhixia.captureMode"
+        static let captureIntent = "zhixia.captureIntent"
     }
 
     private let defaults: UserDefaults
@@ -26,6 +28,18 @@ final class PreferencesStore {
 
     var keepOriginals: Bool {
         didSet { defaults.set(keepOriginals, forKey: Key.keepOriginals) }
+    }
+
+    /// 取景模式（spec/guided-capture T010 / FR-001）——默认 `.auto`：
+    /// 引导框是**可选路径**，翻转默认值需 SC-008 的 A/B 数据支撑（D9 / T032）。
+    var captureMode: CaptureMode {
+        didSet { defaults.set(captureMode.rawValue, forKey: Key.captureMode) }
+    }
+
+    /// 拍摄意图（spec/guided-capture T010 / FR-001）——默认 `.rightPage`：
+    /// 折页书「我要拍右页」是主场景（`docs/15` §一）。
+    var captureIntent: CaptureIntent {
+        didSet { defaults.set(captureIntent.rawValue, forKey: Key.captureIntent) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -52,6 +66,22 @@ final class PreferencesStore {
             keepOriginals = true
         } else {
             keepOriginals = defaults.bool(forKey: Key.keepOriginals)
+        }
+        // 取景模式 / 拍摄意图（spec/guided-capture T010）：未知值（老版本残留 /
+        // 手改存储）一律回退默认，不崩溃、不静默变成别的模式。
+        if let raw = defaults.string(forKey: Key.captureMode),
+           let mode = CaptureMode(rawValue: raw)
+        {
+            captureMode = mode
+        } else {
+            captureMode = .auto
+        }
+        if let raw = defaults.string(forKey: Key.captureIntent),
+           let intent = CaptureIntent(rawValue: raw)
+        {
+            captureIntent = intent
+        } else {
+            captureIntent = .rightPage
         }
     }
 }

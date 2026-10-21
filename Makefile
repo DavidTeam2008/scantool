@@ -25,8 +25,8 @@ TEST_LOG    := $(BUILD_DIR)/last-test.log
 APP_PATH    := $(BUILD_DIR)/dd/Build/Products/Debug-iphonesimulator/Zhixia.app
 XCODEBUILD  := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -skipPackagePluginValidation -skipMacroValidation
 # 测试基线（**只增不减**）：新增测试后同步本值；计数低于本值 = 测试被删 → make 失败。
-BASELINE_TOTAL ?= 417
-BASELINE_PASSED ?= 416
+BASELINE_TOTAL ?= 436
+BASELINE_PASSED ?= 435
 BASELINE_EXPECTED_FAILURES ?= 1
 
 .PHONY: help test test-only smoke device-build doctor
@@ -50,7 +50,7 @@ test: ## 全量单测（模拟器 iPhone 17 Pro + 自动 xcresulttool 计数）
 	  echo "完整日志: $(TEST_LOG)"; exit 1; \
 	fi
 	@echo "✓ 测试命令执行完成"
-	@$(MAKE) --no-print-directory count
+	@$(MAKE) --no-print-directory count-full
 
 # 内部目标：从 xcresult 提取计数并按基线口径解读
 count:
@@ -61,10 +61,13 @@ count:
 	    e=d.get('expectedFailures'); s=d.get('skippedTests'); \
 	    print('total=%s  passed=%s  failed=%s  expectedFailures=%s  skipped=%s' % (total,p,f,e,s)); \
 	    print('基线解读：$(BASELINE_TOTAL) = $(BASELINE_PASSED) passed + $(BASELINE_EXPECTED_FAILURES) expected failure + 0 failed（expectedFailures 是 known issue，不是 failed，也不是普通 passed）')"
+
+# 全量守卫：总数低于基线 = 既有测试被删 → 失败（局部测试用 count，不套此守卫）
+count-full: count
 	@total=$$(xcrun xcresulttool get test-results summary --path $(RESULT_PATH) | \
 	  python3 -c "import sys,json; print(json.load(sys.stdin).get('totalTestCount') or 0)"); \
-	 if [ "$$total" -lt "$(BASELINE_TOTAL)" ]; then \
-	   echo "✗ 测试数低于基线 $(BASELINE_TOTAL)（实际 $$total）——既有测试被删了？"; exit 1; \
+	 if [ "$${total}" -lt "$(BASELINE_TOTAL)" ]; then \
+	   echo "✗ 测试数低于基线 $(BASELINE_TOTAL)（实际 $${total}）——既有测试被删了？"; exit 1; \
 	 fi
 
 test-only: ## 局部单测：make test-only T=<测试类名>（例: T=GoldenWorksheetEndToEndTests）
@@ -98,10 +101,10 @@ smoke: ## 装机冒烟：模拟器 build + boot + install + launch + 进程存�
 	 OUT=$$(xcrun simctl launch $$UDID $(BUNDLE_ID)) || { echo "✗ 启动失败"; exit 1; }; \
 	 PID=$$(echo $$OUT | grep -oE '[0-9]+$$'); \
 	 sleep 3; \
-	 if ps -p $$PID > /dev/null 2>&1; then \
-	   echo "✓ 冒烟通过：App 已启动且进程存活（pid=$$PID）"; \
+	 if ps -p "$${PID}" > /dev/null 2>&1; then \
+	   echo "✓ 冒烟通过：App 已启动且进程存活（pid=$${PID}）"; \
 	 else \
-	   echo "✗ 进程 $$PID 3 秒内退出（疑似启动崩溃）——用 Console/崩溃日志排查"; exit 1; \
+	   echo "✗ 进程 $${PID} 3 秒内退出（疑似启动崩溃）——用 Console/崩溃日志排查"; exit 1; \
 	 fi
 
 device-build: ## 真机目标编译（generic/platform=iOS，免签名）
