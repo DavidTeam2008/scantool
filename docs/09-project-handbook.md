@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-10-18 · 对应代码 107 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 386 用例 = 385 passed + 1 expected failure + 0 failed（基线 377 → 386，frame-truth）· 当前最大卡点：框真相（frame-truth）与 Case B 粘滞 v2 均已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）；新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
+> 最后更新：2026-10-21 · 对应代码 108 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 397 用例 = 396 passed + 1 expected failure + 0 failed · 当前最大卡点：取景主场景仍缺“我要拍右页”的意图（见 [15](15-capture-recovery-assessment.md) 与 `spec/guided-capture/`）；frame-truth / Case B 修复已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）。新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
 
 ---
 
@@ -18,8 +18,9 @@
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
 实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12）；
 **取景 WYSIWYG 的 Case A/B 根因已定案、修复已交付**（case-b-sticky-v2 +
-folded-page-capture + frame-truth，386 全绿；真机验收待做，主清单
-`spec/frame-truth/device-acceptance.md`，§6.13）；**iOS 18~25 仍走几何兜底、
+folded-page-capture + frame-truth，当前总基线 397 全绿；真机验收仍待做，主清单
+`spec/frame-truth/device-acceptance.md`，§6.13；2026-10-21 复核后新增引导框主线
+`spec/guided-capture/`，见 §7）；**iOS 18~25 仍走几何兜底、
 真机依旧出不了表**；iOS 26 结构化通路真机接通性未验证（L1 疑案，§6.12 已知限制 ③）——见 §6。
 
 ### 仓库地图
@@ -28,15 +29,15 @@ folded-page-capture + frame-truth，386 全绿；真机验收待做，主清单
 scantool/
 ├── AGENTS.md                AI coding agent 冷启动入口（定位 / 铁律 / 命令速查）
 ├── Makefile                 构建/测试命令固化（test / test-only / smoke / device-build / doctor）
-├── Zhixia/                  主工程（107 个 .swift）
+├── Zhixia/                  主工程（108 个 .swift）
 │   ├── App/                 入口、DI 容器（AppEnvironment）、路由
 │   ├── Features/            按页面拆：Capture / Edit / Document / Reconstruct / Library / OCR / Settings …
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             43 个测试文件 / 386 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
-├── docs/                    本文 + 专题文档（00~12；12 为交接文档单入口）
-├── spec/                    SDD 周期工件（12 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
+├── ZhixiaTests/             44 个测试文件 / 397 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── docs/                    本文 + 专题文档（00~15；12 为交接文档单入口）
+├── spec/                    SDD 周期工件（14 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
 │   └── pdf-ocr-dump/        **从导出的 PDF 反解真机 OCR**（排障利器，见 §8.3）
@@ -577,7 +578,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- 43 个测试文件 / 386 个 `@Test`，全量 **385 passed + 0 failed + 1 expected failure**
+- 44 个测试文件 / 397 个 `@Test`，全量 **396 passed + 0 failed + 1 expected failure**
   （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的
@@ -932,6 +933,14 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 > 锁定冻结 + 成片=呈现框）；当前唯一待办是
 > **真机验收**（主清单 `spec/folded-page-capture/device-acceptance.md`，一趟合并
 > Case B 复测与 L1 取证），验收结论决定「常驻框范式」周期 2 是否立项。
+> **2026-10-21 复核后**：新增 [`docs/15`](15-capture-recovery-assessment.md) +
+> `spec/guided-capture/`——主场景缺“我要拍右页”的意图，先做引导框 MVP +
+> 画布真值 + trace/replay，自动调参降为 A/B 失败后的备选；真机验收仍做，
+> 但不再是唯一待办。
+> **2026-10-21 WPS 录屏**：已提供并评估（[15 §十一](15-capture-recovery-assessment.md)）；
+> 录屏支持手动快门 + 自动跟随实线框 + 拍后重裁/滤镜；我们的固定引导框是
+> 替代范式而非同款复刻，不改变主线；`document` 滤镜与拍后自动裁边列为
+> T040/T041 后续项。
 > 下面按**当前**的真实缺口重排。
 
 ### 已完成（2026-09-12）

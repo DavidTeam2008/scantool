@@ -5,10 +5,12 @@
 > AI agent 请从 [`AGENTS.md`](../AGENTS.md) 进入（铁律与命令速查）；人读细节下钻
 > [`09 接手手册`](09-project-handbook.md)。
 >
-> 更新：2026-10-18 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
+> 更新：2026-10-21 · 代码基线：C1 `c5a60ac`「WYSIWYG 裁剪与 WPS 对标两周期改动」
 > （wysiwyg-crop + wps-parity-layout 两周期产物入库点）+ case-b-sticky-v2 周期
 > 改动（§2.2 修复，待入库）+ folded-page-capture 周期改动（§2.1 第一轮定案与修复）
 > + frame-truth 周期改动（§2.1 第二轮：框真相与冻结直裁，待入库）
+> + **guided-capture 周期**（2026-10-21 复核后新增：引导框 MVP + 画布真值 +
+> trace/replay，待实施；先读 [`15`](15-capture-recovery-assessment.md)）
 
 ---
 
@@ -24,10 +26,10 @@
 | bundle id | `com.david.Zhixia` |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构分层 | App → Features（SwiftUI MVVM）→ Domain（纯函数）→ Services（actor 副作用），依赖只向下 |
-| 代码规模 | 150 个 Swift 文件（主工程 107 / 测试 43）/ 主工程约 14.5k 行 |
-| 质量现状 | **386 用例 = 385 passed + 1 expected failure + 0 failed**（Swift Testing，41 个含用例文件 + 2 个纯 fixture；基线只增不减） |
+| 代码规模 | 152 个 Swift 文件（主工程 108 / 测试 44）/ 主工程约 14.5k 行 |
+| 质量现状 | **397 用例 = 396 passed + 1 expected failure + 0 failed**（Swift Testing；2026-10-21 实测；基线只增不减） |
 
-### 1.1 SDD 周期一览（9 个已交付 + 3 个进行中）
+### 1.1 SDD 周期一览（9 个已交付 + 4 个进行中 + 1 个待实施）
 
 | # | 周期 | 主题 | 关键交付 | 基线 | 验收 |
 |---|---|---|---|---|---|
@@ -43,10 +45,23 @@
 | 10 | `case-b-sticky-v2`（进行中） | Case B 粘滞 v2 hold-through-miss | 池交替根因代码级定案、`CandidateSticky` v2 参数门控、`stickyHold`/`stickyEscape` 遥测补缺、存在性交替单测 ×11 | 357→368 | `spec/case-b-sticky-v2/`（真机复测并入周期 11） |
 | 11 | `folded-page-capture`（进行中） | 折页书四痛点：框抖 / 边框捕获 / 自动拍 / 折痕入片 | 四链路根因定案（regime c 近摄交替被相似跟随吞并等）、autoCapture 默认关（零迁移）、live 严格档放宽（0.15/26°）、粘滞调用点 0.70/5 止棘轮、`EdgeSnapper` 双向两阶段内拉、`gateRejectedStill` 贯穿 WYSIWYG | 368→377 | `spec/folded-page-capture/`（真机验收已被周期 12 取代） |
 | 12 | `frame-truth`（进行中） | 框真相：框锁局部带 / 成片越界 | 逐帧遥测定案（门控一票否决 + 粘滞④改选 + 逃逸抽签）、`viablePool` 单一真源、页面先验门控 0.25、锚点治理（0.12/3帧/0.8）、EdgeSnapper s=0 守卫（双线性）、**锁定冻结 + 精修上屏 + 成片=呈现框**、无效框承诺、来源/四角遥测 | 377→386 | `spec/frame-truth/`（真机验收待做，合并 Case B 复测 + L1 取证） |
+| 13 | `scan-enhance`（进行中） | 拍后增强 / 拍后拆分 / 清晰化 | 全分辨率静帧重检 + 身份锚定、书脊/左折条拆分、document 增强档、Review 可见可调 | 386→392 | `spec/scan-enhance/`（真机验收 T006 待做） |
+| 14 | `guided-capture`（待实施） | 引导取景：用户框定右页 + 画布真值 + 取证/回放 + Review 拆分确认 | 引导路径（不跑 detector/sticky/smoother）、屏幕↔照片逆映射、trace/诊断包、拆分提案不静默改 quad | 397→（T030 记录） | `spec/guided-capture/`（先读 `docs/15`） |
+
+> 基线说明：表中“377→386”等是各周期交付时的计数；2026-10-21 全量实测总基线
+> 为 **397 = 396 passed + 1 expected failure + 0 failed**。`guided-capture`
+> 的最终计数在 T030/T034 回填。
 
 ---
 
 ## 2. 当前卡点（诚实清单，按优先级）
+
+> **2026-10-21 复核（先读 [`15`](15-capture-recovery-assessment.md)）**：Case A/B
+> 的既有修复仍在等待真机验收，但复核认为主场景的根因不只是“框不够稳”——管线
+> 缺少“我要拍右页”的意图，评分/粘滞会稳定地锁错；`QuadSmoother` 的锁定判据
+> 是逐帧差，慢漂移不会解锁；Review 拆分仍会静默改 quad。因此新增
+> `spec/guided-capture/`：先做引导框 MVP + trace/replay，自动模式的 sticky/
+> smoother 调参暂缓；原 P0-1/P0-2 降级为 A/B 失败后的备选路线。
 
 ### 2.1 🔴 P0 · Case A：折页书（两轮定案；frame-truth 冻结直裁已交付，真机验收待做）
 
@@ -63,7 +78,7 @@
 > 自动拍门禁不看引导；**d. 快门隐藏换框**——still 是无身份锚的全局重选（包含降权
 > 使「右页+折痕」外框胜出），且吸附只在 still 发生、外向相从不测 s=0（已贴边的检出
 > 被继续外推 δ~1–2%），门禁只有 bbox IoU 无法分辨合法精修与越界。
-> **修复（frame-truth，386 全绿）**：`viablePool` 单一真源；页面先验门控 0.25；
+> **修复（frame-truth，交付时 386 全绿；当前总基线 397）**：`viablePool` 单一真源；页面先验门控 0.25；
 > 锚点治理（anchorMinArea 0.12 / 起锚 3 帧确认 / 跟随面积比 0.8 / 1s 清锚）；
 > EdgeSnapper s=0 守卫（双线性 G0）；**锁定瞬间吸附上屏并冻结、成片=呈现框**
 > （快门后不重检）；无效框（closer）不画锁定框/不自动拍/手动拍走搜索态；
@@ -132,9 +147,15 @@
   差距主缺口在**取景拍照环节**（= §2.1/§2.2）与 **L1 通路未定案**（= §2.4）。
 - **证据**：[11 §7 周期 1 实施后真机复测](11-wps-parity-research.md)（W1~W6 交付核对表）。
 - **复测状态**：还原侧金标准全绿、真机验收待做；取景侧见 §2.1/§2.2。
-- **建议方向**：取景侧范式决策——调研报告已给出「常驻框范式」（WPS 式：框常驻 +
-  用户对位 + 边缘吸附，结构性绕开候选振荡）作为周期 2（wps-parity-capture）的立项方向，
-  但**先完成 §2.1/§2.2 的日志取证**再评审取舍（7 个周期范式内修补真机仍败 vs 切范式的迁移成本）。
+- **WPS 录屏补充（2026-10-21）**：49s 录屏已收到并评估（[15 §十一](15-capture-recovery-assessment.md)）。
+  黑盒事实：手动快门；单实线框是**自动跟随页面**（无角手柄），10fps 下平滑，
+  但会在右页/整页间切换，快门时也不紧；成片比预览框更紧，Toast 明示自动裁剪 +
+  最佳滤镜；左折边靠裁切去除。结论：我们的固定引导框是替代范式，不是 WPS 同款；
+  引导框 + 手动快门 + Review 可见裁边/滤镜仍是主线，WPS 的静默换框不照搬。
+- **建议方向**：取景侧范式决策——调研报告提出「固定引导框范式」（框常驻 +
+  用户对位 + 边缘吸附，结构性绕开候选振荡）作为周期 2（wps-parity-capture）的
+  候选方向；注意 WPS 录屏实际是自动跟随框，不是同款。**先完成 §2.1/§2.2 的
+  日志取证**再评审取舍（7 个周期范式内修补真机仍败 vs 切范式的迁移成本）。
 
 ### 2.4 🟠 P1 · L1 真机通路疑案（iOS 26 结构化识别疑似静默回退）
 
@@ -165,10 +186,15 @@
 
 ## 3. 路线图（按优先级）
 
+> **执行顺序更新（2026-10-21）**：以 [`docs/15`](15-capture-recovery-assessment.md)
+> 与 `spec/guided-capture/` 为准。P0 先做引导框 MVP + trace/replay + 真机
+> A/B；自动检测的 alpha/显示死区等调参不在当前主线，只有引导未胜出时才按
+> `spec/guided-capture/plan.md` D9 的顺序启动自动恢复周期。
+
 | 阶段 | 内容 | 前置 |
 |---|---|---|
-| **P0 裁剪质量** | Case A：✅ 两轮定案 + frame-truth 已交付（386 全绿：候选池单一真源 / 页面先验门控 / 锚点治理 / s=0 守卫 / **锁定冻结+成片=呈现框** / 无效框承诺）→ **真机验收**（`spec/frame-truth/device-acceptance.md`）；Case B：✅ 粘滞 v2 已交付 → **真机复测并入同一会话**（一趟抄齐 `stickyHold`/`stickyEscape`/`candidateProvenance`/`snapOnLock`） | 三周期修复均已交付待入库；验收主清单 `spec/frame-truth/device-acceptance.md`（含合并项 §4） |
-| **P1 真机取证与对标收尾** | L1 通路取证（`reconstructPath`，可与 P0 同一会话）；iOS 26 表格真机验证；阴影场景 OCR 预处理档验证；条码真机验证（模拟器恒 0）；取证后评审「常驻框范式」周期 2（wps-parity-capture，需 WPS 取景录屏） | P0 日志会话顺带完成取证 |
+| **P0 裁剪质量** | Case A：✅ 两轮定案 + frame-truth 已交付（交付时 386 全绿；当前总基线 397：候选池单一真源 / 页面先验门控 / 锚点治理 / s=0 守卫 / **锁定冻结+成片=呈现框** / 无效框承诺）→ **真机验收**（`spec/frame-truth/device-acceptance.md`）；Case B：✅ 粘滞 v2 已交付 → **真机复测并入同一会话**（一趟抄齐 `stickyHold`/`stickyEscape`/`candidateProvenance`/`snapOnLock`）；**新增 guided-capture：引导框 MVP + 画布真值 + trace/replay + Review 拆分确认（当前主线）** | 三周期修复均已交付待入库；验收主清单 `spec/frame-truth/device-acceptance.md`（含合并项 §4）；引导验收 `spec/guided-capture/device-acceptance.md` |
+| **P1 真机取证与对标收尾** | L1 通路取证（`reconstructPath`，可与 P0 同一会话）；iOS 26 表格真机验证；阴影场景 OCR 预处理档验证；条码真机验证（模拟器恒 0）；取证后评审「常驻框范式」周期 2（wps-parity-capture，WPS 录屏已提供并评估，见 §2.3） | P0 日志会话顺带完成取证 |
 | **P2 老系统兜底与工程债** | 表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter；导出层表格样式（`w:tblPr`/表头加粗/数值右对齐）与 `gridSpan`/`vMerge`；Library/Review/SwiftData 工程债 | P0/P1 收尾后 |
 | **P3 云通路** | 接通 TextIn（低置信 block 走 `ReconstructRepairing`，禁止整页 LLM 重打表数字）；手写 / 勾选识别 | **独立周期评审**——纯离线是铁律，云通路须单独立项（含隐私披露与用户确认 UX） |
 
@@ -182,29 +208,33 @@
 2. 本文 —— 全貌 / 卡点 / 路线图
 3. [`09 接手手册`](09-project-handbook.md) —— 架构原理 + 卡点史（§4 契约、§6 卡点清单最常被引用）
 4. [`00 接手指南`](00-getting-started.md) —— 实操：目录地图 / 怎么测
-5. 动 **capture 侧**前：`spec/wysiwyg-crop/spec.md` + [09 §4.2](09-project-handbook.md)（WYSIWYG 裁切契约 / overlay 屏幕点契约）
-6. 动 **reconstruct 侧**前：`spec/wps-parity-layout/spec.md` + [09 §4.5](09-project-handbook.md)（版面对标契约）+ [`06`](06-document-reconstruction.md)
+5. [`15 取景复盘`](15-capture-recovery-assessment.md) —— 2026-10-21 复核：为什么先做引导框、代码证据、10 天计划
+6. 动 **capture 侧**前：`spec/guided-capture/` 四件套 + `spec/wysiwyg-crop/spec.md` + [09 §4.2](09-project-handbook.md)（WYSIWYG 裁切契约 / overlay 屏幕点契约）
+7. 动 **reconstruct 侧**前：`spec/wps-parity-layout/spec.md` + [09 §4.5](09-project-handbook.md)（版面对标契约）+ [`06`](06-document-reconstruction.md)
 
 ### 4.2 跑什么
 
 ```bash
 make doctor    # 环境自检（Xcode / 模拟器 / Busy 提示）
-make test      # 全量单测 + 自动 xcresulttool 计数（基线：total=357 passed=356 failed=0 expectedFailures=1）
+make test      # 全量单测 + 自动 xcresulttool 计数（基线：total=397 passed=396 failed=0 expectedFailures=1）
 make test-only T=GoldenWorksheetEndToEndTests   # 局部单测
 make smoke     # 装机冒烟（build + install + launch + 存活检查）
 make device-build   # 真机目标编译（generic/platform=iOS，免签名）
 ```
 
+- **本机 destination**：`iPhone 17 Pro` 只装了 iOS 26.4.1，而 `make test` 未指定
+  OS 时 xcodebuild 可能解析到 27.0 并失败。T000 修好前用：
+  `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`。
 - 环境坑已固化进 Makefile：`DEVELOPER_DIR` 默认注入；`OTHER_SWIFT_FLAGS="-disable-sandbox"`
   必加（macOS 26.x 宏沙箱失效，不加所有宏报错）；模拟器 `Busy` 不是代码问题，
   `xcrun simctl erase all` 后重跑。
 - **计数陷阱**：known issue 用例日志是 `recorded an expected failure`，不是 `passed`——
-  按 `passed` 搜日志会数出 356 误判丢 1 条；以 `make test` 末尾 xcresulttool 计数为准。
+  按 `passed` 搜日志会少算 1 条；以 `make test` 末尾 xcresulttool 计数为准。
 
 ### 4.3 铁律（违反任何一条都会破坏既有资产）
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动全部替身测试连锁崩。
-2. **既有测试断言零修改**——基线 357 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
+2. **既有测试断言零修改**——基线 397 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
 3. **纯离线**——不引任何网络依赖、不加云调用；云通路是 P3 路线图，须独立周期评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 模拟器永远返回空；条码断言只能靠 `BarcodeDetecting` 协议注入替身 + 真机验收。
 5. **`withKnownIssue` ≠ failed ≠ passed**——见 4.2 计数陷阱。
@@ -229,7 +259,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 
 ## 5. 证据索引
 
-### 5.1 spec/ 周期工件（9 个已交付周期 + 3 个进行中周期）
+### 5.1 spec/ 周期工件（9 个已交付周期 + 4 个进行中周期 + 1 个待实施周期）
 
 | 周期 | 四件套位置 | 一句话 |
 |---|---|---|
@@ -245,6 +275,8 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | case-b-sticky-v2 | `spec/case-b-sticky-v2/` | Case B 池交替根因定案 + 粘滞 v2 hold-through-miss（真机复测并入下行周期） |
 | folded-page-capture | `spec/folded-page-capture/` | 第一轮：默认不自动拍 / 检测放宽 / 粘滞 0.70·5 / 双向吸附（验收单已被 frame-truth 取代） |
 | frame-truth | `spec/frame-truth/` | 第二轮框真相：候选供给 / 锚点治理 / s=0 守卫 / 冻结直裁 / 无效框承诺（**真机验收单 = 下一趟真机会话主清单**） |
+| scan-enhance | `spec/scan-enhance/` | 拍后重检 / 书脊与左折条拆分 / document 增强（T006 真机验收待做；周期基线 392） |
+| guided-capture | `spec/guided-capture/` | **2026-10-21 新主线**：引导框 MVP + 画布真值 + trace/replay + Review 拆分确认（待实施，先读 `docs/15`） |
 
 ### 5.2 docs/ 索引
 
@@ -265,6 +297,7 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 | [12](12-handover.md) | 本文 |
 | [13](13-mcp-quickref.md) | MCP 使用速查：6 server 分工 / 配置落点 / 场景对照 / 项目铁律叠加 |
 | [14](14-project-summary-and-roadmap.md) | **项目全面总结 + 完整优化路线图**（2026-10-21：取景稳定性 / 拍后裁切校准 / 竞品对标 / 工程债） |
+| [15](15-capture-recovery-assessment.md) | **取景卡点复盘与引导框恢复计划**（2026-10-21：代码证据 / 10 天计划 / 验收指标 / 1 小时验证） |
 
 ### 5.3 提交锚点
 
