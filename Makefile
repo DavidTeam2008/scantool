@@ -16,7 +16,8 @@ PROJECT     := Zhixia.xcodeproj
 SCHEME      := Zhixia
 BUNDLE_ID   := com.david.Zhixia
 SIM_NAME    := iPhone 17 Pro
-DEST_SIM    := platform=iOS Simulator,name=$(SIM_NAME)
+SIM_OS      ?= 26.4.1
+DEST_SIM    := platform=iOS Simulator,name=$(SIM_NAME),OS=$(SIM_OS)
 DEST_DEVICE := generic/platform=iOS
 BUILD_DIR   := build
 RESULT_PATH := $(BUILD_DIR)/Zhixia.xcresult
@@ -55,7 +56,7 @@ count:
 	    total=d.get('totalTestCount'); p=d.get('passedTests'); f=d.get('failedTests'); \
 	    e=d.get('expectedFailures'); s=d.get('skippedTests'); \
 	    print('total=%s  passed=%s  failed=%s  expectedFailures=%s  skipped=%s' % (total,p,f,e,s)); \
-	    print('基线解读：357 = 356 passed + 1 expected failure + 0 failed（expectedFailures 是 known issue，不是 failed，也不是普通 passed）')"
+	    print('基线解读：397 = 396 passed + 1 expected failure + 0 failed（expectedFailures 是 known issue，不是 failed，也不是普通 passed）')"
 
 test-only: ## 局部单测：make test-only T=<测试类名>（例: T=GoldenWorksheetEndToEndTests）
 	@test -n "$(T)" || { echo "用法: make test-only T=<测试类名>  例: make test-only T=GoldenWorksheetEndToEndTests"; exit 2; }

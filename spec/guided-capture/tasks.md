@@ -15,12 +15,14 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
 
 ## Phase 0: 基线与真值（US3 / D6 / D8）
 
-- [ ] **T000** 修构建基线（D8）：`Makefile` 增加 `SIM_OS ?= 26.4.1` 并让
+- [X] **T000** 修构建基线（D8）：`Makefile` 增加 `SIM_OS ?= 26.4.1` 并让
   `DEST_SIM` 使用 `OS=$(SIM_OS)`；基线打印 357 → 397；同步 `AGENTS.md`、
   `docs/12-handover.md`、`spec/scan-enhance/tasks.md` 的 386/392 过期计数
   （scan-enhance 只加“周期交付时/当前总基线”说明，不改写 T005 历史）。
   验证：直接 `make test`，末尾输出 `total=397 passed=396 failed=0
   expectedFailures=1`。**只改构建/文档，不改产品行为。**
+  实测（2026-10-21）：通过，`total=397 passed=396 failed=0
+  expectedFailures=1 skipped=0`。
 - [ ] **T001** [P] `CaptureTrace` 数据模型 + debug 环形缓冲（D6 / FR-007）：
   新增 `Zhixia/Diagnostics/CaptureTrace.swift`、`CaptureTraceRecorder.swift`；
   记录 timestamp/phase/directive/geometry/previewSize/guide/crop/sticky/
