@@ -150,16 +150,22 @@ protocol DocxRendering: Sendable {
 /// 2026-09-22（wps-parity-layout T006）：默认档翻回 `.structured`（流式），
 /// `restored` 成为用户显式选择的第二档（用户面措辞流式/高保真见 `ExportTier`）。
 enum R2OutputTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
+    /// **图片版**（spec/word-fidelity T002 / FR-002）：整页增强图铺满页面，
+    /// 页面即图片（无浮动文本框 / 无 mask / 无重排）——**样式不可能乱**，
+    /// 且与 WPS 的「扫描件 → Word」实测行为一致（docs/16 §二：导出预览渲染的
+    /// 就是页面本身，文档标记「只读」）。代价：Word 里不可逐字编辑。
+    case pageImage
     case restored
     case structured
 
     /// UI 里用户可选择的档位（顺序 = Picker 展示序，默认档语义见 `ExportTier.defaultTier`）。
-    static let selectable: [R2OutputTier] = [.restored, .structured]
+    static let selectable: [R2OutputTier] = [.pageImage, .restored, .structured]
 
     /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.*`，spec layout-restore T017）。
     /// `Text(String)` 是 verbatim 渲染，本地化必须在这里发生（`String(localized:)`）。
     var displayName: String {
         switch self {
+        case .pageImage: return String(localized: "reconstruct.tier.pageImage")
         case .restored: return String(localized: "reconstruct.tier.restored")
         case .structured: return String(localized: "reconstruct.tier.structured")
         }

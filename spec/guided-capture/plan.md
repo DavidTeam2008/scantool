@@ -227,7 +227,7 @@ IoU≥0.85 且面积≤拍摄框×1.10）；这是既有契约，不扩出拍摄
 - 引导路径快门后不重检、不拆分、不改框。
 - `PageDraft` 持久化字段不变；复用 `userAdjustedQuad`。
 - 纯离线；trace/留样只在本地，用户主动导出。
-- 基线只增不减（当前 444 = 443 passed + 1 expected failure + 0 failed）；Review 拆分的必要翻转逐条记录。
+- 基线只增不减（当前 448 = 447 passed + 1 expected failure + 0 failed）；Review 拆分的必要翻转逐条记录。
 
 ## 风险表
 

@@ -9,14 +9,13 @@ final class ReconstructViewModel {
     var docxURL: URL?
     var pdfURL: URL?
     var isExporting = false
-    /// 当前选中的导出档位（流式 / 高保真，spec/wps-parity-layout plan D1/FR-001）。
-    /// **默认流式**（`.structured`）—— 对照基线改为「默认与 WPS 一致的流式再编辑
-    /// 产物」；高保真（`.restored`，版面还原）成为用户显式选择的第二档。
+    /// 当前选中的导出档位（流式 / 高保真 / 图片版，spec/wps-parity-layout plan D1/FR-001、
+    /// spec/word-fidelity T002/FR-002）。
     ///
-    /// 档位**同时**影响两件事：① 导出的 Word 产物；② 页面预览的渲染方式。
-    /// 早期版本档位只作用于 ①，预览永远是结构化块流 —— 用户切档看到画面纹丝不动，
-    /// 直接反馈「选了没反应」。现在 `ReconstructView.preview` 按档位分两种渲染。
-    var outputTier: R2OutputTier = .structured
+    /// **默认图片版**（`ExportTier.defaultTier`）——WPS 的 Word 导出实测就是页面图
+    /// （docs/16 §二），且浮点重建在复杂页面上不可靠（用户实测「样式会乱」）。
+    /// 进入页面时 `ReconstructView` 会用持久化偏好覆盖它（`setTier`）。
+    var outputTier: R2OutputTier = ExportTier.defaultTier.outputTier
 
     /// 切换档位。必须走这个方法而不是直接赋值：
     /// 切档后旧产物即失效 —— 若不清 `docxURL`，导出按钮会一直是 ShareLink，

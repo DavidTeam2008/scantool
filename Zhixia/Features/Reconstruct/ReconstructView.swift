@@ -91,6 +91,20 @@ struct ReconstructView: View {
                         .background(Color(hex: 0xEFE8DC), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 switch viewModel.outputTier {
+                case .pageImage:
+                    // 图片版（spec/word-fidelity T002）：整页增强图 = 导出产物本身
+                    // （预览 = 导出，同源同形）。
+                    ForEach(viewModel.pages, id: \.pageID) { page in
+                        PageImageCanvas(
+                            page: page,
+                            backgroundImageURL: viewModel.pageImageURL(for: page.pageID)
+                        )
+                    }
+                    if viewModel.pages.contains(where: { viewModel.pageImageURL(for: $0.pageID) == nil }) {
+                        Text("reconstruct.tierBackgroundMissingImage")
+                            .font(.caption2)
+                            .foregroundStyle(Tokens.muted)
+                    }
                 case .restored:
                     ForEach(viewModel.pages, id: \.pageID) { page in
                         LayoutCanvas(

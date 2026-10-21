@@ -1,258 +1,18 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
-    "capture.guide.autoFit" : {
+    "reconstruct.tier.pageImage" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Auto fit"
+            "value" : "Page image"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自动对位"
-          }
-        }
-      }
-    },
-    "capture.guide.reset" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reset"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重置"
-          }
-        }
-      }
-    },
-    "capture.guide.undo" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Undo"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "撤销"
-          }
-        }
-      }
-    },
-    "capture.hint.guided" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Frame the page you want, then shoot"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "框住要拍的页，然后按快门"
-          }
-        }
-      }
-    },
-    "capture.hint.guidedNotReady" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Align the guide frame first"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "先对位引导框"
-          }
-        }
-      }
-    },
-    "capture.intent.leftPage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Left"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左页"
-          }
-        }
-      }
-    },
-    "capture.intent.rightPage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Right"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "右页"
-          }
-        }
-      }
-    },
-    "capture.intent.wholePage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Whole"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "整页"
-          }
-        }
-      }
-    },
-    "capture.mode.auto" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auto"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动"
-          }
-        }
-      }
-    },
-    "capture.mode.guided" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Guided"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "引导"
-          }
-        }
-      }
-    },
-    "review.split" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拆分"
-          }
-        }
-      }
-    },
-    "review.split.apply" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apply"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "应用"
-          }
-        }
-      }
-    },
-    "review.split.left" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Left"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左页"
-          }
-        }
-      }
-    },
-    "review.split.right" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Right"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "右页"
-          }
-        }
-      }
-    },
-    "review.split.undo" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Undo"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "撤销"
-          }
-        }
-      }
-    },
-    "review.split.whole" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Whole"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "整页"
+            "value" : "图片版"
           }
         }
       }
@@ -340,6 +100,54 @@
         }
       }
     },
+    "capture.guide.autoFit" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto fit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动对位"
+          }
+        }
+      }
+    },
+    "capture.guide.reset" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置"
+          }
+        }
+      }
+    },
+    "capture.guide.undo" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
+          }
+        }
+      }
+    },
     "capture.hint.back" : {
       "localizations" : {
         "en" : {
@@ -368,6 +176,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "对准正面"
+          }
+        }
+      }
+    },
+    "capture.hint.guided" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frame the page you want, then shoot"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "框住要拍的页，然后按快门"
+          }
+        }
+      }
+    },
+    "capture.hint.guidedNotReady" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Align the guide frame first"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先对位引导框"
           }
         }
       }
@@ -436,6 +276,70 @@
         }
       }
     },
+    "capture.intent.leftPage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左页"
+          }
+        }
+      }
+    },
+    "capture.intent.rightPage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右页"
+          }
+        }
+      }
+    },
+    "capture.intent.wholePage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whole"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整页"
+          }
+        }
+      }
+    },
+    "capture.mode.auto" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动"
+          }
+        }
+      }
+    },
     "capture.mode.document" : {
       "localizations" : {
         "en" : {
@@ -448,6 +352,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "文档"
+          }
+        }
+      }
+    },
+    "capture.mode.guided" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guided"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引导"
           }
         }
       }
@@ -1684,22 +1604,6 @@
         }
       }
     },
-    "reconstruct.tierHint" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restored layout: rebuilds the page the way you shot it (default). Structured: editable text flow. Preview and export follow your choice."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "版面还原：按拍摄的原始版面原位还原（默认）。结构化：可编辑的段落流。预览与导出随选择切换。"
-          }
-        }
-      }
-    },
     "reconstruct.tierBackgroundMissingImage" : {
       "localizations" : {
         "en" : {
@@ -1712,6 +1616,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "部分页面没有留存原图，版面还原档底座已退化为白底（版面位置仍然保留）。"
+          }
+        }
+      }
+    },
+    "reconstruct.tierHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored layout: rebuilds the page the way you shot it (default). Structured: editable text flow. Preview and export follow your choice."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版面还原：按拍摄的原始版面原位还原（默认）。结构化：可编辑的段落流。预览与导出随选择切换。"
           }
         }
       }
@@ -1812,6 +1732,102 @@
         }
       }
     },
+    "review.split" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拆分"
+          }
+        }
+      }
+    },
+    "review.split.apply" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用"
+          }
+        }
+      }
+    },
+    "review.split.left" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左页"
+          }
+        }
+      }
+    },
+    "review.split.right" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右页"
+          }
+        }
+      }
+    },
+    "review.split.undo" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
+          }
+        }
+      }
+    },
+    "review.split.whole" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whole"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整页"
+          }
+        }
+      }
+    },
     "review.title" : {
       "localizations" : {
         "en" : {
@@ -1908,7 +1924,24 @@
         }
       }
     },
+    "settings.defaultFilter" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default filter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认滤镜"
+          }
+        }
+      }
+    },
     "settings.diagnostics" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1925,6 +1958,7 @@
       }
     },
     "settings.diagnostics.export" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1941,6 +1975,7 @@
       }
     },
     "settings.diagnostics.failed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1957,6 +1992,7 @@
       }
     },
     "settings.diagnostics.hint" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1968,22 +2004,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "trace + 候选 + 原图 + 最近帧。全部留在这台 iPhone 上，不联网。"
-          }
-        }
-      }
-    },
-    "settings.defaultFilter" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Default filter"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "默认滤镜"
           }
         }
       }

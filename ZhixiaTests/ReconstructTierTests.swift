@@ -66,15 +66,16 @@ struct ReconstructTierTests {
         #expect(viewModel.docxURL == nil)
     }
 
-    /// 重选默认档 `.structured`（= 当前档）不应作废产物。
-    /// （D8 修改记录：默认档翻转后，"当前档"从 `.restored` 变为 `.structured`，仅参数互换。）
+    /// 重选当前档（= 默认档）不应作废产物。
+    /// （D8 修改记录：默认档翻转后"当前档"随之变化，仅参数互换。
+    ///  2026-10-22 spec/word-fidelity T002：默认档再翻为 `.pageImage`。）
     @Test("切到当前档位不应作废产物")
     func reselectingSameTierKeepsDocx() {
         let viewModel = makeViewModel()
         let url = URL(fileURLWithPath: "/tmp/keep.docx")
         viewModel.docxURL = url
 
-        viewModel.setTier(.structured)
+        viewModel.setTier(ExportTier.defaultTier.outputTier)
         #expect(viewModel.docxURL == url)
     }
 
@@ -91,7 +92,8 @@ struct ReconstructTierTests {
 
     @Test("两档都有非空显示名")
     func tiersAreLabelled() {
-        #expect(R2OutputTier.allCases.count == 2)
+        // 2026-10-22（spec/word-fidelity T002）：新增图片版 → 2 档变 3 档。
+        #expect(R2OutputTier.allCases.count == 3)
         for tier in R2OutputTier.allCases {
             #expect(tier.displayName.isEmpty == false)
         }
@@ -100,9 +102,10 @@ struct ReconstructTierTests {
     /// 2026-09-12 B/C 被下架时这条锁住「UI 只暴露 A 档」；
     /// 2026-09-18 版面还原特性落地后（plan D1/FR-006）：`.anchored`/`.background` 删除，
     /// `.restored` + `.structured` 两项**全部可选**，`.restored` 在前。
-    @Test("可选档位 = 版面还原 + 结构化，且与全枚举一致")
+    @Test("可选档位 = 图片版 + 版面还原 + 结构化，且与全枚举一致")
     func selectableTiersAreRestoredAndStructured() {
-        #expect(R2OutputTier.selectable == [.restored, .structured])
+        // 2026-10-22（spec/word-fidelity T002）：图片版置首（默认档）。
+        #expect(R2OutputTier.selectable == [.pageImage, .restored, .structured])
         #expect(R2OutputTier.selectable.count == R2OutputTier.allCases.count)
     }
 
@@ -136,16 +139,21 @@ struct ReconstructTierTests {
     /// 未设置/空串/非法持久化值的回退，与新 VM 的初始内部档位一致。
     @Test("默认档 = 流式：ExportTier 默认/回退与新 VM 初始档一致")
     func defaultTierIsFlow() {
-        #expect(ExportTier.defaultTier == .flow, "FR-001：默认档必须是流式")
-        #expect(ExportTier(persistedRawValue: nil) == .flow, "未设置时回退默认档 flow")
-        #expect(ExportTier(persistedRawValue: "") == .flow, "空串回退默认档 flow")
-        #expect(ExportTier(persistedRawValue: "bogus") == .flow, "非法值回退默认档 flow（老版本数据零破坏）")
+        // **方向性翻转（spec/word-fidelity T002 / plan D2 / FR-002）**：默认档
+        // 从 `.flow`（流式）翻为 `.pageImage`（图片版）——依据：WPS 的 Word 导出
+        // 实测就是页面图（docs/16 §二）；用户实测「复杂页面的 Word 样式会乱」
+        // （docs/16 §一）；文字检索由 App 自身 OCR 索引承担，不依赖 Word 可编辑文字。
+        // 可编辑两档（流式 / 版面还原）仍在设置里一键切换。
+        #expect(ExportTier.defaultTier == .pageImage, "默认档 = 图片版（视觉保真优先）")
+        #expect(ExportTier(persistedRawValue: nil) == .pageImage, "未设置时回退默认档")
+        #expect(ExportTier(persistedRawValue: "") == .pageImage, "空串回退默认档")
+        #expect(ExportTier(persistedRawValue: "bogus") == .pageImage, "非法值回退默认档（老版本数据零破坏）")
 
         let viewModel = makeViewModel()
-        #expect(viewModel.outputTier == .structured, "新 VM 默认 = flow 的内部映射 .structured")
+        #expect(viewModel.outputTier == .pageImage, "新 VM 默认 = 图片版的内部映射")
         #expect(
-            ExportTier(outputTier: viewModel.outputTier) == .flow,
-            "新 VM 初始档反映的用户档位必须是 flow"
+            ExportTier(outputTier: viewModel.outputTier) == .pageImage,
+            "新 VM 初始档反映的用户档位必须是图片版"
         )
     }
 
@@ -169,9 +177,9 @@ struct ReconstructTierTests {
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        // 未设置 → 默认 flow（ReconstructView 首次进入页面的读取路径）
+        // 未设置 → 默认档（2026-10-22 起 = 图片版；此前 = 流式）
         #expect(
-            ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey)) == .flow
+            ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey)) == ExportTier.defaultTier
         )
 
         // 写入 highFidelity → 还原 highFidelity，预览/导出档 = .restored
@@ -180,10 +188,10 @@ struct ReconstructTierTests {
         #expect(restored == .highFidelity)
         #expect(restored.outputTier == .restored)
 
-        // 垃圾值 → 回退 flow（手工改库 / 老版本数据零破坏）
+        // 垃圾值 → 回退默认档（手工改库 / 老版本数据零破坏）
         defaults.set("not-a-tier", forKey: ExportTier.preferenceKey)
         #expect(
-            ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey)) == .flow
+            ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey)) == ExportTier.defaultTier
         )
     }
 
@@ -197,9 +205,13 @@ struct ReconstructTierTests {
         let viewModel = makeViewModel()
         await viewModel.reconstruct()
         #expect(viewModel.hasContent, "替身识别器应产出内容（预览数据源非空）")
-        #expect(viewModel.outputTier == .structured, "未持久化选择时预览 = 默认流式档")
+        // **方向性翻转（spec/word-fidelity T002）**：默认档 = 图片版；本用例
+        // 显式选档后仍验证「预览/导出同源」的原有语义（流式段落流 / 版面还原
+        // 浮动文本框承载同一段文本）。
+        #expect(viewModel.outputTier == .pageImage, "未持久化选择时预览 = 默认图片版档")
 
-        // 默认流式：导出 = 段落流 —— 零浮动文本框，正文携带预览同源文本
+        // 流式：导出 = 段落流 —— 零浮动文本框，正文携带预览同源文本
+        viewModel.setTier(.structured)
         await viewModel.exportDocx()
         let flowURL = try #require(viewModel.docxURL, "流式导出失败：\(viewModel.error?.userMessage ?? "未知错误")")
         defer { try? FileManager.default.removeItem(at: flowURL) }

@@ -25,11 +25,11 @@ TEST_LOG    := $(BUILD_DIR)/last-test.log
 APP_PATH    := $(BUILD_DIR)/dd/Build/Products/Debug-iphonesimulator/Zhixia.app
 XCODEBUILD  := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -skipPackagePluginValidation -skipMacroValidation
 # 测试基线（**只增不减**）：新增测试后同步本值；计数低于本值 = 测试被删 → make 失败。
-BASELINE_TOTAL ?= 444
-BASELINE_PASSED ?= 443
+BASELINE_TOTAL ?= 448
+BASELINE_PASSED ?= 447
 BASELINE_EXPECTED_FAILURES ?= 1
 
-.PHONY: help test test-only smoke device-build doctor
+.PHONY: help test test-only smoke word-fidelity device-build doctor
 
 help: ## 显示本帮助
 	@echo "纸匣 Zhixia · 可用命令（DEVELOPER_DIR=$(DEVELOPER_DIR)）"
@@ -106,6 +106,12 @@ smoke: ## 装机冒烟：模拟器 build + boot + install + launch + 进程存�
 	 else \
 	   echo "✗ 进程 $${PID} 3 秒内退出（疑似启动崩溃）——用 Console/崩溃日志排查"; exit 1; \
 	 fi
+
+word-fidelity: ## Word 导出保真度（spec/word-fidelity）：导出 → 渲染 → SSIM 门限
+	@echo "▶ 导出 Word 夹具产物（页面图 + 两种 docx）"
+	@$(MAKE) --no-print-directory test-only T=WordFidelityExportTests
+	@echo "▶ 渲染并比对（qlmanage + ffmpeg SSIM，门限 0.90）"
+	@./Tools/word-fidelity/check.sh
 
 device-build: ## 真机目标编译（generic/platform=iOS，免签名）
 	@mkdir -p $(BUILD_DIR)

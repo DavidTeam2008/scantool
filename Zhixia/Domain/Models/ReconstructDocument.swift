@@ -290,14 +290,29 @@ struct ReconstructDocument: Sendable, Equatable, Codable, Hashable {
 /// 档位同时作用于预览渲染与导出产物（预览/导出同源，FR-009）；用户选择经
 /// `ExportTier.preferenceKey` 持久化，未设置/非法值一律回退默认档 flow（FR-001）。
 enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
+    /// 流式（可编辑）：段落流重排。
     case flow
+    /// 版面还原（可编辑）：底图 + 遮罩 + 文本框原位重排。
     case highFidelity
+    /// **图片版**（spec/word-fidelity T002 / FR-002）：整页增强图铺满页面。
+    ///
+    /// WPS 实测（`docs/media/3ca8ce818cf785798a1661a3eef67730.mp4`，docs/16 §二）：
+    /// 「扫描件 → 导出 Word」的产物**就是页面本身**（导出预览渲染页面图、
+    /// 文档提示「只读」），可编辑文字是另一个独立动作（提取文字）。本档位与之
+    /// 对齐，并把「样式乱掉」从根上消掉（没有浮动文本框可乱）。
+    case pageImage
 
     /// 档位偏好持久化键（@AppStorage / UserDefaults，命名对齐 `PreferencesStore.Key`）。
     static let preferenceKey = "zhixia.reconstruct.exportTier"
 
-    /// 默认档 = 流式（FR-001：默认导出与预览 MUST 为流式重建文档）。
-    static let defaultTier: ExportTier = .flow
+    /// 默认档 = **图片版**（spec/word-fidelity plan D2 / FR-002）。
+    ///
+    /// 依据：① WPS 的 Word 导出实测就是页面图（docs/16 §二）；② 用户实测反馈
+    /// 「稍微复杂一点的图片内容，最后生成 word 的样式会乱掉」（docs/16 §一）——
+    /// 浮点重建在复杂页面上不可靠，图片版不可能乱；③ 文字检索由 App 自身的
+    /// OCR 索引承担（`applyOCRBlob`），不依赖 Word 里的可编辑文字。
+    /// 可编辑两档（流式 / 版面还原）仍在设置里一键切换。
+    static let defaultTier: ExportTier = .pageImage
 
     /// 从持久化原始值还原档位；未设置/非法值回退默认档（老版本数据零破坏）。
     init(persistedRawValue: String?) {
@@ -309,6 +324,7 @@ enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
         switch self {
         case .flow: .structured
         case .highFidelity: .restored
+        case .pageImage: .pageImage
         }
     }
 
@@ -318,16 +334,19 @@ enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
         switch outputTier {
         case .structured: self = .flow
         case .restored: self = .highFidelity
+        case .pageImage: self = .pageImage
         }
     }
 
     /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.flow` /
-    /// `reconstruct.tier.highFidelity`）。`Text(String)` 是 verbatim 渲染，
+    /// `reconstruct.tier.highFidelity` / `reconstruct.tier.pageImage`）。
+    /// `Text(String)` 是 verbatim 渲染，
     /// 本地化必须在这里发生（与 `R2OutputTier.displayName` 同模式）。
     var displayName: String {
         switch self {
         case .flow: return String(localized: "reconstruct.tier.flow")
         case .highFidelity: return String(localized: "reconstruct.tier.highFidelity")
+        case .pageImage: return String(localized: "reconstruct.tier.pageImage")
         }
     }
 }

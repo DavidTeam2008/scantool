@@ -46,7 +46,7 @@ Key ID / Issuer ID / `.p8` 路径填进全局配置的以下变量即可：
 - **规矩**：每个会话首次 build/run 前先调 `session_show_defaults` 确认三件套，然后
   **空参数**直接调 `build_run_sim`（模拟器）或 `build_run_device`（真机）——一步
   构建+装+启动+自动捕获日志。`discover_projs` 仅在 defaults 缺失/不符时才用。
-- **测试基线口径**：真跑单测走 `make test`（444 = 443 passed + 1 expected failure +
+- **测试基线口径**：真跑单测走 `make test`（448 = 447 passed + 1 expected failure +
   0 failed，xcresulttool 计数）。mobilebuildmcp 的 test 工具调的是 xcodebuild test，
   不带本项目的 known-issue 计数口径，可跑但别当基线依据。
 - **真机门槛**：`build_run_device` 需开发者签名+设备信任证书；免签名只能到 `build_device`
@@ -135,7 +135,7 @@ Bundle ID 与 capabilities、注册设备、团队成员、analytics（销量/�
 
 1. **模拟器条码恒 0 是假绿**（AGENTS.md 铁律 4）：条码相关验证必须真机在线（`device list`
    里取当前在线机）；agent 不得用模拟器结果宣称条码功能通过。
-2. **基线 444 只增不减**：改用其他 runner 口径前先对齐 known-issue 计数（§3.1）。
+2. **基线 448 只增不减**：改用其他 runner 口径前先对齐 known-issue 计数（§3.1）。
 3. **截图对比类验收**（Case A/B、框真相）：优先真机 + mobilebuildmcp 截图，按
    `spec/frame-truth/device-acceptance.md` 逐字记录。
 4. 任何 server 报「待授权 / 找不到 workspace / defaults 为空」时，先走对应初始化步骤

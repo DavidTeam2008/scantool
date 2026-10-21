@@ -138,6 +138,51 @@ enum DetectionStrategy {
         }
         return winner
     }
+
+    /// 静帧路径的**页面判定**（spec/word-fidelity T001）——纯函数，可单测。
+    ///
+    /// 返回 `nil` = **不裁**（整幅照片就是页面；调用方回退 `.fullImage`）。
+    ///
+    /// ## 背景（实证：`docs/media/IMG_7544.jpg`，2026-10-22 取证）
+    /// 教科书页的照片里，页面**外框检不出**：
+    /// 1. 矩形检测（宽松档：置信 0.35 / 最小边 0.08 / 最多 8 个）只找到页面
+    ///    **里面**的表格框（0.098）、照片区（0.133）、色块（0.081）、底边条
+    ///    （0.250）——**整页框一次都没出现**（书页边缘不直 + 透视 + 页面
+    ///    充满取景 → 没有可检出的矩形边缘）；
+    /// 2. 文档分割在部分运行里只给出**底边一条**（0.248）而不是整页（0.978）。
+    /// 于是「两级面积兜底 + 评分」必然落到页面里的某个子框 → **整页被裁成
+    /// 一小块**（用户实测「程序只识别了右页的一部分」）。
+    ///
+    /// ## 判据（按优先级）
+    /// 1. **大候选**（面积 ≥ `areaFloor` = 0.5）：它就是页面 → 用它；
+    /// 2. **候选铺满整幅**（候选并集外接框面积 ≥ `spreadFloor` = 0.6）：内容
+    ///    铺满画面（页面充满取景），任何子框都是错的 → **不裁**（整图当页面；
+    ///    精确裁切交给用户：Review 拖角 / 引导取景框）；
+    /// 3. 否则：文档是画面里的**子区域**（桌面上的票据/收据）→ 取面积最大的候选。
+    ///
+    /// ## 为什么「宁可不裁」
+    /// 裁错 = **内容丢失**（不可逆）；不裁 = 画面里多了背景（可逆，用户随时
+    /// 手动裁 / 用引导框）。判据 2 优先于判据 1 的理由同此：子框永远不是页面。
+    static func stillPageCandidate(
+        viable: [Quad],
+        areaFloor: Double = 0.5,
+        spreadFloor: Double = 0.6
+    ) -> Quad? {
+        guard !viable.isEmpty else { return nil }
+        let largest = viable.max { $0.area < $1.area }
+        guard let largest else { return nil }
+        // ① 大候选 = 页面。
+        if largest.area >= areaFloor {
+            return largest
+        }
+        // ② 候选铺满整幅 → 整幅就是页面 → 不裁。
+        let spread = viable.reduce(CGRect.null) { $0.union($1.boundingRect) }
+        if !spread.isNull, spread.width * spread.height >= spreadFloor {
+            return nil
+        }
+        // ③ 文档是子区域 → 取最大候选。
+        return largest
+    }
 }
 
 actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
@@ -369,6 +414,19 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
             )
         }
         guard var quad = effective?.quad else { return nil }
+        // spec/word-fidelity T001：静帧路径的**页面判定**——页面外框常常检不出
+        // （书页边缘不直/充满取景），此时绝不能裁到页面里的子框（表格/色块/
+        // 底边条），否则整页被裁成一小块（用户实测「只识别了右页的一部分」）。
+        // 判据见 `DetectionStrategy.stillPageCandidate`：大候选 = 页面；候选铺满
+        // 整幅 = 整幅就是页面（**不裁**）；否则文档是画面里的子区域。
+        if stillImage, idCardWindow == nil {
+            let viable = DetectionStrategy.viablePool(rawCandidates)
+            guard let page = DetectionStrategy.stillPageCandidate(viable: viable) else {
+                // 认不出页面 → 不裁（调用方回退整图），绝不裁到子框。
+                return nil
+            }
+            quad = page
+        }
         // US6（plan D7）：still 路径择优后贴边吸附——检出框普遍内缩 1~3%，
         // 沿外法线恢复真实边缘。证件模式比例窗保持语义不变；live 路径不动。
         // 快门检测与整理页 refine 都经由本方法，单点接入全部受益。
@@ -460,7 +518,7 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
         do {
             try handler.perform([request])
         } catch {
-            ZhixiaLog.capture.debug("Document segmentation failed: \(error.localizedDescription, privacy: .public)")
+            ZhixiaLog.capture.error("Document segmentation failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
         guard let observation = request.results?.first else { return nil }

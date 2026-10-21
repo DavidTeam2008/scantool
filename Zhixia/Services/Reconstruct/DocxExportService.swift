@@ -60,6 +60,14 @@ actor DocxExportService: DocxRendering {
     ) -> String {
         let body: String
         switch tier {
+        case .pageImage:
+            body = pageImageBodyXML(
+                document,
+                media: &media,
+                imageRels: &imageRels,
+                nextImage: &nextImage,
+                nextDocPr: &nextDocPr
+            )
         case .restored:
             body = restoredBodyXML(
                 document,
@@ -93,7 +101,136 @@ actor DocxExportService: DocxRendering {
         """
     }
 
-    // MARK: - 结构化档（.structured，流式重排）
+    // MARK: - 图片版（.pageImage，整页图铺满页面）
+
+    /// 图片版正文（spec/word-fidelity T002 / FR-002）：**每页 = 页面尺寸的
+    /// section + 一张铺满该页的整页图**。没有浮动文本框、没有净化 mask、
+    /// 没有重排 —— 页面上的一切都在图里，**样式不可能乱**。
+    ///
+    /// 与 WPS 的实测行为一致（docs/16 §二）：WPS 的「扫描件 → Word」产物
+    /// 就是页面本身（导出预览渲染页面图，文档标记「只读」）。
+    ///
+    /// 页面尺寸取自**底图（page rendered 图）**的实际像素比（`page.size`），
+    /// 页边距全 0 —— 图片按页面等比铺满（`aspectFill` 语义：页面比例与图
+    /// 一致时为等比拉伸，比例不一致时按放置矩形铺满，不留白、不变形）。
+    private func pageImageBodyXML(
+        _ document: ReconstructDocument,
+        media: inout [(name: String, data: Data)],
+        imageRels: inout [(id: String, target: String)],
+        nextImage: inout Int,
+        nextDocPr: inout Int
+    ) -> String {
+        guard let lastPage = document.pages.last else { return "" }
+        var body = ""
+        var relativeHeight = 0
+        for (index, page) in document.pages.enumerated() {
+            let spaces = Self.pageImageSpaces(for: page)
+            let cx = max(Int64(spaces.image.width.rounded()), 1)
+            let cy = max(Int64(spaces.image.height.rounded()), 1)
+            var runs = ""
+            // 底图 = 该页的 rendered 图（透视矫正 + 增强后的整页）。
+            if let path = page.baseImageRelativePath, !path.isEmpty,
+               let base = registerImageMedia(
+                   path: path,
+                   media: &media,
+                   imageRels: &imageRels,
+                   nextImage: &nextImage
+               ) {
+                nextDocPr += 1
+                runs += inlinePictureXML(
+                    relID: base.relID,
+                    name: base.fileName,
+                    cx: cx,
+                    cy: cy,
+                    docPrID: nextDocPr
+                )
+            }
+            // 承载段落：行高**钉成图高**（`lineRule="exact"`）——行盒既不被
+            // 段落标记的字号压扁（那会把内联图裁成一条线 → 渲染出空白页），
+            // 也不比图高（那会把整页图挤到第二页 → 预览器只显示空白的第一页）。
+            // 行高 = 图高 → 行盒恰好等于页面高度 → 图**精确铺满整页**（无白边、
+            // 无错位，SSIM 才可能过门限）。
+            let lineTwips = max(1, Int((Double(cy) / 635.0).rounded()))
+            body += "<w:p><w:pPr>"
+                + "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"\(lineTwips)\" w:lineRule=\"exact\"/>"
+                + "</w:pPr>"
+                + runs
+                + "</w:p>"
+            if index < document.pages.count - 1 {
+                body += sectionBreakXML(sectionPropertiesXML(emuSize: spaces.page))
+            }
+        }
+        body += sectionPropertiesXML(emuSize: Self.pageImageSpaces(for: lastPage).page)
+        return body
+    }
+
+    /// 图片版的**页面尺寸**：A4 纸面内按图片比例**贴合**（aspect-fit）。
+    ///
+    /// ## 为什么不用「按像素算页面」（`.restored` 档的老口径）
+    /// 老口径把页面像素按 96 DPI 换算成纸面尺寸：一张 1633×2200 的页 →
+    /// **41.5cm × 55.9cm**（比 A4 大一倍）。Word 会照此建页，但**渲染器按
+    /// 纸面裁切**（macOS QuickLook / 常见预览器），于是整页图只露出左上角一块
+    /// ——导出产物「看起来是空的」。这正是图片版必须用 A4 贴合尺寸的原因。
+    ///
+    /// 贴合规则：图片更宽 → 宽取满 A4、高按比例；更高 → 高取满 A4、宽按比例。
+    /// 页面与图片同比例 → 图片铺满页面且**不拉伸、不留白**。
+    private static func pageImageSpaces(
+        for page: ReconstructPage
+    ) -> (source: CGSize, page: CGSize, image: CGSize) {
+        let a4 = Self.a4PageSizeEMU
+        let source = page.size
+        guard source.width > 0, source.height > 0 else {
+            return (source: source, page: a4, image: a4)
+        }
+        let aspect = source.width / source.height
+        let a4Aspect = a4.width / a4.height
+        let fitted: CGSize
+        if aspect >= a4Aspect {
+            fitted = CGSize(width: a4.width, height: a4.width / aspect)
+        } else {
+            fitted = CGSize(width: a4.height * aspect, height: a4.height)
+        }
+        // 页面 = 图片的贴合尺寸（**不**留余量）：承载段落的行高被钉成图高，
+        // 行盒恰好等于页面高度 → 图精确铺满整页（余量会让图与页差 1%，比对时
+        // 变成整体错位，SSIM 失真）。
+        return (
+            source: source,
+            page: fitted,
+            image: fitted
+        )
+    }
+
+    /// 内联图片（`wp:inline`）——**图片版专用**。
+    ///
+    /// ## 为什么用内联而不是锚定（behindDoc）
+    /// 锚定图（`wp:anchor` + `behindDoc`）在部分渲染器上不落图（macOS
+    /// QuickLook 渲染出**空白页**；`.restored` 档的底图能显示是因为它同时还有
+    /// 文本框等前景内容，图片是否落图被掩盖）。内联图是 OOXML 最基础的构造
+    /// （Word / Pages / QuickLook / LibreOffice 一致支持）——保真优先，不冒险。
+    ///
+    /// 尺寸：与页面**等大**（图片即页面），承载段落行高压到 1pt（浮动/内联图
+    /// 不额外占行），页边距全 0 → 图铺满整页。
+    private func inlinePictureXML(
+        relID: String,
+        name: String,
+        cx: Int64,
+        cy: Int64,
+        docPrID: Int
+    ) -> String {
+        return "<w:r><w:drawing>"
+            + "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">"
+            + "<wp:extent cx=\"\(cx)\" cy=\"\(cy)\"/>"
+            + "<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"
+            + "<wp:docPr id=\"\(docPrID)\" name=\"\(name)\"/>"
+            + "<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>"
+            + "<a:graphic><a:graphicData uri=\"\(Self.pictureGraphicURI)\">"
+            + "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"0\" name=\"\(name)\"/><pic:cNvPicPr/></pic:nvPicPr>"
+            + "<pic:blipFill><a:blip r:embed=\"\(relID)\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
+            + "<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"\(cx)\" cy=\"\(cy)\"/></a:xfrm>"
+            + "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"
+            + "</a:graphicData></a:graphic>"
+            + "</wp:inline></w:drawing></w:r>"
+    }
 
     private func structuredBodyXML(
         _ document: ReconstructDocument,

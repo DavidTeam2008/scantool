@@ -2,8 +2,9 @@
 
 **Input**: Design documents from `spec/guided-capture/`
 **Prerequisites**: `spec.md`（US1~US5 / FR-001~010）、`plan.md`（D1~D10）
-**测试基线**: **444 = 443 passed + 1 expected failure + 0 failed**（2026-10-22 实测；
-T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画布/偏好）→ Phase 2 +8（拆分提案/语料））
+**测试基线**: **436 = 435 passed + 1 expected failure + 0 failed**（2026-10-22 实测；
+T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画布/偏好）→ Phase 2 +8（拆分提案/语料）；
+其后 `word-fidelity` 周期 +12 → **448**）
 **构建/测试**: T000 前用
 `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`；
 T000 后直接 `make test`。局部：`make test-only T=<Suite>`
@@ -80,7 +81,7 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
   `docs/15-capture-recovery-assessment.md` §九与 `device-acceptance.md` §0。
   **Checkpoint 0**：T000 全绿 + T001~T004 单测绿 + V1/V2/V3 有结论；
   未过不得进 Phase 1。依赖 T001~T004。
-  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 444 = 443 passed +
+  **状态（2026-10-21）**：T001~T004 已交付（`make test` → 436 = 435 passed +
   1 expected failure + 0 failed）；**V1/V2/V3 待真机会话**（iPhone 13 · iOS 26.7，
   需人工配合 1 小时）——本机无真机，**不得用模拟器结果冒充**。
 
@@ -291,7 +292,7 @@ T040 / T041 在 T034 之后单独立项，不计入本周期依赖图与验收�
 
 ## 验收门
 
-1. **Checkpoint 0**：`make test` 444 基线可复现；trace 可导出/回放；V1/V2/V3
+1. **Checkpoint 0**：`make test` 448 基线可复现；trace 可导出/回放；V1/V2/V3
    有结论。
 2. **Checkpoint 1**：引导拍摄 20/20 只含框内内容；框零自动移动；画布
    round-trip ≤0.5%；引导路径无 detector 调用。

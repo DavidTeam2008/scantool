@@ -12,7 +12,7 @@
 
 | # | 动作 | 通过标准 | 结果 |
 |---|---|---|---|
-| 0-1 | 直接 `make test`（T000 后） | `total=444 passed=443 failed=0 expectedFailures=1` | ☐ |
+| 0-1 | 直接 `make test`（T000 后） | `total=448 passed=447 failed=0 expectedFailures=1` | ☐ |
 | 0-2 | 屏幕左缘贴亮标记，拍一张 | 成片左缘**不出现**标记；`canvasMap` round-trip ≤0.5% | ☐ |
 | 0-3 | 失败场景取景 10s，导出诊断包 | JSON 含每帧全部 viable + top 8 候选四角/面积/score/containment/tier、droppedCount；可回放 | ☐ |
 | 0-4 | 慢慢移动/调角度复现 | 时间戳轨迹能看出锁定转换；慢漂移（1%/帧）是否不解锁有明确结论 | ☐ |
