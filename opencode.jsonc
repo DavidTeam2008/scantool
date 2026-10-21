@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // 新会话的默认模型。
+  "model": "opencode/deepseek-v4.1-flash-free",
+
+  // 根 model 不保留 #variant，推理强度要在 agent 上钉死。
+  "agents": {
+    "build": {
+      "model": "opencode/deepseek-v4.1-flash-free#max"
+    },
+    "plan": {
+      "model": "opencode/deepseek-v4.1-flash-free#max"
+    },
+    "general": {
+      "model": "opencode/deepseek-v4.1-flash-free#max"
+    },
+    "explore": {
+      "model": "opencode/deepseek-v4.1-flash-free#max"
+    }
+  }
+}
