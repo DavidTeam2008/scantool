@@ -134,11 +134,16 @@
 
 档位体系（`R2OutputTier` / `ExportTier`）：
 
-| 档位 | 形态 | 可编辑 | 默认 |
+| 档位（用户面名） | 形态 | 可编辑 | 默认 |
 |---|---|---|---|
-| **图片版** `pageImage` | 整页图铺满页面 | ✗ | ✅ **新默认** |
-| 版面还原 `highFidelity` | 底图 + mask + 浮动文本框 | ✓ | 可选 |
-| 流式 `flow` | 段落流 | ✓ | 可选 |
+| **高保真** `pageImage`（图片版） | 整页图铺满页面 | ✗ | ✅ **新默认** |
+| **版面还原（可编辑）** `layoutEditable` | 底图 + mask + 浮动文本框 | ✓ | 可选 |
+| **流式（可编辑）** `flow` | 段落流 | ✓ | 可选 |
+
+> **命名迁移（2026-10-22）**：旧版把「高保真」这个名字给了**可编辑的版面还原**档
+> （rawValue `"highFidelity"`）。名字按直觉重新分配后：图片版 = 「高保真」，
+> 可编辑版面还原 = 「版面还原（可编辑）」；旧持久化值 `"highFidelity"` **迁移到**
+> `layoutEditable` → 老用户的选择**行为不变**（只是显示名变了）。
 
 默认翻转的依据：① WPS 实测（§二）；② 用户实测「复杂页面的 Word 样式会乱」；
 ③ 文字检索由 App 自身 OCR 索引承担（`applyOCRBlob`），不依赖 Word 里的可编辑文字。
@@ -169,7 +174,13 @@ make test-only T=WordFidelityExportTests   # 产出 build/word-fidelity/{page.jp
 
 ---
 
-## 六、遗留与后续（不在本周期）
+## 六、遗留与后续
+
+> 可编辑档（版面还原）的保真度迭代（叠字归零 / 遮罩瘦身 / 字号行距 / 表格锚点）
+> 独立成轮：**[`docs/17`](17-editable-tier-fidelity-iteration.md)** +
+> `spec/word-fidelity/tasks.md` 的 T010 / T020~T023。
+
+
 
 | # | 事项 | 说明 |
 |---|---|---|

@@ -47,7 +47,7 @@
 
 | # | 场景 | 通过标准 | 结果 |
 |---|---|---|---|
-| 5-1 | `make test` | 448 = 447 passed + 1 expected failure + 0 failed | ☐ |
+| 5-1 | `make test` | 449 = 448 passed + 1 expected failure + 0 failed | ☐ |
 | 5-2 | 扫描路径（相机） | 行为与基线一致（自动路径零改动） | ☐ |
 | 5-3 | PDF 导出 | 不区分档位，行为不变 | ☐ |
 | 5-4 | 证件 / 相册导入 / 导出 | 不回归 | ☐ |

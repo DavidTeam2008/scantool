@@ -78,7 +78,7 @@ Zhixia/
     ServiceProtocols.swift   全部能力协议
   DesignSystem/        Tokens + 组件
   Localizable.xcstrings
-ZhixiaTests/           44 个测试文件 / 448 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure）
+ZhixiaTests/           44 个测试文件 / 449 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure）
 ```
 
 依赖方向：**Features → Domain / DesignSystem / Environment 协议**。禁止 Feature 里直接 `AVCaptureSession` / `CIFilter` / `VNRecognize…`（预览 Representable 除外）。

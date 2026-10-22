@@ -281,19 +281,32 @@ struct ReconstructDocument: Sendable, Equatable, Codable, Hashable {
 
 // MARK: - 导出档位（用户面语义，spec/wps-parity-layout plan D1 / FR-001、FR-009）
 
-/// 导出档位的**用户面**语义（spec/wps-parity-layout plan D1）。
+/// 导出档位的**用户面**语义（spec/wps-parity-layout plan D1；spec/word-fidelity T004）。
 ///
-/// 内部 `R2OutputTier` 枚举命名保留（restored/structured），用户面按「流式/高保真」理解：
-/// - `flow`（流式，**默认**）：阅读序段落流 + 内联图 + 原生表格 —— 即现 `.structured` 产物；
-/// - `highFidelity`（高保真）：像素合成版面（底图 + 遮罩 + 文本框）—— 即现 `.restored` 产物。
+/// 内部 `R2OutputTier` 枚举命名保留（pageImage/restored/structured），用户面语义：
+/// - `pageImage`（**高保真**·图片版，**默认**）：整页增强图铺满页面 —— 即现 `.pageImage` 产物。
+///   WPS 实测（docs/16 §二）：竞品的「扫描件 → Word」产物**就是页面本身**；
+/// - `layoutEditable`（版面还原·可编辑）：底图 + 遮罩 + 文本框原位重排 —— 即现 `.restored` 产物。
+///   **实测保真度不达标**（SSIM 0.767 vs 门限 0.90，docs/16 §五）——文本框与底图
+///   叠字、错位；保留为「可编辑 + 版面」选项，迭代见 spec/word-fidelity T010；
+/// - `flow`（流式·可编辑）：阅读序段落流 + 内联图 + 原生表格 —— 即现 `.structured` 产物。
+///
+/// ## 命名迁移（2026-10-22）
+/// 旧版本把「高保真」这个名字给了**可编辑的版面还原**档（`rawValue == "highFidelity"`），
+/// 而真正「看起来就是原页」的是新增的图片版档。名字按直觉重新分配后：
+/// - 旧持久化值 `"highFidelity"` → 迁移到 `layoutEditable`（**行为不变**，只是显示名变了）；
+/// - 图片版用新 rawValue `"pageImage"`，显示名「高保真」。
 ///
 /// 档位同时作用于预览渲染与导出产物（预览/导出同源，FR-009）；用户选择经
-/// `ExportTier.preferenceKey` 持久化，未设置/非法值一律回退默认档 flow（FR-001）。
+/// `ExportTier.preferenceKey` 持久化，未设置/非法值一律回退默认档（FR-001）。
 enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
     /// 流式（可编辑）：段落流重排。
     case flow
     /// 版面还原（可编辑）：底图 + 遮罩 + 文本框原位重排。
-    case highFidelity
+    ///
+    /// 旧 rawValue `"highFidelity"`（旧版把「高保真」这个名字给了本档）由
+    /// `init(persistedRawValue:)` 迁移过来 → 老用户的选择**行为不变**。
+    case layoutEditable
     /// **图片版**（spec/word-fidelity T002 / FR-002）：整页增强图铺满页面。
     ///
     /// WPS 实测（`docs/media/3ca8ce818cf785798a1661a3eef67730.mp4`，docs/16 §二）：
@@ -315,15 +328,25 @@ enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
     static let defaultTier: ExportTier = .pageImage
 
     /// 从持久化原始值还原档位；未设置/非法值回退默认档（老版本数据零破坏）。
+    ///
+    /// 迁移：旧版 rawValue `"highFidelity"`（= 旧的可编辑版面还原档）→ `layoutEditable`。
     init(persistedRawValue: String?) {
-        self = persistedRawValue.flatMap(ExportTier.init(rawValue:)) ?? ExportTier.defaultTier
+        guard let raw = persistedRawValue else {
+            self = ExportTier.defaultTier
+            return
+        }
+        if raw == "highFidelity" {
+            self = .layoutEditable
+            return
+        }
+        self = ExportTier(rawValue: raw) ?? ExportTier.defaultTier
     }
 
     /// 映射内部导出档位（协议层 `R2OutputTier`，导出调用点消费）。
     var outputTier: R2OutputTier {
         switch self {
         case .flow: .structured
-        case .highFidelity: .restored
+        case .layoutEditable: .restored
         case .pageImage: .pageImage
         }
     }
@@ -333,19 +356,19 @@ enum ExportTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable {
     init(outputTier: R2OutputTier) {
         switch outputTier {
         case .structured: self = .flow
-        case .restored: self = .highFidelity
+        case .restored: self = .layoutEditable
         case .pageImage: self = .pageImage
         }
     }
 
     /// 档位显示名（双语，Localizable.xcstrings `reconstruct.tier.flow` /
-    /// `reconstruct.tier.highFidelity` / `reconstruct.tier.pageImage`）。
+    /// `reconstruct.tier.layoutEditable` / `reconstruct.tier.pageImage`）。
     /// `Text(String)` 是 verbatim 渲染，
     /// 本地化必须在这里发生（与 `R2OutputTier.displayName` 同模式）。
     var displayName: String {
         switch self {
         case .flow: return String(localized: "reconstruct.tier.flow")
-        case .highFidelity: return String(localized: "reconstruct.tier.highFidelity")
+        case .layoutEditable: return String(localized: "reconstruct.tier.layoutEditable")
         case .pageImage: return String(localized: "reconstruct.tier.pageImage")
         }
     }

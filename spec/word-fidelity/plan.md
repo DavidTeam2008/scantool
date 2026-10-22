@@ -70,7 +70,7 @@
 
 1. `make test-only T=WordFidelityExportTests` → 产出夹具产物；
 2. `make word-fidelity` → 渲染 + SSIM + 判定（图片版 ≥0.90）；
-3. `make test` → 全量绿（基线 448）；
+3. `make test` → 全量绿（基线 449）；
 4. 人工看渲染图（`build/word-fidelity/` 留档）确认「看起来就是那一页」。
 
 ## 后续（另立周期）

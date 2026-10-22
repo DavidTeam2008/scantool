@@ -166,7 +166,8 @@ struct ReconstructTierTests {
             #expect(ExportTier(outputTier: tier.outputTier) == tier, "outputTier 反向映射必须互逆")
         }
         #expect(ExportTier.flow.outputTier == .structured)
-        #expect(ExportTier.highFidelity.outputTier == .restored)
+        #expect(ExportTier.layoutEditable.outputTier == .restored)
+        #expect(ExportTier.pageImage.outputTier == .pageImage)
     }
 
     /// 切换持久化：`ExportTier.preferenceKey` 经 UserDefaults 往返（@AppStorage
@@ -182,11 +183,19 @@ struct ReconstructTierTests {
             ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey)) == ExportTier.defaultTier
         )
 
-        // 写入 highFidelity → 还原 highFidelity，预览/导出档 = .restored
-        defaults.set(ExportTier.highFidelity.rawValue, forKey: ExportTier.preferenceKey)
+        // 写入 layoutEditable → 还原 layoutEditable，预览/导出档 = .restored
+        defaults.set(ExportTier.layoutEditable.rawValue, forKey: ExportTier.preferenceKey)
         let restored = ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey))
-        #expect(restored == .highFidelity)
+        #expect(restored == .layoutEditable)
         #expect(restored.outputTier == .restored)
+
+        // **命名迁移（2026-10-22，spec/word-fidelity T004）**：旧版本把「高保真」
+        // 给了可编辑的版面还原档（rawValue "highFidelity"）→ 迁移到 layoutEditable，
+        // **老用户的行为不变**（只是显示名变了）。
+        defaults.set("highFidelity", forKey: ExportTier.preferenceKey)
+        let migrated = ExportTier(persistedRawValue: defaults.string(forKey: ExportTier.preferenceKey))
+        #expect(migrated == .layoutEditable, "旧持久化值必须迁到可编辑版面还原档")
+        #expect(migrated.outputTier == .restored)
 
         // 垃圾值 → 回退默认档（手工改库 / 老版本数据零破坏）
         defaults.set("not-a-tier", forKey: ExportTier.preferenceKey)

@@ -164,6 +164,19 @@ actor DocxExportService: DocxRendering {
         return body
     }
 
+    /// A4 贴合尺寸（共用）：按源比例把页面等比放进 A4 纸面（不拉伸）。
+    /// 图片更宽 → 宽取满 A4、高按比例；更高 → 高取满 A4、宽按比例。
+    private static func fittedPageEMU(for source: CGSize) -> CGSize {
+        let a4 = Self.a4PageSizeEMU
+        guard source.width > 0, source.height > 0 else { return a4 }
+        let aspect = source.width / source.height
+        let a4Aspect = a4.width / a4.height
+        if aspect >= a4Aspect {
+            return CGSize(width: a4.width, height: a4.width / aspect)
+        }
+        return CGSize(width: a4.height * aspect, height: a4.height)
+    }
+
     /// 图片版的**页面尺寸**：A4 纸面内按图片比例**贴合**（aspect-fit）。
     ///
     /// ## 为什么不用「按像素算页面」（`.restored` 档的老口径）
@@ -182,14 +195,7 @@ actor DocxExportService: DocxRendering {
         guard source.width > 0, source.height > 0 else {
             return (source: source, page: a4, image: a4)
         }
-        let aspect = source.width / source.height
-        let a4Aspect = a4.width / a4.height
-        let fitted: CGSize
-        if aspect >= a4Aspect {
-            fitted = CGSize(width: a4.width, height: a4.width / aspect)
-        } else {
-            fitted = CGSize(width: a4.height * aspect, height: a4.height)
-        }
+        let fitted = Self.fittedPageEMU(for: source)
         // 页面 = 图片的贴合尺寸（**不**留余量）：承载段落的行高被钉成图高，
         // 行盒恰好等于页面高度 → 图精确铺满整页（余量会让图与页差 1%，比对时
         // 变成整体错位，SSIM 失真）。
@@ -342,9 +348,20 @@ actor DocxExportService: DocxRendering {
     }
 
     /// 页尺寸 → (源像素, EMU)。动态页与原图同比例 ⇒ 映射退化为纯线性缩放（offset = 0）。
+    ///
+    /// ## 已知缺陷（spec/word-fidelity G1'，下一轮处理）
+    /// 本口径按 96 DPI 把像素换算成纸面：1633×2200 的页 → **41.5cm × 55.9cm**
+    /// （比 A4 大一倍）。后果：① Word 里是一张怪大的纸；② 预览器按自己的画布
+    /// 裁切 → 整页内容只露出左上角一块。
+    ///
+    /// 改成「A4 贴合」（`fittedPageEMU`，图片版已用该口径）会**改动 17 条既有
+    /// 结构断言**（`DocxRestoredLayoutTests` 16 条 + `LineTypographyPerLineTests`
+    /// 1 条，它们钉住了「页面 = 像素×96DPI」）——本轮**不翻**（铁律：既有断言零
+    /// 修改），作为 G1' 随可编辑档迭代一起改，方案见
+    /// `docs/17-editable-tier-fidelity-iteration.md`。
     private func restoredPageSpaces(for page: ReconstructPage) -> (source: CGSize, emu: CGSize) {
         if page.size.width > 0, page.size.height > 0 {
-            return (page.size, PageLayoutMapper.emuPageSize(for: page.size))
+            return (source: page.size, emu: PageLayoutMapper.emuPageSize(for: page.size))
         }
         let emu = Self.a4PageSizeEMU
         return (

@@ -1,18 +1,34 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
-    "reconstruct.tier.pageImage" : {
+    "reconstruct.tier.layoutEditable" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Page image"
+            "value" : "Layout (editable)"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "图片版"
+            "value" : "版面还原（可编辑）"
+          }
+        }
+      }
+    },
+    "reconstruct.tier.pageImage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High fidelity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高保真"
           }
         }
       }
@@ -1552,22 +1568,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "流式（默认）"
-          }
-        }
-      }
-    },
-    "reconstruct.tier.highFidelity" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "High Fidelity"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "高保真"
           }
         }
       }

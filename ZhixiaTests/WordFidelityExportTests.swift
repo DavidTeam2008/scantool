@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
+import SwiftUI
 import UIKit
 
 @testable import Zhixia
@@ -153,6 +154,48 @@ struct WordFidelityExportTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let xml = try DocxProbe.documentXML(from: url)
         #expect(xml.contains("wps:txbx"), "版面还原档仍应使用浮动文本框")
+    }
+
+    @Test("T010 导出模型离屏渲染（App 侧真值：预览 == 导出模型，与渲染器无关）")
+    func rendersExportModelOffscreen() async throws {
+        let fixture = try await Self.makeFixture()
+        let document = try await Self.makeDocument(fixture: fixture)
+        guard let page = document.pages.first else {
+            Issue.record("文档缺页")
+            return
+        }
+        // ① 版面还原档的模型渲染：底图 + 净化遮罩 + 浮动文本框（与导出一一对应，
+        //    坐标映射同源 `PageLayoutMapper`）——**不依赖任何外部渲染器**。
+        let restoredImage = Self.renderOffscreen(
+            LayoutCanvas(
+                page: page,
+                backgroundImageURL: fixture.pageImageURL
+            )
+        )
+        let restoredURL = Self.outputDirectory.appending(path: "preview-restored.png")
+        try restoredImage.pngData()?.write(to: restoredURL)
+
+        // ② 图片版的模型渲染：整页图（即导出产物本身）。
+        let pageImage = Self.renderOffscreen(
+            PageImageCanvas(
+                page: page,
+                backgroundImageURL: fixture.pageImageURL
+            )
+        )
+        let pageImageURL = Self.outputDirectory.appending(path: "preview-pageimage.png")
+        try pageImage.pngData()?.write(to: pageImageURL)
+
+        #expect(restoredImage.size.width > 0, "还原档模型必须渲染出内容")
+        #expect(pageImage.size.width > 0, "图片版模型必须渲染出内容")
+    }
+
+    /// 离屏渲染一个 SwiftUI 视图（`ImageRenderer`）。
+    private static func renderOffscreen<V: View>(_ view: V, width: CGFloat = 1000) -> UIImage {
+        let renderer = ImageRenderer(
+            content: view.frame(width: width).background(Color.white)
+        )
+        renderer.scale = 1
+        return renderer.uiImage ?? UIImage()
     }
 
     @Test("T003 端到端产物落盘（供 make word-fidelity 渲染比对）")

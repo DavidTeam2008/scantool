@@ -78,6 +78,13 @@ echo "=== Word 导出保真度（spec/word-fidelity T003）==="
 echo "阈值：SSIM ≥ $THRESHOLD"
 echo ""
 
+# 模型真值（App 侧离屏渲染：预览 == 导出模型，与外部渲染器无关）。
+# model = 导出模型本身的保真度；docx = 外部渲染器看到的保真度；
+# 两者之差 = **导出层（OOXML）造成的损失**（叠字/错位都在这一层）。
+model_score() {  # $1 = 模型渲染 PNG
+  ssim "$1" "$OUT/page.jpg"
+}
+
 status=0
 for tier in pageimage restored; do
   docx="$OUT/out-$tier.docx"
@@ -89,6 +96,17 @@ for tier in pageimage restored; do
   echo "  渲染图        : $png"
   echo "  SSIM(页面图)  : ${s_page:-n/a}   ← 导出保真度（门限 ${THRESHOLD}）"
   echo "  SSIM(原始照片): ${s_ref:-n/a}   ← 用户口径（与原片相似度）"
+  model_png="$OUT/preview-$tier.png"
+  if [[ -f "$model_png" ]]; then
+    s_model="$(model_score "$model_png")"
+    echo "  SSIM(导出模型): ${s_model:-n/a}   ← App 侧模型真值（预览 == 导出模型）"
+    echo "  导出层损失    : $(python3 -c "
+try:
+    print('%.3f' % (float('$s_model') - float('$s_page')))
+except Exception:
+    print('n/a')
+" 2>/dev/null)   ← 模型 → docx 的差（叠字/错位都在这一层）"
+  fi
   if [[ "$tier" == "pageimage" ]]; then
     if [[ -z "$s_page" ]] || ! python3 -c "import sys; sys.exit(0 if float('$s_page') >= $THRESHOLD else 1)"; then
       echo "  ✗ 未达门限（导出保真度）"

@@ -166,8 +166,8 @@ enum R2OutputTier: String, Sendable, Codable, CaseIterable, Equatable, Hashable 
     var displayName: String {
         switch self {
         case .pageImage: return String(localized: "reconstruct.tier.pageImage")
-        case .restored: return String(localized: "reconstruct.tier.restored")
-        case .structured: return String(localized: "reconstruct.tier.structured")
+        case .restored: return String(localized: "reconstruct.tier.layoutEditable")
+        case .structured: return String(localized: "reconstruct.tier.structored")
         }
     }
 }

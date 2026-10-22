@@ -4,7 +4,7 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-10-21 · 对应代码 108 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 448 用例 = 396 passed + 1 expected failure + 0 failed · 当前最大卡点：取景主场景仍缺“我要拍右页”的意图（见 [15](15-capture-recovery-assessment.md) 与 `spec/guided-capture/`）；frame-truth / Case B 修复已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）。新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
+> 最后更新：2026-10-21 · 对应代码 108 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 449 用例 = 396 passed + 1 expected failure + 0 failed · 当前最大卡点：取景主场景仍缺“我要拍右页”的意图（见 [15](15-capture-recovery-assessment.md) 与 `spec/guided-capture/`）；frame-truth / Case B 修复已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）。新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
 
 ---
 
@@ -18,7 +18,7 @@
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
 实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12）；
 **取景 WYSIWYG 的 Case A/B 根因已定案、修复已交付**（case-b-sticky-v2 +
-folded-page-capture + frame-truth，当前总基线 448 全绿；真机验收仍待做，主清单
+folded-page-capture + frame-truth，当前总基线 449 全绿；真机验收仍待做，主清单
 `spec/frame-truth/device-acceptance.md`，§6.13；2026-10-21 复核后新增引导框主线
 `spec/guided-capture/`，见 §7）；**iOS 18~25 仍走几何兜底、
 真机依旧出不了表**；iOS 26 结构化通路真机接通性未验证（L1 疑案，§6.12 已知限制 ③）——见 §6。
@@ -35,7 +35,7 @@ scantool/
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             44 个测试文件 / 448 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── ZhixiaTests/             44 个测试文件 / 449 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
 ├── docs/                    本文 + 专题文档（00~15；12 为交接文档单入口）
 ├── spec/                    SDD 周期工件（14 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
@@ -578,7 +578,7 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- 44 个测试文件 / 448 个 `@Test`，全量 **396 passed + 0 failed + 1 expected failure**
+- 44 个测试文件 / 449 个 `@Test`，全量 **396 passed + 0 failed + 1 expected failure**
   （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的

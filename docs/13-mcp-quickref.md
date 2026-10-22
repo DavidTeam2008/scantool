@@ -135,7 +135,7 @@ Bundle ID 与 capabilities、注册设备、团队成员、analytics（销量/�
 
 1. **模拟器条码恒 0 是假绿**（AGENTS.md 铁律 4）：条码相关验证必须真机在线（`device list`
    里取当前在线机）；agent 不得用模拟器结果宣称条码功能通过。
-2. **基线 448 只增不减**：改用其他 runner 口径前先对齐 known-issue 计数（§3.1）。
+2. **基线 449 只增不减**：改用其他 runner 口径前先对齐 known-issue 计数（§3.1）。
 3. **截图对比类验收**（Case A/B、框真相）：优先真机 + mobilebuildmcp 截图，按
    `spec/frame-truth/device-acceptance.md` 逐字记录。
 4. 任何 server 报「待授权 / 找不到 workspace / defaults 为空」时，先走对应初始化步骤
