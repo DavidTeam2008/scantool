@@ -1,38 +1,6 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
-    "reconstruct.tier.layoutEditable" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Layout (editable)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "版面还原（可编辑）"
-          }
-        }
-      }
-    },
-    "reconstruct.tier.pageImage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "High fidelity"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "高保真"
-          }
-        }
-      }
-    },
     "·" : {
 
     },
@@ -1572,7 +1540,40 @@
         }
       }
     },
+    "reconstruct.tier.layoutEditable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layout (editable)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版面还原（可编辑）"
+          }
+        }
+      }
+    },
+    "reconstruct.tier.pageImage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High fidelity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高保真"
+          }
+        }
+      }
+    },
     "reconstruct.tier.restored" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1588,7 +1589,11 @@
         }
       }
     },
+    "reconstruct.tier.structored" : {
+
+    },
     "reconstruct.tier.structured" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
