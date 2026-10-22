@@ -5,3 +5,8 @@
 build/
 DerivedData/
 *.xcuserstate
+
+# h2oc 运行/评估产物（任务与 base harness 仍跟踪）
+.harness2/runs/
+.harness2/evals/
+.harness2/library/

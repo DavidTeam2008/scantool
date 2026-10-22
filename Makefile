@@ -29,7 +29,7 @@ BASELINE_TOTAL ?= 449
 BASELINE_PASSED ?= 448
 BASELINE_EXPECTED_FAILURES ?= 1
 
-.PHONY: help test test-only smoke word-fidelity device-build doctor
+.PHONY: help test test-only smoke word-fidelity editable-fidelity device-build doctor
 
 help: ## 显示本帮助
 	@echo "纸匣 Zhixia · 可用命令（DEVELOPER_DIR=$(DEVELOPER_DIR)）"
@@ -112,6 +112,12 @@ word-fidelity: ## Word 导出保真度（spec/word-fidelity）：导出 → 渲�
 	@$(MAKE) --no-print-directory test-only T=WordFidelityExportTests
 	@echo "▶ 渲染并比对（qlmanage + ffmpeg SSIM，门限 0.90）"
 	@./Tools/word-fidelity/check.sh
+
+editable-fidelity: ## 可编辑档（版面还原）真机同图夹具：导出 → 渲染 → 双口径 SSIM 门限
+	@echo "▶ 导出 Word 夹具产物（页面图 + 两种 docx）"
+	@$(MAKE) --no-print-directory test-only T=WordFidelityExportTests
+	@echo "▶ 渲染可编辑档并比对（qlmanage + ffmpeg SSIM，页面图/原片双口径 ≥0.90）"
+	@WORD_FIDELITY_GATE_TIER=restored ./Tools/word-fidelity/check.sh
 
 device-build: ## 真机目标编译（generic/platform=iOS，免签名）
 	@mkdir -p $(BUILD_DIR)

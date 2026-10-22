@@ -20,6 +20,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$ROOT/build/word-fidelity"
 THRESHOLD="${WORD_FIDELITY_THRESHOLD:-0.90}"
+# 门禁档位：默认图片版（T003 的历史口径）；可编辑档迭代用
+# `WORD_FIDELITY_GATE_TIER=restored` 切换到版面还原档。
+GATE_TIER="${WORD_FIDELITY_GATE_TIER:-pageimage}"
 
 if [[ ! -f "$OUT/out-pageimage.docx" ]]; then
   echo "✗ 缺少 $OUT/out-pageimage.docx —— 先跑：make test-only T=WordFidelityExportTests" >&2
@@ -107,12 +110,16 @@ except Exception:
     print('n/a')
 " 2>/dev/null)   ← 模型 → docx 的差（叠字/错位都在这一层）"
   fi
-  if [[ "$tier" == "pageimage" ]]; then
+  if [[ "$tier" == "$GATE_TIER" ]]; then
+    # 用户口径同时要求「与原始照片相似度 ≥ 门限」；两个口径都过才算达标。
     if [[ -z "$s_page" ]] || ! python3 -c "import sys; sys.exit(0 if float('$s_page') >= $THRESHOLD else 1)"; then
-      echo "  ✗ 未达门限（导出保真度）"
+      echo "  ✗ 未达门限（导出保真度 SSIM(页面图) < ${THRESHOLD}）"
+      status=1
+    elif [[ -z "$s_ref" ]] || ! python3 -c "import sys; sys.exit(0 if float('$s_ref') >= $THRESHOLD else 1)"; then
+      echo "  ✗ 未达门限（用户口径 SSIM(原始照片) < ${THRESHOLD}）"
       status=1
     else
-      echo "  ✓ 导出保真度达标"
+      echo "  ✓ 导出保真度达标（页面图 / 原始照片双口径）"
     fi
   fi
   echo ""
