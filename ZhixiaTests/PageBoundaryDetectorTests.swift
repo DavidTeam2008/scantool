@@ -59,4 +59,16 @@ struct PageBoundaryDetectorTests {
             ) == Self.full
         )
     }
+
+    @Test("1% 安全边：外扩但不越出页面")
+    func expandsSafetyMarginAndClamps() {
+        let expanded = Self.paper.expanded(by: 0.01)
+        #expect(expanded.area > Self.paper.area)
+        #expect(expanded.topLeft.x < Self.paper.topLeft.x)
+        #expect(expanded.topLeft.y < Self.paper.topLeft.y)
+        #expect(expanded.bottomRight.x > Self.paper.bottomRight.x)
+        let full = Quad.fullImage.expanded(by: 0.01)
+        #expect(full.topLeft == CGPoint(x: 0, y: 0))
+        #expect(full.bottomRight == CGPoint(x: 1, y: 1))
+    }
 }

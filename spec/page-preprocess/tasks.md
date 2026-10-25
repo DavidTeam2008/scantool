@@ -8,8 +8,8 @@
 
 - [~] **PP-T001** 取证基线：`docs/media/IMG_7544.jpg` + 真机 `rendered.jpg` 记录页外背景、页边偏差、文字行角度；落盘 `build/page-preprocess/baseline/`（已完成首份 summary：真机 1663×2200、WPS 0.907581、模拟器 0.906224）。
 - [~] **PP-T002** `PageBoundaryDetector`：已实现 `VNDetectDocumentSegmentationRequest` + 墨迹包围盒否决 + 提议框回退（`PageBoundaryDetectorTests` 3/3）；**未做**：接入 `ImagePipeline` 与 `preprocess.json`。
-- [~] **PP-T003** `ImagePipeline` 接入 D1/D2：`renderPage` 在提议四角退化/近整图时调用 `PageBoundaryDetector`；已用 iPhone 13 original 2939×3961 验证：检测 area 0.9669、裁掉顶部 2.7% 页外区域。**未做**：1% 安全边与墨迹召回回退（待 OCR/ink bounds 接线）。
-- [ ] **PP-T004** 指标工具：页外残留、边直线度、平行度、墨迹召回、耗时；合成页单测 + 真实页集成。
+- [X] **PP-T003** `ImagePipeline` 接入 D1/D2：`renderPage` 在提议四角退化/近整图时调用 `PageBoundaryDetector`，检测后外扩 1% 安全边并写 `*.preprocess.json`。**iPhone 13 实测**：original 2939×3961 → 检测 area 0.9669、顶部裁 2.7% → 输出 1647×2200、94ms。**未做**：墨迹召回回退（待 OCR/ink bounds 接线）。
+- [~] **PP-T004** 指标工具：已落 `PagePreprocessReport`（quad/area/confidence/margin/耗时/回退原因）与真机 baseline；**未做**：页外残留/边直线度/平行度/墨迹召回的可视化汇总。
 - [ ] **PP-T005** 真机/模拟器 A/B：同页预处理前后 OCR 行、表格列数、Word WPS SSIM；不得回退当前 0.906/0.907。
 
 ## P1 · 折痕/光照

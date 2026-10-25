@@ -47,10 +47,11 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     func renderPage(original: URL, draft: PageDraft) async throws -> RenderedPageData {
         // P0 页面预处理：拍后/相册路径若四角检测退化或接近整图，用文档分割
         // 再试一次页面边界；只有检测框通过“提议框回退”才采用（不裁字优先）。
-        let refinedQuad = pageBoundaryQuad(original: original, proposed: draft.quad)
+        let boundary = pageBoundary(original: original, proposed: draft.quad)
+        writePreprocessReport(boundary.report, original: original)
         let corrected = try await correct(
             original: original,
-            quad: refinedQuad,
+            quad: boundary.quad,
             rotationTurns: draft.rotationTurns
         )
         let enhanced = try await apply(imageData: corrected, enhancement: draft.enhancement)
@@ -89,11 +90,49 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     }
 
     /// 仅在提议四角退化/近整图时补跑文档分割，避免改变正常取景框。
-    private func pageBoundaryQuad(original: URL, proposed: Quad) -> Quad {
-        guard proposed.isDegenerate || proposed.area >= 0.95 else { return proposed }
+    /// 检测成功后外扩 1% 安全边（各边约 1% 页宽/页高），并写可观测报告。
+    private func pageBoundary(
+        original: URL,
+        proposed: Quad
+    ) -> (quad: Quad, report: PagePreprocessReport) {
+        let started = Date()
+        let margin = 0.01
+        guard proposed.isDegenerate || proposed.area >= 0.95 else {
+            return (
+                proposed,
+                PagePreprocessReport(
+                    source: original.path,
+                    proposed: .init(proposed),
+                    detected: nil,
+                    chosen: .init(proposed),
+                    detectionConfidence: nil,
+                    detectedArea: nil,
+                    safetyMarginRatio: margin,
+                    elapsedMilliseconds: elapsedMilliseconds(since: started),
+                    fallbackReason: "proposed_not_degenerate",
+                    createdAt: Date()
+                )
+            )
+        }
         guard let source = CGImageSourceCreateWithURL(original as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else { return proposed }
+        else {
+            return (
+                proposed,
+                PagePreprocessReport(
+                    source: original.path,
+                    proposed: .init(proposed),
+                    detected: nil,
+                    chosen: .init(proposed),
+                    detectionConfidence: nil,
+                    detectedArea: nil,
+                    safetyMarginRatio: margin,
+                    elapsedMilliseconds: elapsedMilliseconds(since: started),
+                    fallbackReason: "image_unreadable",
+                    createdAt: Date()
+                )
+            )
+        }
         let orientation: CGImagePropertyOrientation = {
             guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
                   let raw = properties[kCGImagePropertyOrientation] as? UInt32,
@@ -102,11 +141,45 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             return value
         }()
         let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
-        return PageBoundaryDetector.choose(
+        let chosen = PageBoundaryDetector.choose(
             proposed: proposed,
             detected: detection,
             inkBounds: nil
         )
+        let expanded = chosen.expanded(by: margin)
+        let reason: String
+        if detection == nil {
+            reason = "no_detection"
+        } else if chosen.meanVertexDistance(to: proposed) < 0.01 {
+            reason = "detected_near_proposed"
+        } else {
+            reason = "detected_used"
+        }
+        let report = PagePreprocessReport(
+            source: original.path,
+            proposed: .init(proposed),
+            detected: detection.map { .init($0.quad) },
+            chosen: .init(expanded),
+            detectionConfidence: detection?.confidence,
+            detectedArea: detection?.area,
+            safetyMarginRatio: margin,
+            elapsedMilliseconds: elapsedMilliseconds(since: started),
+            fallbackReason: reason,
+            createdAt: Date()
+        )
+        return (expanded, report)
+    }
+
+    private func writePreprocessReport(_ report: PagePreprocessReport, original: URL) {
+        let url = original
+            .deletingPathExtension()
+            .appendingPathExtension("preprocess.json")
+        guard let data = try? JSONEncoder().encode(report) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func elapsedMilliseconds(since start: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(start) * 1000))
     }
 
     private func loadUpright(url: URL) throws -> CIImage {

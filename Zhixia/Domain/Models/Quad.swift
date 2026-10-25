@@ -90,6 +90,26 @@ struct Quad: Equatable, Sendable, Codable, Hashable {
         )
     }
 
+    /// 以中心为基准向外扩 `ratio`（0.01 = 各边约 1% 页宽/页高），并夹回页面。
+    /// 用于页面检测后的安全边，避免页边文字被切。
+    func expanded(by ratio: CGFloat) -> Quad {
+        guard ratio > 0 else { return clamped() }
+        let center = self.center
+        let scale = 1 + ratio * 2
+        func expand(_ p: CGPoint) -> CGPoint {
+            CGPoint(
+                x: center.x + (p.x - center.x) * scale,
+                y: center.y + (p.y - center.y) * scale
+            )
+        }
+        return Quad(
+            topLeft: expand(topLeft),
+            topRight: expand(topRight),
+            bottomRight: expand(bottomRight),
+            bottomLeft: expand(bottomLeft)
+        ).clamped()
+    }
+
     func clamped() -> Quad {
         Quad(
             topLeft: clamp(topLeft),
