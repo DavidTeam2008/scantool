@@ -48,15 +48,40 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         // P0 页面预处理：拍后/相册路径若四角检测退化或接近整图，用文档分割
         // 再试一次页面边界；只有检测框通过“提议框回退”才采用（不裁字优先）。
         let boundary = pageBoundary(original: original, proposed: draft.quad)
-        writePreprocessReport(boundary.report, original: original)
-        // P0 gate：页面裁切尚未通过表格稳定性 A/B（真机 after 页 table 从 2×5
-        // 变 0），先只保留检测/指标，不把 crop 接到 OCR/导出的实际底座。
-        // 恢复条件：table 结构与未裁切原图一致 + textCoverage ≥0.99。
-        let corrected = try await correct(
-            original: original,
-            quad: draft.quad,
-            rotationTurns: draft.rotationTurns
-        )
+        var report = boundary.report
+        let maxVertexDistance = zip(boundary.quad.points, draft.quad.points)
+            .map { hypot($0.x - $1.x, $0.y - $1.y) }
+            .max() ?? 0
+        let wantsCrop = maxVertexDistance > 0.005
+            && boundary.quad.area < draft.quad.area - 0.0001
+        let corrected: Data
+        if wantsCrop {
+            let croppedData = try await correct(
+                original: original,
+                quad: boundary.quad,
+                rotationTurns: draft.rotationTurns
+            )
+            if await cropIsTableSafe(original: original, croppedData: croppedData) {
+                report.cropApplied = true
+                corrected = croppedData
+            } else {
+                report.cropApplied = false
+                report.fallbackReason = "table_mismatch"
+                corrected = try await correct(
+                    original: original,
+                    quad: draft.quad,
+                    rotationTurns: draft.rotationTurns
+                )
+            }
+        } else {
+            report.cropApplied = false
+            corrected = try await correct(
+                original: original,
+                quad: draft.quad,
+                rotationTurns: draft.rotationTurns
+            )
+        }
+        writePreprocessReport(report, original: original)
         let enhanced = try await apply(imageData: corrected, enhancement: draft.enhancement)
         let thumb = try await makeThumbnail(imageData: enhanced, maxWidth: 360)
         let size: CGSize
@@ -90,6 +115,24 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let minC = min(r, g, b)
         guard maxC > 0 else { return 0 }
         return (maxC - minC) / maxC
+    }
+
+    /// 裁切前表格安全门：原页有表时，裁切页必须保留同样的表数量/行列/文本。
+    /// 任一结构识别失败 → 不裁（宁可保留页外背景，不丢表）。
+    private func cropIsTableSafe(original: URL, croppedData: Data) async -> Bool {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zhixia-preprocess-\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        guard (try? croppedData.write(to: temp)) != nil else { return false }
+        let recognizer = VisionDocumentStructureRecognizer()
+        guard let originalPage = await recognizer.recognize(
+            imageURL: original,
+            pageID: UUID()
+        ), let croppedPage = await recognizer.recognize(
+            imageURL: temp,
+            pageID: UUID()
+        ) else { return false }
+        return PageCropSafety.isSafe(original: originalPage, cropped: croppedPage)
     }
 
     /// 仅在提议四角退化/近整图时补跑文档分割，避免改变正常取景框。
