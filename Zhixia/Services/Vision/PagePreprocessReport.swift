@@ -40,6 +40,12 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var parallelErrorsDegrees: [Double]? = nil
     var safetyMarginRatio: Double
     var foldTrimU: Double?
+    /// 折页裁切来源（`dark_fold` / `bright_fold`）；nil 表示未触发。
+    var foldTrimSource: String?
+    /// 折页裁切会丢弃的左侧文字面积比例（相对全部文字包围盒）。
+    var foldTrimTextLossRatio: Double?
+    /// 矫正图上检测到的纸面右缘（归一化 u）；用于解释右缘收边。
+    var paperRightEdge: Double?
     /// 裁切是否真正应用到底座；P0 表格 A/B 未过时为 false（只诊断）。
     var cropApplied: Bool = false
     var elapsedMilliseconds: Int

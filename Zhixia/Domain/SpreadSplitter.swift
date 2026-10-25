@@ -227,6 +227,166 @@ enum SpreadSplitter {
         return FoldTrim(u: cut, stripDepth: depth, interior: interior)
     }
 
+    /// 左侧**亮折页条**裁切：折页书左缘有时不是暗带，而是一条仍然很亮、
+    /// 但印着漫画/插图的折起条（`IMG_7542`）。它与右页之间是一条窄白边，
+    /// 亮度高于折条、暗像素比例接近 0。
+    ///
+    /// 判据（都在矫正图列均值/列暗像素比例上）：
+    /// 1. 左条均亮 ≤ 页面内部中位数 − 0.04；
+    /// 2. 右缘连续 4 个 0.5% 采样都接近纸面亮度；
+    /// 3. 左条有足够暗像素（常规折条 ≥ 20% 采样列；真机窄折条放宽）；
+    /// 4. 右缘亮列贯穿 ≥ 75% 采样行（排除局部亮块）；
+    /// 5. 常规折条位置 [0.03, 0.20]、条宽 ≥ 3%；真机页级框残留的
+    ///    0.5%~3% 窄折条单独走低阈值分支。
+    ///
+    /// 与 `leftFoldTrim`（暗折条）互补；只返回候选，调用方仍要过文字损失
+    /// 与表格安全门。
+    static func leftBrightFoldTrim(inRectified image: CGImage) -> FoldTrim? {
+        guard image.width >= 200, image.height >= 200,
+              let raster = Raster(image: image)
+        else { return nil }
+        let rows = 48
+        func mean(_ u: Double) -> Double {
+            var total = 0.0
+            for row in 0..<rows {
+                let v = 0.10 + 0.80 * (Double(row) + 0.5) / Double(rows)
+                total += raster.luminanceBilinear(atNormalized: CGPoint(x: u, y: v))
+            }
+            return total / Double(rows)
+        }
+        func darkFraction(_ u: Double, threshold: Double) -> Double {
+            var dark = 0
+            for row in 0..<rows {
+                let v = 0.10 + 0.80 * (Double(row) + 0.5) / Double(rows)
+                if raster.luminanceBilinear(atNormalized: CGPoint(x: u, y: v)) < threshold {
+                    dark += 1
+                }
+            }
+            return Double(dark) / Double(rows)
+        }
+        func brightFraction(_ u: Double, threshold: Double) -> Double {
+            1 - darkFraction(u, threshold: threshold)
+        }
+
+        var interiorSamples: [Double] = []
+        var u = 0.30
+        while u <= 0.90 {
+            interiorSamples.append(mean(u))
+            u += 0.01
+        }
+        guard !interiorSamples.isEmpty else { return nil }
+        let interior = interiorSamples.sorted()[interiorSamples.count / 2]
+        let brightThreshold = interior - 0.05
+
+        u = 0.005
+        while u <= 0.20 {
+            // 窄折条（真机边缘框已切掉大部分折页，只剩左缘 1%~2%）：
+            // 从 0 起采样，并放宽“左条必须有墨”的要求，仍由调用方的
+            // 文字损失门 + 表格安全门兜底。
+            let narrow = u < 0.03
+            let leftStart = narrow ? 0.0 : 0.02
+            var leftTotal = 0.0
+            var leftCount = 0
+            var leftDark = 0
+            var leftBright = 0
+            var x = leftStart
+            let leftEnd = max(leftStart, u - (narrow ? 0.002 : 0.01))
+            while x <= leftEnd {
+                let columnMean = mean(x)
+                leftTotal += columnMean
+                if columnMean >= 0.30 {
+                    leftBright += 1
+                }
+                if darkFraction(x, threshold: interior - 0.18) >= 0.08 {
+                    leftDark += 1
+                }
+                leftCount += 1
+                x += 0.005
+            }
+            guard leftCount > 0 else { return nil }
+            let leftMean = leftTotal / Double(leftCount)
+            let leftInkColumns = Double(leftDark) / Double(leftCount)
+            let leftBrightColumns = Double(leftBright) / Double(leftCount)
+            // 切口左侧一列必须仍是折条，而不是已经进入亮页正文。
+            let leftEdgeMean = mean(max(leftStart, u - (narrow ? 0.002 : 0.01)))
+
+            // 右缘：连续采样必须都接近纸面亮度；单点亮块不算。
+            // 窄折条场景页面内部中位数会被正文拉低，右缘要用更高的
+            // “纸面亮”阈值，否则折条右缘那一列就会被误当成纸面。
+            let rightThreshold = narrow ? min(interior + 0.01, 0.90) : brightThreshold
+            let rightSamples = [u + 0.005, u + 0.010, u + 0.015, u + 0.025].map(mean)
+            let rightMean = rightSamples.reduce(0, +) / Double(rightSamples.count)
+            let rightContinuous = rightSamples.allSatisfy { $0 >= rightThreshold }
+            let rightBright = brightFraction(u + 0.010, threshold: rightThreshold)
+
+
+            if leftMean >= 0.30,
+               leftBrightColumns >= 0.70,
+               leftEdgeMean <= interior - (narrow ? 0.02 : 0.04),
+               leftMean <= interior - 0.04,
+               rightContinuous,
+               rightMean >= leftMean + 0.05,
+               narrow || leftInkColumns >= 0.20,
+               rightBright >= 0.75,
+               u >= 0.005,
+               u - leftStart >= (narrow ? 0.005 : 0.03) {
+                return FoldTrim(
+                    u: u,
+                    stripDepth: rightMean - leftMean,
+                    interior: interior
+                )
+            }
+            u += 0.005
+        }
+        return nil
+    }
+
+    /// 右页纸面右缘（归一化 u）：从右往左找第一段「足够亮且暗像素少」的
+    /// 连续纸面列。用于内容框右侧收边，避免把木桌/页边阴影带进 Word。
+    static func rightPaperEdge(inRectified image: CGImage) -> Double? {
+        guard image.width >= 200, image.height >= 200,
+              let raster = Raster(image: image)
+        else { return nil }
+        let rows = 48
+        func mean(_ u: Double) -> Double {
+            var total = 0.0
+            for row in 0..<rows {
+                let v = 0.10 + 0.80 * (Double(row) + 0.5) / Double(rows)
+                total += raster.luminanceBilinear(atNormalized: CGPoint(x: u, y: v))
+            }
+            return total / Double(rows)
+        }
+        func darkFraction(_ u: Double, threshold: Double) -> Double {
+            var dark = 0
+            for row in 0..<rows {
+                let v = 0.10 + 0.80 * (Double(row) + 0.5) / Double(rows)
+                if raster.luminanceBilinear(atNormalized: CGPoint(x: u, y: v)) < threshold {
+                    dark += 1
+                }
+            }
+            return Double(dark) / Double(rows)
+        }
+        var interiorSamples: [Double] = []
+        var sampleU = 0.30
+        while sampleU <= 0.90 {
+            interiorSamples.append(mean(sampleU))
+            sampleU += 0.01
+        }
+        guard !interiorSamples.isEmpty else { return nil }
+        let interior = interiorSamples.sorted()[interiorSamples.count / 2]
+        let threshold = interior - 0.12
+        var u = 0.995
+        while u >= 0.70 {
+            let bright = mean(u) >= threshold && darkFraction(u, threshold: threshold) <= 0.20
+            let next = mean(max(0.70, u - 0.005)) >= threshold
+            if bright, next {
+                return u
+            }
+            u -= 0.005
+        }
+        return nil
+    }
+
     /// 列亮度剖面（诊断用）：u ∈ [from, to] 的逐列均值，供本地排查真实照片。
     static func columnProfile(
         inRectified image: CGImage, from: Double = 0.02, to: Double = 0.98, step: Double = 0.02

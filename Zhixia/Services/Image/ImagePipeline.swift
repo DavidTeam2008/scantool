@@ -150,7 +150,10 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     ) -> (quad: Quad, report: PagePreprocessReport) {
         let started = Date()
         let margin = 0.01
-        guard proposed.isDegenerate || proposed.area >= 0.90 else {
+        // 真机边缘检测常给出面积 0.8~0.9 的页面四边形，仍然可能带左侧
+        // 亮折条/页外背景；因此放宽到 0.70 再跑折页与内容框候选。
+        // 正常单页若没有折条，后续 chosenNearProposed 会拒绝内容框裁切。
+        guard proposed.isDegenerate || proposed.area >= 0.70 else {
             return (
                 proposed,
                 PagePreprocessReport(
@@ -195,46 +198,113 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         }()
         let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
         let textBounds = PageBoundaryDetector.textBounds(in: image, orientation: orientation)
-        let paper = PaperMaskDetector.detect(in: image)
-        let foldTrim: SpreadSplitter.FoldTrim? = rectifiedCGImage(
-            original: original,
-            quad: proposed
-        ).flatMap { SpreadSplitter.leftFoldTrim(inRectified: $0) }
-        let contentBaseQuad = foldTrim.map {
-            SpreadSplitter.split(proposed, at: $0.u).right
-        } ?? proposed
         var chosen = PageBoundaryDetector.choose(
             proposed: proposed,
             detected: detection,
             inkBounds: textBounds
         )
-        // 内容裁切候选：文字框 + 2% 边，必要时与纸张 mask 相交。
+        // 折页检测跑在**已选页面**上：真机边缘框可能已切掉折条，而文档
+        // 分割框（detection）仍包含完整书页——在后者上才能看到亮折条。
+        let foldQuad = chosen
+        let foldImage = rectifiedCGImage(original: original, quad: foldQuad)
+        let darkFold = foldImage.flatMap { SpreadSplitter.leftFoldTrim(inRectified: $0) }
+        let brightFold = foldImage.flatMap { SpreadSplitter.leftBrightFoldTrim(inRectified: $0) }
+        let paperRightEdge = foldImage.flatMap { SpreadSplitter.rightPaperEdge(inRectified: $0) }
+        var foldTrim = darkFold ?? brightFold
+        var foldTrimSource: String? = darkFold != nil
+            ? "dark_fold"
+            : (brightFold != nil ? "bright_fold" : nil)
+        // 折页裁切必须能解释被丢掉的文字：只允许丢左侧折条，正文列不能被裁。
+        // 上限 15% 是折条文字面积的经验值；超过则视为误检，回到内容框裁切。
+        var foldTrimTextLossRatio: Double?
+        var pageTextBounds = textBounds
+        if let textBounds, let fold = foldTrim {
+            let rightPage = SpreadSplitter.split(foldQuad, at: fold.u).right
+            let retained = textBounds.intersection(rightPage.boundingRect)
+            let loss = 1 - Double(retained.width * retained.height)
+                / max(Double(textBounds.width * textBounds.height), 0.0001)
+            foldTrimTextLossRatio = loss
+            if retained.isEmpty || loss > 0.15 {
+                foldTrim = nil
+                foldTrimSource = nil
+                foldTrimTextLossRatio = nil
+            } else {
+                pageTextBounds = retained
+            }
+        }
+        let contentBaseQuad = foldTrim.map {
+            SpreadSplitter.split(foldQuad, at: $0.u).right
+        } ?? foldQuad
+        // 内容裁切候选：文字框 + 0.3% 边；折页场景先把文字框夹到右页。
         // 只在原页面检测没能给出更贴合内容边界时启用（木桌/折页页）。
         var usedContentCrop = false
-        if let textBounds,
+        // 正常单页检测已足够好时不做内容框裁切：0.3% 文字边可能切掉标题
+        // 左侧的 W 等字形，且不会带来页外背景收益。折页场景必裁；其余仅当
+        // 文档分割确实替换了提议框（chosen 已远离 proposed）时才裁。
+        let chosenNearProposed = chosen.meanVertexDistance(to: proposed) < 0.02
+        let needsContentCrop = foldTrim != nil
+            || chosen.area < proposed.area - 0.01
+            || (!chosenNearProposed && (detection?.area ?? 0) >= 0.90)
+        if needsContentCrop, foldTrim == nil, let textBounds {
+            // 检测框已经比提议框更贴页时，内容框必须夹在检测页内，否则
+            // 文字包围盒会把左侧折条/页外背景重新带回来。
+            pageTextBounds = textBounds.intersection(chosen.boundingRect)
+        }
+        if needsContentCrop, let pageTextBounds,
            let content = PageBoundaryDetector.contentQuad(
-               textBounds: foldTrim == nil
-                   ? textBounds
-                   : textBounds.intersection(contentBaseQuad.boundingRect),
-               paperBounds: paper?.rect,
-               margin: 0.003
+               textBounds: pageTextBounds,
+               margin: foldTrim == nil ? 0.003 : 0.008
            ),
            content.area < chosen.area - 0.005 {
-            chosen = content
+            var crop = content
+            // 折页内容框的右缘会带入 0.5% 的页边阴影/木桌；左缘则要保留标题
+            // 字形，所以只收右缘，不缩小左侧安全边。
+            if foldTrim == nil {
+                // 非折页：内容框夹在已选页面内，去掉页边/木桌，同时给
+                // 标题保留 0.1% 的纸内边。
+                let b = chosen.boundingRect
+                crop.topLeft.x = max(crop.topLeft.x, b.minX + 0.001)
+                crop.bottomLeft.x = max(crop.bottomLeft.x, b.minX + 0.001)
+                crop.topLeft.y = max(crop.topLeft.y, b.minY + 0.001)
+                crop.topRight.y = max(crop.topRight.y, b.minY + 0.001)
+                crop.topRight.x = min(crop.topRight.x, b.maxX - 0.001)
+                crop.bottomRight.x = min(crop.bottomRight.x, b.maxX - 0.001)
+                crop.bottomLeft.y = min(crop.bottomLeft.y, b.maxY - 0.001)
+                crop.bottomRight.y = min(crop.bottomRight.y, b.maxY - 0.001)
+            } else {
+                // 右缘：优先收在纸面右边界内，去掉木桌/页边阴影；仍保留
+                // 文字框本身的 0.8% 安全边。
+                // paperRightEdge 是矫正图上 u；换算回原始 proposal 的 x 再裁。
+                let paperU = paperRightEdge ?? 1
+                let paperRightFull = foldQuad.topLeft.x
+                    + (foldQuad.topRight.x - foldQuad.topLeft.x) * paperU
+                // 页脚页码比页面上缘更靠右：右边界做成斜边，上缘收在纸边、
+                // 下缘保留页码，避免为了页码把整条木桌/阴影带回来。
+                let topRight = min(crop.topRight.x, paperRightFull - 0.002)
+                let bottomRight = min(crop.bottomRight.x, pageTextBounds.maxX + 0.003)
+                crop.topRight.x = topRight
+                crop.bottomRight.x = bottomRight
+            }
+            chosen = crop
+            usedContentCrop = true
+        } else if foldTrim != nil, pageTextBounds == nil {
+            chosen = contentBaseQuad
             usedContentCrop = true
         }
         // 内容裁切框已包含极小的文字安全边；不再向外扩 1%，否则会把左侧折页带回来。
         let expanded = usedContentCrop ? chosen : chosen.expanded(by: margin)
         let coverage: Double? = {
-            guard let textBounds, !textBounds.isEmpty else { return nil }
-            let intersection = expanded.boundingRect.intersection(textBounds)
+            guard let pageTextBounds, !pageTextBounds.isEmpty else { return nil }
+            let intersection = expanded.boundingRect.intersection(pageTextBounds)
             guard !intersection.isNull, !intersection.isEmpty else { return 0 }
-            return Double(intersection.width * intersection.height / max(textBounds.width * textBounds.height, 0.0001))
+            return Double(intersection.width * intersection.height / max(pageTextBounds.width * pageTextBounds.height, 0.0001))
         }()
         let angles = PageBoundaryMetrics.edgeAnglesDegrees(expanded)
         let parallel = PageBoundaryMetrics.parallelErrorsDegrees(expanded)
         let reason: String
-        if usedContentCrop {
+        if usedContentCrop, foldTrim != nil {
+            reason = "fold_trim"
+        } else if usedContentCrop {
             reason = "content_bounds"
         } else if detection == nil {
             reason = "no_detection"
@@ -257,6 +327,9 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             parallelErrorsDegrees: [parallel.horizontal, parallel.vertical],
             safetyMarginRatio: margin,
             foldTrimU: foldTrim?.u,
+            foldTrimSource: foldTrimSource,
+            foldTrimTextLossRatio: foldTrimTextLossRatio,
+            paperRightEdge: paperRightEdge,
             cropApplied: false,
             elapsedMilliseconds: elapsedMilliseconds(since: started),
             fallbackReason: reason,
