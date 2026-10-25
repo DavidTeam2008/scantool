@@ -6,7 +6,7 @@
 ## P0 · 页面预处理（当前执行）
 
 - [ ] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
-- [ ] PP-T002 `PageBoundaryDetector`：文档分割 + 四角回退 + 置信门控 + `preprocess.json`。
+- [~] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已实现并有 3 项单测；待接 `ImagePipeline` / `preprocess.json`。
 - [ ] PP-T003 `ImagePipeline` 页外裁切（1% 安全边、墨迹召回回退）。
 - [ ] PP-T004 预处理指标工具 + 合成页单测。
 - [ ] PP-T005 真机/模拟器 A/B；WPS SSIM 不低于 0.906/0.907。
