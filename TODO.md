@@ -5,11 +5,11 @@
 
 ## P0 · 页面预处理（当前执行）
 
-- [ ] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
-- [~] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已实现并有 3 项单测；待接 `ImagePipeline` / `preprocess.json`。
-- [~] PP-T003 页外裁切：新增纸张 mask + 内容框裁切 + 折页检测钩子；`IMG_7542` 已裁切（cropApplied=true、textCoverage=1、outsideArea 24.8%），但左侧折页条仍未完全去除（`leftFoldTrim` 未命中）。下一步做折页/书脊边界，且保持表格安全门。
-- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；待补像素级页外背景与可视化汇总。
-- [ ] PP-T005 真机/模拟器 A/B；WPS SSIM 不低于 0.906/0.907。
+- [x] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
+- [x] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已接 `ImagePipeline` / `preprocess.json`，单测通过。
+- [~] PP-T003 页外裁切：亮折页条检测 + 内容框 + 斜右边界已接。模拟器全图路径 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条与木桌已去除，表格安全门通过。真机 iPhone 13：边缘框已是页级（area 0.808），cropApplied=false，仍残留约 1% 左页边；原图 RecognizeDocumentsRequest tables=[]、裁切后 tables=[5]，表格同签名 A/B 无法成立。下一步：真机页级 quad 的左缘内收/EXIF 感知表格门。证据：`build/page-preprocess/final-p0/`。
+- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 foldTrimU/foldTrimSource/foldTrimTextLossRatio/paperRightEdge，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
+- [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（`build/word-fidelity/realbase-wps-p0c/`）与基线一致，未回退；真机折页裁切 A/B 仍未闭环。
 
 ## P1 · 折痕与光照
 
@@ -53,6 +53,7 @@
 
 - [ ] 更新 `Makefile` 测试基线为全量实际值（当前新增 TableStructureRepair / HeaderLineOrder 回归）。
 - [ ] 重跑 `make test`（iPhone 18 Pro / iOS 27）全绿。
+- [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。
 - [ ] Word 桌面版（Microsoft Word）渲染抽样；当前只有 WPS。
 - [ ] 真机 App UI 全流程（相册→收藏→版面还原→Word）复测；当前真机测试是 parser/export 级。

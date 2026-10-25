@@ -7,10 +7,10 @@
 ## P0 · 边界与页外裁切（当前）
 
 - [~] **PP-T001** 取证基线：`IMG_7544` + 真机 `rendered` + 新 `IMG_7542`（木桌/左侧折页）已记录。`IMG_7542`：edge area 0.9499、文档分割 0.2455、textCoverage 否决 0.2455；after 仍带背景 → 需要纸张 mask/内容边界，而不是只信边缘 quad。
-- [~] **PP-T002** `PageBoundaryDetector`：已实现 `VNDetectDocumentSegmentationRequest` + 墨迹包围盒否决 + 提议框回退（`PageBoundaryDetectorTests` 3/3）；**未做**：接入 `ImagePipeline` 与 `preprocess.json`。
-- [~] **PP-T003** `ImagePipeline` 接入 D1/D2：纸张 mask + 内容框（文字 bounds + 0.3%）+ 1% 安全边 + 表格安全门已接。`IMG_7542` 实测 cropApplied=true、textCoverage=1、outsideArea 24.8%；**左侧折页条仍保留**（`leftFoldTrim` 未命中）。下一步：折页/书脊边界检测，且保持表格签名门。
-- [~] **PP-T004** 指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors；iPhone 13 实测 textCoverage 1.0、页外面积 0.89%、上边角 1.02°、耗时 298ms。**待做**：背景像素级残留汇总与可视化。
-- [ ] **PP-T005** 真机/模拟器 A/B：同页预处理前后 OCR 行、表格列数、Word WPS SSIM；不得回退当前 0.906/0.907。
+- [x] **PP-T002** `PageBoundaryDetector`：`VNDetectDocumentSegmentationRequest` + 墨迹包围盒否决 + 提议框回退，已接入 `ImagePipeline` / `preprocess.json`（`PageBoundaryDetectorTests` 通过）。
+- [~] **PP-T003** `ImagePipeline` 接入 D1/D2：新增 `leftBrightFoldTrim`（亮折页条）、窄折条分支、文字损失门、斜右边界和纸张右缘。模拟器全图 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条/木桌去除，标题与页码保留。真机 iPhone 13：边缘框已页级（area 0.808），cropApplied=false，残留约 1% 左页边；原图 tables=[]、裁切后 tables=[5]，表格同签名 A/B 不可用。证据 `build/page-preprocess/final-p0/`。
+- [~] **PP-T004** 指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors/foldTrim*/paperRightEdge；iPhone 13 实测 textCoverage 1.0、页外面积 0.89%、上边角 1.02°、耗时 298ms。汇总 `build/page-preprocess/final-p0/summary.json`。**待做**：背景像素级残留汇总与可视化。
+- [~] **PP-T005** 真机/模拟器 A/B：WPS 0.906224 与基线一致（`build/word-fidelity/realbase-wps-p0c/`），未回退；真机折页裁切与表格同签名 A/B 仍需下一轮。
 
 ## P1 · 折痕/光照
 
@@ -50,4 +50,5 @@
 
 - **G1** 可编辑字与背景字未完全重合造成的重影：等预处理把几何拉直后再优化；当前先记录，不在本周期解决。
 - **G2** iOS 26.4.1 模拟器 `RecognizeDocumentsRequest` 对练习册表格返回 0 表（iOS 27 正常）：单独修结构化回退或标注环境限制，见 `TODO.md`。
+- **G2c** `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 结构表为 0（单独运行通过）；按 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - **G3** `preScaledFontSize` 的溢出估算仅对无 lines 旧块生效，需在 P2 回归中观察，不阻塞预处理。
