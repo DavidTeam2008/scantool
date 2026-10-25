@@ -7,8 +7,8 @@
 
 - [ ] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [~] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已实现并有 3 项单测；待接 `ImagePipeline` / `preprocess.json`。
-- [~] PP-T003 页外裁切：检测/报告/1% 安全边/表格安全门已接；真机该页裁切后表格签名不一致，自动回退未裁切图（保留 3×6 + 2×5 表）。待改“只丢假表/保留主表”策略或原图 OCR + 裁切底座映射。
-- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 baseline 已落；待补像素级页外背景与可视化汇总。
+- [~] PP-T003 页外裁切：新增纸张 mask + 内容框裁切 + 折页检测钩子；`IMG_7542` 已裁切（cropApplied=true、textCoverage=1、outsideArea 24.8%），但左侧折页条仍未完全去除（`leftFoldTrim` 未命中）。下一步做折页/书脊边界，且保持表格安全门。
+- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；待补像素级页外背景与可视化汇总。
 - [ ] PP-T005 真机/模拟器 A/B；WPS SSIM 不低于 0.906/0.907。
 
 ## P1 · 折痕与光照

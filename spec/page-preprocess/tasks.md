@@ -8,7 +8,7 @@
 
 - [~] **PP-T001** 取证基线：`IMG_7544` + 真机 `rendered` + 新 `IMG_7542`（木桌/左侧折页）已记录。`IMG_7542`：edge area 0.9499、文档分割 0.2455、textCoverage 否决 0.2455；after 仍带背景 → 需要纸张 mask/内容边界，而不是只信边缘 quad。
 - [~] **PP-T002** `PageBoundaryDetector`：已实现 `VNDetectDocumentSegmentationRequest` + 墨迹包围盒否决 + 提议框回退（`PageBoundaryDetectorTests` 3/3）；**未做**：接入 `ImagePipeline` 与 `preprocess.json`。
-- [~] **PP-T003** `ImagePipeline` 接入 D1/D2：检测、报告、1% 安全边、表格安全门已接；**crop 默认仍可能被 `table_mismatch` 拒绝**。iPhone 13 实测该页裁切后表格签名不一致，已自动回退未裁切图（表格 3×6 + 2×5 保留），报告 `cropApplied=false`。下一步需要“只丢假表/保留主表”的签名策略，或原图 OCR + 裁切底座映射。
+- [~] **PP-T003** `ImagePipeline` 接入 D1/D2：纸张 mask + 内容框（文字 bounds + 0.3%）+ 1% 安全边 + 表格安全门已接。`IMG_7542` 实测 cropApplied=true、textCoverage=1、outsideArea 24.8%；**左侧折页条仍保留**（`leftFoldTrim` 未命中）。下一步：折页/书脊边界检测，且保持表格签名门。
 - [~] **PP-T004** 指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors；iPhone 13 实测 textCoverage 1.0、页外面积 0.89%、上边角 1.02°、耗时 298ms。**待做**：背景像素级残留汇总与可视化。
 - [ ] **PP-T005** 真机/模拟器 A/B：同页预处理前后 OCR 行、表格列数、Word WPS SSIM；不得回退当前 0.906/0.907。
 

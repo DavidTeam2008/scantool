@@ -117,6 +117,13 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         return (maxC - minC) / maxC
     }
 
+    /// 将 original 按 quad 透视矫正后的矩形 CGImage（供书脊/折页检测）。
+    private func rectifiedCGImage(original: URL, quad: Quad) -> CGImage? {
+        guard let source = try? loadUpright(url: original) else { return nil }
+        guard let corrected = try? perspectiveCorrect(source, quad: quad) else { return nil }
+        return context.createCGImage(corrected, from: corrected.extent)
+    }
+
     /// 裁切前表格安全门：原页有表时，裁切页必须保留同样的表数量/行列/文本。
     /// 任一结构识别失败 → 不裁（宁可保留页外背景，不丢表）。
     private func cropIsTableSafe(original: URL, croppedData: Data) async -> Bool {
@@ -143,7 +150,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     ) -> (quad: Quad, report: PagePreprocessReport) {
         let started = Date()
         let margin = 0.01
-        guard proposed.isDegenerate || proposed.area >= 0.95 else {
+        guard proposed.isDegenerate || proposed.area >= 0.90 else {
             return (
                 proposed,
                 PagePreprocessReport(
@@ -188,12 +195,36 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         }()
         let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
         let textBounds = PageBoundaryDetector.textBounds(in: image, orientation: orientation)
-        let chosen = PageBoundaryDetector.choose(
+        let paper = PaperMaskDetector.detect(in: image)
+        let foldTrim: SpreadSplitter.FoldTrim? = rectifiedCGImage(
+            original: original,
+            quad: proposed
+        ).flatMap { SpreadSplitter.leftFoldTrim(inRectified: $0) }
+        let contentBaseQuad = foldTrim.map {
+            SpreadSplitter.split(proposed, at: $0.u).right
+        } ?? proposed
+        var chosen = PageBoundaryDetector.choose(
             proposed: proposed,
             detected: detection,
             inkBounds: textBounds
         )
-        let expanded = chosen.expanded(by: margin)
+        // 内容裁切候选：文字框 + 2% 边，必要时与纸张 mask 相交。
+        // 只在原页面检测没能给出更贴合内容边界时启用（木桌/折页页）。
+        var usedContentCrop = false
+        if let textBounds,
+           let content = PageBoundaryDetector.contentQuad(
+               textBounds: foldTrim == nil
+                   ? textBounds
+                   : textBounds.intersection(contentBaseQuad.boundingRect),
+               paperBounds: paper?.rect,
+               margin: 0.003
+           ),
+           content.area < chosen.area - 0.005 {
+            chosen = content
+            usedContentCrop = true
+        }
+        // 内容裁切框已包含极小的文字安全边；不再向外扩 1%，否则会把左侧折页带回来。
+        let expanded = usedContentCrop ? chosen : chosen.expanded(by: margin)
         let coverage: Double? = {
             guard let textBounds, !textBounds.isEmpty else { return nil }
             let intersection = expanded.boundingRect.intersection(textBounds)
@@ -203,7 +234,9 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let angles = PageBoundaryMetrics.edgeAnglesDegrees(expanded)
         let parallel = PageBoundaryMetrics.parallelErrorsDegrees(expanded)
         let reason: String
-        if detection == nil {
+        if usedContentCrop {
+            reason = "content_bounds"
+        } else if detection == nil {
             reason = "no_detection"
         } else if chosen.meanVertexDistance(to: proposed) < 0.01 {
             reason = "detected_near_proposed"
@@ -223,6 +256,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             edgeAnglesDegrees: angles,
             parallelErrorsDegrees: [parallel.horizontal, parallel.vertical],
             safetyMarginRatio: margin,
+            foldTrimU: foldTrim?.u,
             cropApplied: false,
             elapsedMilliseconds: elapsedMilliseconds(since: started),
             fallbackReason: reason,

@@ -53,6 +53,30 @@ enum PageBoundaryDetector {
         )
     }
 
+    /// 内容裁切框：文字包围盒外扩 `margin`，可选与纸张 mask 相交，夹回页面。
+    /// 用于“页外木桌/折页”场景；不改变 OCR/表格识别输入，只作为裁切候选。
+    static func contentQuad(
+        textBounds: CGRect,
+        paperBounds: CGRect?,
+        margin: CGFloat = 0.02
+    ) -> Quad? {
+        guard !textBounds.isEmpty else { return nil }
+        var rect = textBounds.insetBy(dx: -margin, dy: -margin)
+        // 不用 paperBounds 直接相交：木桌/折页 mask 可能切掉左/右文字。
+        // 纸张 mask 只作页面范围的旁证；内容裁切以文字框 + 安全边为准。
+        _ = paperBounds
+        rect = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !rect.isNull, rect.width > 0.1, rect.height > 0.1,
+              rect.width * rect.height >= 0.15
+        else { return nil }
+        return Quad(
+            topLeft: CGPoint(x: rect.minX, y: rect.minY),
+            topRight: CGPoint(x: rect.maxX, y: rect.minY),
+            bottomRight: CGPoint(x: rect.maxX, y: rect.maxY),
+            bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+    }
+
     /// 轻量文字包围盒（`VNDetectTextRectanglesRequest`，不跑识别）。
     /// 用于裁切前的墨迹召回否决；无文字时返回 nil。
     static func textBounds(
