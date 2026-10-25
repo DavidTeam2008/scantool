@@ -7,7 +7,7 @@
 
 - [ ] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [~] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已实现并有 3 项单测；待接 `ImagePipeline` / `preprocess.json`。
-- [ ] PP-T003 `ImagePipeline` 页外裁切（1% 安全边、墨迹召回回退）。
+- [~] PP-T003 `ImagePipeline` 页外裁切：退化/近整图时接 `PageBoundaryDetector`；iPhone 13 original 检测 area 0.9669、顶部裁 2.7%。待补 1% 安全边与墨迹召回回退。
 - [ ] PP-T004 预处理指标工具 + 合成页单测。
 - [ ] PP-T005 真机/模拟器 A/B；WPS SSIM 不低于 0.906/0.907。
 

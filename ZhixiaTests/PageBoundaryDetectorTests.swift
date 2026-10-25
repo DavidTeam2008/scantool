@@ -43,12 +43,13 @@ struct PageBoundaryDetectorTests {
             PageBoundaryDetector.choose(proposed: Self.full, detected: nil, inkBounds: nil)
                 == Self.full
         )
+        // 真机文档分割 confidence 可能为 0；有效几何应被采用（置信度只记遥测）。
         #expect(
             PageBoundaryDetector.choose(
                 proposed: Self.full,
-                detected: .init(quad: Self.paper, confidence: 0.2, area: Self.paper.area),
+                detected: .init(quad: Self.paper, confidence: 0, area: Self.paper.area),
                 inkBounds: nil
-            ) == Self.full
+            ) == Self.paper
         )
         #expect(
             PageBoundaryDetector.choose(

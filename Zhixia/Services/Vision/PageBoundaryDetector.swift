@@ -60,9 +60,11 @@ enum PageBoundaryDetector {
         detected: Detection?,
         inkBounds: CGRect?
     ) -> Quad {
+        // 真机 iPhone 13 实测：`VNDetectDocumentSegmentationRequest` 的
+        // `observation.confidence` 返回 0，但 area/边几何有效。置信度只作遥测，
+        // 不能当硬门；真正否决靠退化检测 + 墨迹覆盖率。
         guard let detected,
-              !detected.quad.isDegenerate,
-              detected.confidence >= 0.5
+              !detected.quad.isDegenerate
         else { return proposed }
         if let inkBounds, !inkBounds.isEmpty {
             let covered = intersectionArea(detected.quad.boundingRect, inkBounds)

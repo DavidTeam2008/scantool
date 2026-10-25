@@ -3,6 +3,7 @@ import CoreImage.CIFilterBuiltins
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 
 actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRendering {
     private let context: CIContext
@@ -44,9 +45,12 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     }
 
     func renderPage(original: URL, draft: PageDraft) async throws -> RenderedPageData {
+        // P0 页面预处理：拍后/相册路径若四角检测退化或接近整图，用文档分割
+        // 再试一次页面边界；只有检测框通过“提议框回退”才采用（不裁字优先）。
+        let refinedQuad = pageBoundaryQuad(original: original, proposed: draft.quad)
         let corrected = try await correct(
             original: original,
-            quad: draft.quad,
+            quad: refinedQuad,
             rotationTurns: draft.rotationTurns
         )
         let enhanced = try await apply(imageData: corrected, enhancement: draft.enhancement)
@@ -82,6 +86,27 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let minC = min(r, g, b)
         guard maxC > 0 else { return 0 }
         return (maxC - minC) / maxC
+    }
+
+    /// 仅在提议四角退化/近整图时补跑文档分割，避免改变正常取景框。
+    private func pageBoundaryQuad(original: URL, proposed: Quad) -> Quad {
+        guard proposed.isDegenerate || proposed.area >= 0.95 else { return proposed }
+        guard let source = CGImageSourceCreateWithURL(original as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return proposed }
+        let orientation: CGImagePropertyOrientation = {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let raw = properties[kCGImagePropertyOrientation] as? UInt32,
+                  let value = CGImagePropertyOrientation(rawValue: raw)
+            else { return .up }
+            return value
+        }()
+        let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
+        return PageBoundaryDetector.choose(
+            proposed: proposed,
+            detected: detection,
+            inkBounds: nil
+        )
     }
 
     private func loadUpright(url: URL) throws -> CIImage {
