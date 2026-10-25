@@ -49,9 +49,12 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         // 再试一次页面边界；只有检测框通过“提议框回退”才采用（不裁字优先）。
         let boundary = pageBoundary(original: original, proposed: draft.quad)
         writePreprocessReport(boundary.report, original: original)
+        // P0 gate：页面裁切尚未通过表格稳定性 A/B（真机 after 页 table 从 2×5
+        // 变 0），先只保留检测/指标，不把 crop 接到 OCR/导出的实际底座。
+        // 恢复条件：table 结构与未裁切原图一致 + textCoverage ≥0.99。
         let corrected = try await correct(
             original: original,
-            quad: boundary.quad,
+            quad: draft.quad,
             rotationTurns: draft.rotationTurns
         )
         let enhanced = try await apply(imageData: corrected, enhancement: draft.enhancement)
@@ -177,6 +180,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             edgeAnglesDegrees: angles,
             parallelErrorsDegrees: [parallel.horizontal, parallel.vertical],
             safetyMarginRatio: margin,
+            cropApplied: false,
             elapsedMilliseconds: elapsedMilliseconds(since: started),
             fallbackReason: reason,
             createdAt: Date()

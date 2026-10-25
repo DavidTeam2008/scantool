@@ -7,7 +7,7 @@
 
 - [ ] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [~] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已实现并有 3 项单测；待接 `ImagePipeline` / `preprocess.json`。
-- [X] PP-T003 `ImagePipeline` 页外裁切：退化/近整图时接 `PageBoundaryDetector`，检测后外扩 1% 安全边并写 `*.preprocess.json`。iPhone 13 original 2939×3961 → 1647×2200、94ms、顶部裁 2.7%。待补墨迹召回回退。
+- [~] PP-T003 `ImagePipeline` 页外裁切：检测/报告/1% 安全边已接，但 **crop 暂不应用**（真机 after 页 table 2×5→0）。恢复条件：表格结构与未裁切原图一致 + textCoverage ≥0.99。
 - [~] PP-T004 预处理指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors；iPhone 13 textCoverage 1.0、页外 0.89%、上边角 1.02°、298ms。待补像素级背景残留汇总。
 - [ ] PP-T005 真机/模拟器 A/B；WPS SSIM 不低于 0.906/0.907。
 

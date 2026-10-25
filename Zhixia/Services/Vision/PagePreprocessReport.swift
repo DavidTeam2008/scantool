@@ -39,6 +39,8 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var edgeAnglesDegrees: [Double]? = nil
     var parallelErrorsDegrees: [Double]? = nil
     var safetyMarginRatio: Double
+    /// 裁切是否真正应用到底座；P0 表格 A/B 未过时为 false（只诊断）。
+    var cropApplied: Bool = false
     var elapsedMilliseconds: Int
     var fallbackReason: String?
     var createdAt: Date
