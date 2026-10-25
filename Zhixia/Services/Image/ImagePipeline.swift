@@ -141,12 +141,21 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             return value
         }()
         let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
+        let textBounds = PageBoundaryDetector.textBounds(in: image, orientation: orientation)
         let chosen = PageBoundaryDetector.choose(
             proposed: proposed,
             detected: detection,
-            inkBounds: nil
+            inkBounds: textBounds
         )
         let expanded = chosen.expanded(by: margin)
+        let coverage: Double? = {
+            guard let textBounds, !textBounds.isEmpty else { return nil }
+            let intersection = expanded.boundingRect.intersection(textBounds)
+            guard !intersection.isNull, !intersection.isEmpty else { return 0 }
+            return Double(intersection.width * intersection.height / max(textBounds.width * textBounds.height, 0.0001))
+        }()
+        let angles = PageBoundaryMetrics.edgeAnglesDegrees(expanded)
+        let parallel = PageBoundaryMetrics.parallelErrorsDegrees(expanded)
         let reason: String
         if detection == nil {
             reason = "no_detection"
@@ -162,6 +171,11 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             chosen: .init(expanded),
             detectionConfidence: detection?.confidence,
             detectedArea: detection?.area,
+            textBounds: textBounds.map { PagePreprocessReport.QuadPayload(CGRectPayload: $0) },
+            textCoverage: coverage,
+            outsideAreaRatio: PageBoundaryMetrics.outsideAreaRatio(expanded),
+            edgeAnglesDegrees: angles,
+            parallelErrorsDegrees: [parallel.horizontal, parallel.vertical],
             safetyMarginRatio: margin,
             elapsedMilliseconds: elapsedMilliseconds(since: started),
             fallbackReason: reason,

@@ -53,6 +53,32 @@ enum PageBoundaryDetector {
         )
     }
 
+    /// 轻量文字包围盒（`VNDetectTextRectanglesRequest`，不跑识别）。
+    /// 用于裁切前的墨迹召回否决；无文字时返回 nil。
+    static func textBounds(
+        in image: CGImage,
+        orientation: CGImagePropertyOrientation = .up
+    ) -> CGRect? {
+        let request = VNDetectTextRectanglesRequest()
+        request.reportCharacterBoxes = false
+        let handler = VNImageRequestHandler(
+            cgImage: image,
+            orientation: orientation,
+            options: [:]
+        )
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+        let boxes = (request.results ?? []).map { observation -> CGRect in
+            let box = observation.boundingBox
+            return CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
+        }
+        guard !boxes.isEmpty else { return nil }
+        return boxes.reduce(boxes[0]) { $0.union($1) }
+    }
+
     /// 选择最终页面四边形：检测到的页面必须**包含**已知墨迹包围盒，
     /// 否则退回提议 quad（不裁字优先）。
     static func choose(

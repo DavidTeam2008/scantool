@@ -12,6 +12,13 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
         var bottomRight: [Double]
         var bottomLeft: [Double]
 
+        init(CGRectPayload rect: CGRect) {
+            topLeft = [rect.minX, rect.minY]
+            topRight = [rect.maxX, rect.minY]
+            bottomRight = [rect.maxX, rect.maxY]
+            bottomLeft = [rect.minX, rect.maxY]
+        }
+
         init(_ quad: Quad) {
             topLeft = [quad.topLeft.x, quad.topLeft.y]
             topRight = [quad.topRight.x, quad.topRight.y]
@@ -24,8 +31,13 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var proposed: QuadPayload
     var detected: QuadPayload?
     var chosen: QuadPayload
-    var detectionConfidence: Float?
-    var detectedArea: Double?
+    var detectionConfidence: Float? = nil
+    var detectedArea: Double? = nil
+    var textBounds: QuadPayload? = nil
+    var textCoverage: Double? = nil
+    var outsideAreaRatio: Double? = nil
+    var edgeAnglesDegrees: [Double]? = nil
+    var parallelErrorsDegrees: [Double]? = nil
     var safetyMarginRatio: Double
     var elapsedMilliseconds: Int
     var fallbackReason: String?
