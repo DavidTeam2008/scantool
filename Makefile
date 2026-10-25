@@ -15,8 +15,8 @@ export DEVELOPER_DIR
 PROJECT     := Zhixia.xcodeproj
 SCHEME      := Zhixia
 BUNDLE_ID   := com.david.Zhixia
-SIM_NAME    := iPhone 17 Pro
-SIM_OS      ?= 26.4.1
+SIM_NAME    ?= iPhone 18 Pro
+SIM_OS      ?= 27.0
 DEST_SIM    := platform=iOS Simulator,name=$(SIM_NAME),OS=$(SIM_OS)
 DEST_DEVICE := generic/platform=iOS
 BUILD_DIR   := build
@@ -25,8 +25,8 @@ TEST_LOG    := $(BUILD_DIR)/last-test.log
 APP_PATH    := $(BUILD_DIR)/dd/Build/Products/Debug-iphonesimulator/Zhixia.app
 XCODEBUILD  := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -skipPackagePluginValidation -skipMacroValidation
 # 测试基线（**只增不减**）：新增测试后同步本值；计数低于本值 = 测试被删 → make 失败。
-BASELINE_TOTAL ?= 449
-BASELINE_PASSED ?= 448
+BASELINE_TOTAL ?= 456
+BASELINE_PASSED ?= 455
 BASELINE_EXPECTED_FAILURES ?= 1
 
 .PHONY: help test test-only smoke word-fidelity editable-fidelity device-build doctor
@@ -39,7 +39,7 @@ help: ## 显示本帮助
 	@echo "  计数口径提醒：known issue 用例在 xcodebuild 日志里是 recorded an expected failure，"
 	@echo "  按关键字 passed 搜会少 1 条——以 xcresulttool 计数（本 Makefile 自动输出）为准。"
 
-test: ## 全量单测（模拟器 iPhone 17 Pro + 自动 xcresulttool 计数）
+test: ## 全量单测（默认 iPhone 18 Pro / iOS 27 + 自动 xcresulttool 计数）
 	@mkdir -p $(BUILD_DIR)
 	@rm -rf $(RESULT_PATH)
 	@echo "▶ 全量测试开始（完整日志: $(TEST_LOG)）——首次跑约 3~6 分钟"

@@ -1,11 +1,12 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import UniformTypeIdentifiers
 
 /// DOCX 导出（双档，spec/layout-restore plan D7/D9）：
 /// - `.structured`：流式段落重排（A4 固定页）；
 /// - `.restored`：与 LayoutCanvas 预览同构的版面还原（FR-009）—— 每页独立动态
-///   sectPr + 底图 behindDoc 衬底 + LayoutMask 覆盖 shape + 浮动文本框（可编辑，
+///   sectPr + **净化底图**（擦除已烘进像素，内联铺页）+ 浮动文本框（可编辑，
 ///   FR-007）+ figure/barcode/artwork 的 srcRect 裁剪复用（每页 media 单图，FR-010）
 ///   + 表格原生浮动（`w:tblpPr` 原位，US5/FR-008，不套文本框）。
 ///   EMU 定位 / Vision y 翻转全部经 `PageLayoutMapper`（posOffset 误用 twips 的
@@ -305,19 +306,21 @@ actor DocxExportService: DocxRendering {
     // MARK: - 版面还原档（.restored，spec/layout-restore US4 / plan D7）
 
     /// 底座下采样上限（像素）—— 与 `LayoutCanvas.baseMaxPixelSize` 一致。
-    private static let restoredBaseMaxPixelSize = 2048
+    private static let restoredBaseMaxPixelSize = 2200
+    /// 净化底图 JPEG 质量：文字已被擦除，剩下的主要是版面底色/图片；0.92 在
+    /// 视觉无损与 media 体积之间取平衡（栅格化后再压一次，不再叠加更高损失）。
+    private static let restoredBaseJPEGQuality: CGFloat = 1.0
     /// 页尺寸退化输入（如老夹具 size == .zero）的 A4 兜底：11906×16838 twips。
     private static let a4PageSizeEMU = CGSize(width: 7_560_310, height: 10_692_130)
     private static let pictureGraphicURI = "http://schemas.openxmlformats.org/drawingml/2006/picture"
     /// wps = Word 2010 wordprocessingShape（浮动 shape / 文本框）。
     private static let shapeGraphicURI = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 
-    /// `.restored` 档正文：每页 = 一个承载段落（挂浮动 shape / 文本框）+ 原生浮动
-    /// 表格（body 级 `w:tbl`）+ 非末页分节段落；末页 sectPr 落 body 级。
-    /// z 层（Word 渲染序，US5 起）：底图 → srcRect 保留区 → 覆盖 shape（均
-    /// behindDoc；mask 外扩可盖保留区边缘 = 预览同构）→ 文本层（承载段落 + 原生
-    /// 浮动表格）→ 浮动文本框（最前）。原生浮动表格在文本层渲染，覆盖 shape 若
-    /// 留在 behindDoc=0（最前）会整片盖住表格。
+    /// `.restored` 档正文：每页 = 一个承载段落（挂内联净化底图 / 浮动 shape / 文本框）
+    /// + 原生浮动表格（body 级 `w:tbl`）+ 非末页分节段落；末页 sectPr 落 body 级。
+    /// z 层（Word 渲染序，US5 起）：净化底图（内联，文本层）→ srcRect 保留区
+    /// （behindDoc）→ 文本层（承载段落 + 原生浮动表格）→ 浮动文本框（最前）。
+    /// 原生浮动表格在文本层渲染，覆盖对象若留在 behindDoc=0（最前）会整片盖住表格。
     private func restoredBodyXML(
         _ document: ReconstructDocument,
         media: inout [(name: String, data: Data)],
@@ -373,10 +376,10 @@ actor DocxExportService: DocxRendering {
         )
     }
 
-    /// 单页 XML：承载段落挂浮动 shape / 文本框；原生浮动表格是 body 级块元素
-    /// （`w:tbl` 不能作 run 内容），跟在承载段落之后、仍在该页 section 内。
-    /// 行高压到最小（浮动对象不占行），多页时承载段落 + 分节段落合计仅 ~20 twips，
-    /// 不会把后续页顶出空白页。
+    /// 单页 XML：承载段落挂内联净化底图 / 浮动 shape / 文本框；原生浮动表格是
+    /// body 级块元素（`w:tbl` 不能作 run 内容），跟在承载段落之后、仍在该页 section 内。
+    /// 有底图时行高钉成图高（内联图才不会被行盒裁成一条线，与图片版同一口径）；
+    /// 无底图时行高压到最小（浮动对象不占行）。
     private func restoredPageXML(
         _ page: ReconstructPage,
         spaces: (source: CGSize, emu: CGSize),
@@ -390,38 +393,43 @@ actor DocxExportService: DocxRendering {
         let map = PageLayoutMapper.map(pageSize: spaces.source, targetSize: spaces.emu)
         // 版面还原档读布局后块集（spec/layout-engine plan D9 / FR-012 双档隔离）：
         // restoredBlocks = 区域布局引擎产物（跨栏拆分/碰撞位移）；nil = 旧产物退化
-        // 恒等。保留区/mask/文本框/浮动表格四方同源同一份。
+        // 恒等。保留区/净化底图/文本框/浮动表格四方同源同一份。
         let blocks = page.restoredBlocks ?? page.blocks
         var runs = ""
         var tables = ""
+        var carriesBaseImage = false
+        // 行级净化 mask 与文本框颜色同源：底图烘一次，文本 run 用同一份 fill
+        // 判断深底白字/浅底黑字。无底图时保持空 mask（黑字）。
+        var restoredMask = LayoutMask()
 
-        // 1) 底图：behindDoc 衬底铺满动态页；每页恰好一张 media（srcRect 复用的前提）。
+        // 1) 底图：**净化底图**（原文字区域已用环带 median 底色烘进像素）以
+        //    内联图铺满动态页。内联而非锚定：QuickLook 等宿主渲染器只画内联图
+        //    与文本层，锚定图/shape 不落图（docs/17 §2.2 实测 L0 空白、L1==L0）。
+        //    每页恰好一张 media（srcRect 复用的前提）。
         if let path = page.baseImageRelativePath, !path.isEmpty,
-           let base = registerImageMedia(
+           let base = registerBakedBaseImage(
                path: path,
+               blocks: blocks,
                media: &media,
                imageRels: &imageRels,
                nextImage: &nextImage
            ) {
+            carriesBaseImage = true
+            restoredMask = base.mask
             let cx = max(Int64(spaces.emu.width.rounded()), 1)
             let cy = max(Int64(spaces.emu.height.rounded()), 1)
-            runs += floatingAnchorXML(
-                behindDoc: true,
-                relativeHeight: &relativeHeight,
-                nextDocPr: &nextDocPr,
-                name: "BaseImage",
-                x: 0,
-                y: 0,
+            nextDocPr += 1
+            runs += inlinePictureXML(
+                relID: base.relID,
+                name: "BaseImage \(nextDocPr)",
                 cx: cx,
                 cy: cy,
-                graphicURI: Self.pictureGraphicURI,
-                graphicInner: pictureXML(relID: base.relID, name: base.fileName, cx: cx, cy: cy, srcRect: nil)
+                docPrID: nextDocPr
             )
 
-            // 2) 保留区（figure/barcode/artwork）：srcRect 裁剪**同一张底图**
+            // 2) 保留区（figure/barcode/artwork）：srcRect 裁剪**同一张净化底图**
             //    （FR-005 单份表示 / FR-010 每页单图），不覆盖、不重排。behindDoc
-            //    层内位于覆盖 shape 之下 —— 预览同构：预览的 mask 外扩同样会盖住
-            //    保留区边缘，Word 不比预览多修一块。
+            //    层内位于文本层之下 —— 与预览同构：净化底图在这些区域保持原像素。
             for block in blocks where isRestoredCrop(block.kind) {
                 let clipped = block.bbox.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
                 guard !clipped.isEmpty else { continue }
@@ -449,51 +457,43 @@ actor DocxExportService: DocxRendering {
                     )
                 )
             }
-
-            // 3) 覆盖 shape：LayoutMask 环带 median 底色盖掉原字迹 —— 只在有底座时
-            //    构建（与 LayoutCanvas 一致：无底座退化白底无需净化）。必须进
-            //    behindDoc 层：原生浮动表格（US5）在文本层渲染，shape 留在
-            //    behindDoc=0（最前）会整片盖住表格。
-            if let cgImage = Self.downsampledCGImage(from: base.data) {
-                let mask = LayoutMaskBuilder.build(blocks: blocks, baseImage: cgImage)
-                for fill in mask.fills {
-                    let rect = map.rect(fill.rect)
-                    let x = Int64(rect.minX.rounded())
-                    let y = Int64(rect.minY.rounded())
-                    let cx = max(Int64(rect.width.rounded()), 1)
-                    let cy = max(Int64(rect.height.rounded()), 1)
-                    let hex = String(format: "%02X%02X%02X", Int(fill.red), Int(fill.green), Int(fill.blue))
-                    runs += floatingAnchorXML(
-                        behindDoc: true,
-                        relativeHeight: &relativeHeight,
-                        nextDocPr: &nextDocPr,
-                        name: "Mask",
-                        x: x,
-                        y: y,
-                        cx: cx,
-                        cy: cy,
-                        graphicURI: Self.shapeGraphicURI,
-                        graphicInner: maskShapeXML(cx: cx, cy: cy, fillHex: hex)
-                    )
-                }
-            }
         }
 
-        // 4) 浮动文本框（最前层）：干净重排（真实段落，Word 里可直接编辑，FR-007）。
-        //    有行列的表格块不进文本框 —— 走 5) 的原生浮动表格（US5/FR-008）。
+        // 3) 浮动文本框（最前层）：干净重排（真实段落，Word 里可直接编辑，FR-007）。
+        //    有行列的表格块不进文本框 —— 走 4) 的表格层。
         for block in blocks where isRestoredText(block.kind) {
             if block.kind == .table && block.table?.rows.isEmpty == false {
                 continue
             }
-            guard let content = restoredTextBoxContent(block, pageSizeEMU: spaces.emu) else {
+            guard let content = restoredTextBoxContent(
+                block,
+                pageSizeEMU: spaces.emu,
+                mask: restoredMask
+            ) else {
                 continue
             }
             let rect = map.rect(block.bbox)
             // 最小尺寸兜底（≈ 预览的 12×14pt）：零尺寸文本框会在 Word 里吞字。
+            // 高度还要吸收 `w:before` 行距与末行超出 bbox 的部分，否则 WPS 按
+            // shape 高度裁切，表头第二行“friends after school?”会整行消失。
+            let contentExtra = restoredTextExtraBottom(block) * spaces.emu.height
             let width = max(rect.width, 12 * PageLayoutMapper.emuPerPixel)
-            let height = max(rect.height, 14 * PageLayoutMapper.emuPerPixel)
-            let x = Int64(rect.minX.rounded())
-            let y = Int64(rect.minY.rounded())
+            let height = max(
+                rect.height + contentExtra + spaces.emu.height * 0.003,
+                14 * PageLayoutMapper.emuPerPixel
+            )
+            // 单行段落行框常带一大截 leading；WPS 的 exact 行距把字形压在行盒
+            // 底部，行框又跨出深色栏头时白字会落到纸面上（studying after
+            // school?）。按“行盒高 - 1.2×字号”的一半上移，让字形回到行框中部。
+            let lineLift = restoredSingleLineLift(
+                block,
+                pageWidthPT: Double(spaces.emu.width) / 12_700,
+                pageHeightPT: Double(spaces.emu.height) / 12_700
+            ) * spaces.emu.height
+            let calibrationX = spaces.emu.width * CGFloat(LayoutTypography.restoredTextHorizontalOffsetRatio)
+            let calibrationY = spaces.emu.height * CGFloat(LayoutTypography.restoredTextVerticalLiftRatio)
+            let x = Int64((rect.minX + calibrationX).rounded())
+            let y = Int64((rect.minY - lineLift - calibrationY).rounded())
             let cx = max(Int64(width.rounded()), 1)
             let cy = max(Int64(height.rounded()), 1)
             runs += floatingAnchorXML(
@@ -510,15 +510,69 @@ actor DocxExportService: DocxRendering {
             )
         }
 
-        // 5) 原生浮动表格（US5/FR-008）：w:tblpPr 原位浮动，不套文本框。表格是
-        //    body 级块元素，跟在承载段落之后（仍在该页 section 内）。
+        // 4) 表格层：正文页上的表格与底图共用「内联底图 + 精确行高」承载段落时，
+        //    body 级 `w:tbl` 会被 WPS 推到下一页（承载段落已占满整页高度）。因此
+        //    **有正文的页面**把表格放进浮动文本框：表格仍带完整行列/列宽/行高，
+        //    但定位交给文本框锚点，WPS/QuickLook 都保持单页。**纯表格页**继续用
+        //    原生 body 级 `w:tblpPr` 浮动（不套文本框，US5/FR-008 的结构契约）。
+        let hasRestoredTextBlocks = blocks.contains { block in
+            block.kind != .table && isRestoredText(block.kind)
+                && !block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         for block in blocks where block.kind == .table {
-            tables += restoredFloatingTableXML(block, map: map, pageHeightEMU: spaces.emu.height)
+            if hasRestoredTextBlocks {
+                let table = restoredFloatingTableXML(
+                    block,
+                    map: map,
+                    pageHeightEMU: spaces.emu.height,
+                    positioned: false
+                )
+                guard !table.isEmpty else { continue }
+                let rect = map.rect(block.bbox)
+                let x = Int64(rect.minX.rounded())
+                let y = Int64(rect.minY.rounded())
+                let cx = max(Int64(rect.width.rounded()), 1)
+                let cy = max(Int64(rect.height.rounded()), 1)
+                runs += floatingAnchorXML(
+                    behindDoc: false,
+                    relativeHeight: &relativeHeight,
+                    nextDocPr: &nextDocPr,
+                    name: "TableBox",
+                    x: x,
+                    y: y,
+                    cx: cx,
+                    cy: cy,
+                    graphicURI: Self.shapeGraphicURI,
+                    graphicInner: textBoxXML(cx: cx, cy: cy, content: table)
+                )
+            } else {
+                tables += restoredFloatingTableXML(
+                    block,
+                    map: map,
+                    pageHeightEMU: spaces.emu.height
+                )
+            }
         }
 
+        // 有内联底图 → 行高钉成图高（`lineRule="exact"`，与图片版同一口径：行盒
+        // 不被段落标记字号压扁而把内联图裁成一条线）。无底图时保持最小行高。
+        let lineTwips = carriesBaseImage
+            ? max(1, Int((spaces.emu.height / 635).rounded()))
+            : 10
+        let paragraphRPr = carriesBaseImage
+            ? ""
+            : "<w:rPr><w:sz w:val=\"2\"/><w:szCs w:val=\"2\"/></w:rPr>"
+        // WPS 对内联图所在段落的基线处理默认按 0.8×页高下移，导致整页下坠/第二页；
+        // `w:textAlignment=center` 把基线对到页面中心（实测 posOffset 从 1267.2pt
+        // 变为 1584pt = 整页高度），WPS 才按整页铺图。QuickLook 不受影响。
+        let textAlignment = carriesBaseImage
+            ? "<w:textAlignment w:val=\"center\"/>"
+            : ""
         return "<w:p><w:pPr>"
-            + "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"10\" w:lineRule=\"exact\"/>"
-            + "<w:rPr><w:sz w:val=\"2\"/><w:szCs w:val=\"2\"/></w:rPr></w:pPr>"
+            + "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"\(lineTwips)\" w:lineRule=\"exact\"/>"
+            + textAlignment
+            + paragraphRPr
+            + "</w:pPr>"
             + runs
             + "</w:p>"
             + tables
@@ -532,7 +586,8 @@ actor DocxExportService: DocxRendering {
     private func restoredFloatingTableXML(
         _ block: ReconstructBlock,
         map: PageLayoutMap,
-        pageHeightEMU: CGFloat
+        pageHeightEMU: CGFloat,
+        positioned: Bool = true
     ) -> String {
         let clipped = block.bbox.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !clipped.isEmpty else { return "" }
@@ -548,7 +603,8 @@ actor DocxExportService: DocxRendering {
             totalHeight: height,
             baseCellFontPT: baseCellFontPT,
             position: (x: x, y: y),
-            blockID: block.id
+            blockID: block.id,
+            positioned: positioned
         ) ?? ""
     }
 
@@ -576,7 +632,11 @@ actor DocxExportService: DocxRendering {
     /// `displayText` 兜底成段落。有 `lines` 的文本/标题块**每行一个 `<w:p>`**
     /// （plan D7 / FR-005：保实测行距与行首位置）；无 `lines` 块回退单段 `w:br`
     /// 路径，字号先经渲染期兜底预缩（T027，`preScaledFontSizeHalfPoints`）。
-    private func restoredTextBoxContent(_ block: ReconstructBlock, pageSizeEMU: CGSize) -> String? {
+    private func restoredTextBoxContent(
+        _ block: ReconstructBlock,
+        pageSizeEMU: CGSize,
+        mask: LayoutMask
+    ) -> String? {
         let baseSize = restoredFontSize(block, pageHeightEMU: pageSizeEMU.height)
         switch block.kind {
         case .table:
@@ -609,16 +669,42 @@ actor DocxExportService: DocxRendering {
                 let pageHeightPT = Double(pageSizeEMU.height) / 12_700
                 let pageWidthPT = Double(pageSizeEMU.width) / 12_700
                 let pageWidthTwips = Double(pageSizeEMU.width) / 635
-                return lines.map { line in
-                    lineParagraphXML(
+                let frames = LayoutTypography.resolvedLineFrames(lines: lines, block: block.bbox)
+                return lines.enumerated().map { index, line in
+                    let frame = frames.indices.contains(index) ? frames[index] : block.bbox
+                    // `gapToPrevious` 在预览里是行框顶到顶的真实节拍；Word/WPS
+                    // 的段落只会首尾相接，必须用 `w:before` 把正间隙补回来，
+                    // 否则表头第一行会高出深色栏头（WPS 实测 2026-10-24）。
+                    let beforeTwips = index > 0
+                        ? max(0, Int((line.gapToPrevious * pageHeightPT * 20).rounded()))
+                        : 0
+                    let tabsXML = (line.segments ?? []).dropFirst().map { segment in
+                        "<w:tab w:val=\"left\" w:pos=\"\(max(0, Int((segment.offset * pageWidthTwips).rounded())))\"/>"
+                    }.joined()
+                    // 负 gapToPrevious 表示两行框重叠：Word 不支持负 before，
+                    // 把重叠量从前一行的 exact 行高里扣掉，后续行才会向上收。
+                    // 表头左栏两行原来因忽略 -13pt、正 before 16.7pt 而总高溢出
+                    // 13pt，第二行压到深色栏头下缘。
+                    let nextOverlap = index + 1 < lines.count
+                        ? min(0, lines[index + 1].gapToPrevious)
+                        : 0
+                    let lineTwips = max(
+                        1,
+                        Int(((line.height + nextOverlap) * pageHeightPT * 20).rounded())
+                    )
+                    return lineParagraphXML(
                         line,
                         block: block,
+                        lineFrame: frame,
+                        mask: mask,
                         style: style,
                         bold: bold,
                         pageHeightPT: pageHeightPT,
                         pageWidthPT: pageWidthPT,
-                        lineTwips: max(1, Int((line.height * pageHeightPT * 20).rounded())),
-                        indLeftTwips: max(0, Int((line.leadingOffset * pageWidthTwips).rounded()))
+                        lineTwips: lineTwips,
+                        indLeftTwips: max(0, Int((line.leadingOffset * pageWidthTwips).rounded())),
+                        beforeTwips: beforeTwips,
+                        tabsXML: tabsXML
                     )
                 }.joined()
             }
@@ -630,6 +716,51 @@ actor DocxExportService: DocxRendering {
             )
             return paragraphXML(block.text, style: style, bold: bold, size: size)
         }
+    }
+
+    /// 文本块内容在竖直方向超出 bbox 的归一化高度：正 `gapToPrevious` 会被写成
+    /// `w:before`，末行也可能因 OCR 行框重叠而落到 bbox 下方。两者都要计入
+    /// 文本框高度，WPS 才不会按 shape 裁掉末行（真实 UI 底图表头复测）。
+    private func restoredTextExtraBottom(_ block: ReconstructBlock) -> Double {
+        guard let lines = block.lines, !lines.isEmpty else { return 0 }
+        var top = block.bbox.maxY
+        var bottom = block.bbox.minY
+        var insertedGaps = 0.0
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                top -= line.gapToPrevious
+                insertedGaps += max(0, line.gapToPrevious)
+            }
+            top -= max(0, line.height)
+            bottom = min(bottom, top)
+        }
+        return max(0, block.bbox.minY - bottom) + insertedGaps
+    }
+
+    /// 单行段落竖直校正（归一化页高）：行盒明显高于 1.2×字号时，WPS 的 exact
+    /// 行距会把字形贴到盒底。返回正数 = 需要上移的页高比例；多行/标题不动。
+    private func restoredSingleLineLift(
+        _ block: ReconstructBlock,
+        pageWidthPT: Double,
+        pageHeightPT: Double
+    ) -> Double {
+        guard block.kind == .paragraph,
+              let lines = block.lines,
+              lines.count == 1,
+              let line = lines.first,
+              pageHeightPT > 0, pageWidthPT > 0 else { return 0 }
+        let fontPT = LayoutTypography.renderedLineFontPT(
+            line: line,
+            block: block,
+            pageWidthPT: pageWidthPT,
+            pageHeightPT: pageHeightPT
+        )
+        let lineHeightPT = line.height * pageHeightPT
+        // exact 行距把基线压到盒底；除了半 leading，再补 1.5pt 让下缘
+        // 不压到深色栏头的纸面边界（studying after school? 实测）。
+        let liftPT = max(0, (lineHeightPT - fontPT) / 2 + 7)
+        guard liftPT > 2 else { return 0 }
+        return liftPT / pageHeightPT
     }
 
     /// 渲染期兜底预缩（T027 / plan D6 风险注记「二选一」之 B：**布局期预估缩放
@@ -675,7 +806,8 @@ actor DocxExportService: DocxRendering {
                 blockWidth: blockWidthNormalized,
                 pageWidthPT: pageWidthPT,
                 pageHeightPT: pageHeightPT,
-                baseFontPT: fontPT
+                baseFontPT: fontPT,
+                fitFontToWidth: false
             )
         }
         let epsilon = 1e-6
@@ -694,6 +826,14 @@ actor DocxExportService: DocxRendering {
         return Int((baseFontPT * scale * 2).rounded())
     }
 
+    /// 深底白字/浅底黑字的 run 颜色。黑字走 Word 默认（不写 color），避免把
+    /// 继承自样式的墨色硬编码成纯黑；白字必须显式写入，否则深色栏头上的
+    /// 可编辑文字在 WPS/Word 里仍是黑字（视觉消失）。
+    private func colorXML(_ color: (red: UInt8, green: UInt8, blue: UInt8)) -> String {
+        guard color.red == 255, color.green == 255, color.blue == 255 else { return "" }
+        return "<w:color w:val=\"FFFFFF\"/>"
+    }
+
     /// 行段（plan D7 / US3）：`w:line` = 实测行高 × 20 twips（lineRule=exact）、
     /// `w:ind w:left` = 行首偏移换算 dxa，段前段后 0 —— 行距与行首位置保真，
     /// 且是可编辑普通段落（FR-005）；heading 样式（pStyle/bold）保留。
@@ -706,36 +846,54 @@ actor DocxExportService: DocxRendering {
     private func lineParagraphXML(
         _ line: BlockLine,
         block: ReconstructBlock,
+        lineFrame: CGRect,
+        mask: LayoutMask,
         style: String,
         bold: Bool,
         pageHeightPT: Double,
         pageWidthPT: Double,
         lineTwips: Int,
-        indLeftTwips: Int
+        indLeftTwips: Int,
+        beforeTwips: Int,
+        tabsXML: String
     ) -> String {
         let boldXML = bold ? "<w:b/>" : ""
-        let fontPT = LayoutTypography.lineFontPT(line: line, block: block, pageHeightPT: pageHeightPT)
+        // 实测行宽反推字号（2026-10-23 真实 UI 底图 WPS 复测）：OCR 的
+        // `line.width` 是原稿上这一行真实的墨迹宽度；用它反推 w:sz，WPS/Word
+        // 的换行位置才与原图一致。`fittedFontPT` 的 0.6 em 是换行估算的保守
+        // 上界，直接拿来反推会把正文缩小约 20%（输出 15pt vs 原稿约 19pt）。
+        let fontPT = LayoutTypography.renderedLineFontPT(
+            line: line,
+            block: block,
+            pageWidthPT: pageWidthPT,
+            pageHeightPT: pageHeightPT
+        )
         let size = Int((fontPT * 2).rounded())
         let runs: String
         if let segments = line.segments, !segments.isEmpty {
             runs = segmentRunsXML(
                 segments,
+                block: block,
+                lineFrame: lineFrame,
+                mask: mask,
                 boldXML: boldXML,
                 size: size,
                 fontPT: fontPT,
                 pageWidthPT: pageWidthPT
             )
         } else {
+            let color = mask.contrastingTextColor(at: lineFrame)
             runs = """
                 <w:r>
-                  <w:rPr>\(boldXML)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
+                  <w:rPr>\(boldXML)\(colorXML(color))<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
                   <w:t xml:space="preserve">\(escape(line.text))</w:t>
                 </w:r>
             """
         }
+        let tabs = tabsXML.isEmpty ? "" : "<w:tabs>\(tabsXML)</w:tabs>"
         return """
             <w:p>
-              <w:pPr><w:pStyle w:val="\(style)"/><w:spacing w:before="0" w:after="0" w:line="\(lineTwips)" w:lineRule="exact"/><w:ind w:left="\(indLeftTwips)"/></w:pPr>
+              <w:pPr><w:pStyle w:val="\(style)"/>\(tabs)<w:spacing w:before="\(beforeTwips)" w:after="0" w:line="\(lineTwips)" w:lineRule="exact"/><w:ind w:left="\(indLeftTwips)"/></w:pPr>
               \(runs)
             </w:p>
 
@@ -750,6 +908,9 @@ actor DocxExportService: DocxRendering {
     /// 空格 run 与文本 run 同字号同加粗——一行一档（T007）不被连接符稀释。
     private func segmentRunsXML(
         _ segments: [LineSegment],
+        block: ReconstructBlock,
+        lineFrame: CGRect,
+        mask: LayoutMask,
         boldXML: String,
         size: Int,
         fontPT: Double,
@@ -757,9 +918,17 @@ actor DocxExportService: DocxRendering {
     ) -> String {
         segments.indices.map { index in
             let segment = segments[index]
+            let segmentRect = CGRect(
+                x: block.bbox.minX + segment.offset,
+                y: lineFrame.minY,
+                width: segment.width,
+                height: lineFrame.height
+            )
+            // 每个段按自己的局部底色决定黑白：深色栏头左格/右格可独立。
+            let color = colorXML(mask.contrastingTextColor(at: segmentRect))
             let textRun = """
                   <w:r>
-                    <w:rPr>\(boldXML)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
+                    <w:rPr>\(boldXML)\(color)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
                     <w:t xml:space="preserve">\(escape(segment.text))</w:t>
                   </w:r>
             """
@@ -767,7 +936,17 @@ actor DocxExportService: DocxRendering {
             let next = segments[index + 1]
             let gap = next.offset - (segment.offset + segment.width)
             let connector: String
-            if let spaces = LayoutTypography.gapPlaceholderSpaces(
+            if gap >= 0.02 {
+                // 大空隙是栏间/格间 gutter，不是填空横线：用绝对 tab 定位到下一段
+                // 的实测 x。下划线空格在 WPS 里会因累计宽度超框而整行回绕，
+                // 双栏表头因此只剩“do”一行可见。
+                connector = """
+                      <w:r>
+                        <w:rPr>\(boldXML)\(color)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
+                        <w:tab/>
+                      </w:r>
+                """
+            } else if let spaces = LayoutTypography.gapPlaceholderSpaces(
                 gapWidthNormalized: gap,
                 fontPT: fontPT,
                 pageWidthPT: pageWidthPT
@@ -776,14 +955,14 @@ actor DocxExportService: DocxRendering {
                 // rPr 子元素次序遵循 CT_RPr 模式序列：b → sz → szCs → u
                 connector = """
                       <w:r>
-                        <w:rPr>\(boldXML)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/><w:u w:val="single"/></w:rPr>
+                        <w:rPr>\(boldXML)\(color)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/><w:u w:val="single"/></w:rPr>
                         <w:t xml:space="preserve">\(blanks)</w:t>
                       </w:r>
                 """
             } else {
                 connector = """
                       <w:r>
-                        <w:rPr>\(boldXML)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
+                        <w:rPr>\(boldXML)\(color)<w:sz w:val="\(size)"/><w:szCs w:val="\(size)"/></w:rPr>
                         <w:t xml:space="preserve"> </w:t>
                       </w:r>
                 """
@@ -823,9 +1002,58 @@ actor DocxExportService: DocxRendering {
         }
     }
 
-    /// 版面还原档的「重排」块：进覆盖 mask + 浮动文本框（保留区之外全部）。
+    /// 版面还原档的「重排」块：进净化底图 + 浮动文本框（保留区之外全部）。
     private func isRestoredText(_ kind: ReconstructBlockKind) -> Bool {
         !isRestoredCrop(kind)
+    }
+
+    /// 版面还原档的底图 = **净化底图**（spec/word-fidelity T021 / G3'）：把
+    /// `LayoutMaskBuilder` 的净化矩形按环带 median 底色直接刷到像素上，再编码成
+    /// JPEG 作为该页唯一 media。擦除因此**烘进像素**，不再依赖渲染器画
+    /// `wps:wsp` 形状（QuickLook 等宿主渲染器不画形状 → 旧产物底图原字与浮动
+    /// 文本框叠字）。环带采样与预览共用 `LayoutMaskBuilder`（同源底色）。
+    ///
+    /// 退化输入（读不出像素 / 编码失败）退回原文件字节：导出仍可用，只是擦除
+    /// 由渲染器决定——不为了净化把整页弄丢。
+    private func registerBakedBaseImage(
+        path: String,
+        blocks: [ReconstructBlock],
+        media: inout [(name: String, data: Data)],
+        imageRels: inout [(id: String, target: String)],
+        nextImage: inout Int
+    ) -> (relID: String, fileName: String, data: Data, mask: LayoutMask)? {
+        guard let sourceData = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              !sourceData.isEmpty,
+              let baseImage = Self.downsampledCGImage(from: sourceData)
+        else {
+            return registerImageMedia(
+                path: path,
+                media: &media,
+                imageRels: &imageRels,
+                nextImage: &nextImage
+            ).map { ($0.relID, $0.fileName, $0.data, LayoutMask()) }
+        }
+        let mask = LayoutMaskBuilder.build(
+            blocks: blocks,
+            baseImage: baseImage,
+            granularity: .line
+        )
+        guard let baked = Self.bakedJPEGData(baseImage, mask: mask) else {
+            return registerImageMedia(
+                path: path,
+                media: &media,
+                imageRels: &imageRels,
+                nextImage: &nextImage
+            ).map { ($0.relID, $0.fileName, $0.data, LayoutMask()) }
+        }
+        let registered = registerImageMedia(
+            data: baked,
+            fileExtension: "jpg",
+            media: &media,
+            imageRels: &imageRels,
+            nextImage: &nextImage
+        )
+        return registered.map { ($0.relID, $0.fileName, $0.data, mask) }
     }
 
     /// 图片落 media + rel（结构化档裁图 / 版面还原档底图共用）。
@@ -839,10 +1067,29 @@ actor DocxExportService: DocxRendering {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty else {
             return nil
         }
-        let index = nextImage
-        nextImage += 1
         var ext = URL(fileURLWithPath: path).pathExtension.lowercased()
         if ext.isEmpty { ext = "png" }
+        return registerImageMedia(
+            data: data,
+            fileExtension: ext,
+            media: &media,
+            imageRels: &imageRels,
+            nextImage: &nextImage
+        )
+    }
+
+    /// 字节版 media 注册：净化底图用编码后的 JPEG 字节（不注册未使用的原图）。
+    private func registerImageMedia(
+        data: Data,
+        fileExtension: String,
+        media: inout [(name: String, data: Data)],
+        imageRels: inout [(id: String, target: String)],
+        nextImage: inout Int
+    ) -> (relID: String, fileName: String, data: Data)? {
+        guard !data.isEmpty else { return nil }
+        let index = nextImage
+        nextImage += 1
+        let ext = fileExtension.isEmpty ? "png" : fileExtension.lowercased()
         let fileName = "image\(index).\(ext)"
         media.append((name: "word/media/\(fileName)", data: data))
         let relID = "rId\(index + 1)"
@@ -900,18 +1147,8 @@ actor DocxExportService: DocxRendering {
             + "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"
     }
 
-    /// 覆盖矩形 shape：LayoutMask 的净化矩形（环带 median 底色），无边框。
-    private func maskShapeXML(cx: Int64, cy: Int64, fillHex: String) -> String {
-        "<wps:wsp><wps:cNvSpPr/><wps:spPr>"
-            + "<a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"\(cx)\" cy=\"\(cy)\"/></a:xfrm>"
-            + "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>"
-            + "<a:solidFill><a:srgbClr val=\"\(fillHex)\"/></a:solidFill>"
-            + "<a:ln><a:noFill/></a:ln>"
-            + "</wps:spPr><wps:bodyPr/></wps:wsp>"
-    }
-
     /// 浮动文本框：`wps:txbx` 内是**真实段落**（Word 里可直接编辑，FR-007）；
-    /// 自身 noFill —— 它叠在覆盖 shape 之上，不得再糊一层底色。
+    /// 自身 noFill —— 它叠在净化底图之上，不得再糊一层底色。
     /// bodyPr **不加 `<a:normAutofit>`**（T027「二选一」之 B：布局期预估缩放直接
     /// 写入 w:sz，见 `preScaledFontSizeHalfPoints` 旁注——normAutofit 依赖消费端
     /// 运行时缩放，QuickLook/Pages 等查看器普遍忽略，FR-004 双端同构不成立）。
@@ -927,7 +1164,7 @@ actor DocxExportService: DocxRendering {
     }
 
     /// 底座下采样（ImageIO 缩略图，与 `LayoutCanvas.loadDownsampled` 同源同参）——
-    /// mask 环带采样与预览一致，也不把整页原图拉进内存。
+    /// 擦除烘焙与预览同源同坐标，也不把整页原图拉进内存。
     private static func downsampledCGImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
@@ -938,6 +1175,212 @@ actor DocxExportService: DocxRendering {
             kCGImageSourceCreateThumbnailWithTransform: true
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// 把净化矩形直接刷进底图像素，编码为 JPEG（净化底图）。
+    ///
+    /// 坐标系：`LayoutMask.Fill.rect` 是 Vision 归一化坐标（**左下原点**）；
+    /// `CGContext` 位图用户空间同为左下原点 → 直接 `minY × height`，不可再翻一次
+    /// （翻两次会把擦除区镜像到页面上半部，原文字反而留着）。
+    private static func bakedJPEGData(_ image: CGImage, mask: LayoutMask) -> Data? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0,
+              let context = CGContext(
+                  data: nil,
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let pageSize = CGSize(width: width, height: height)
+        guard let buffer = context.data?.assumingMemoryBound(to: UInt8.self) else {
+            return nil
+        }
+        for fill in mask.fills {
+            let rect = CGRect(
+                x: fill.rect.minX * pageSize.width,
+                y: fill.rect.minY * pageSize.height,
+                width: fill.rect.width * pageSize.width,
+                height: fill.rect.height * pageSize.height
+            )
+            guard rect.width > 0, rect.height > 0 else { continue }
+            switch fill.mode {
+            case .solid:
+                context.setFillColor(
+                    red: CGFloat(fill.red) / 255,
+                    green: CGFloat(fill.green) / 255,
+                    blue: CGFloat(fill.blue) / 255,
+                    alpha: 1
+                )
+                context.fill(rect)
+            case .textPixels:
+                Self.eraseTextPixels(
+                    in: rect,
+                    red: fill.red,
+                    green: fill.green,
+                    blue: fill.blue,
+                    width: width,
+                    height: height,
+                    bytesPerRow: context.bytesPerRow,
+                    buffer: buffer
+                )
+            }
+        }
+        guard let baked = context.makeImage() else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: restoredBaseJPEGQuality
+        ]
+        CGImageDestinationAddImage(destination, baked, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+
+    /// 行级擦字（混合模式 H2）：只把矩形内**与底色差异足够大的连通笔画**刷成
+    /// 底色，保留矩形内的深色栏头、边框、照片像素。
+    ///
+    /// 为什么不是整块填色：OCR 行框往往比字形高（含行距），标题/栏头行框会
+    /// 跨到相邻深色装饰上；整块填色会在纸面上留下可见色带，或把深色栏头刷白。
+    /// 连通域面积上限用于区分「文字笔画」和「大面积装饰/底色」：笔画面积小，
+    /// 深色栏头/照片面积大，后者不擦。
+    ///
+    /// 像素坐标：`CGContext` 位图内存 row 0 = 图像顶行（已用 2×2 合成图验证），
+    /// Vision 归一化 y-up → row = (1 − y) × height；不可再翻一次。
+    private static func eraseTextPixels(
+        in rect: CGRect,
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        width: Int,
+        height: Int,
+        bytesPerRow: Int,
+        buffer: UnsafeMutablePointer<UInt8>
+    ) {
+        let x0 = max(0, min(width, Int(rect.minX.rounded(.down))))
+        let x1 = max(0, min(width, Int(rect.maxX.rounded(.up))))
+        // `rect` 已是**像素坐标**（x/y 按页宽高缩放），不是归一化坐标；
+        // 位图内存 row 0 = 顶部，y-up 的用户空间 → row = height − y。
+        let top = max(0, min(height, Int((CGFloat(height) - rect.maxY).rounded(.down))))
+        let bottom = max(0, min(height, Int((CGFloat(height) - rect.minY).rounded(.up))))
+        let columns = x1 - x0
+        let rows = bottom - top
+        guard columns > 0, rows > 0 else { return }
+
+        let total = columns * rows
+        guard total > 0, total <= 4_000_000 else { return }
+        let background = (Int(red), Int(green), Int(blue))
+        // JPEG 噪声 < 20；抗锯齿边 > 60；45 只放过真正的笔画/彩色文字。
+        // 不能降到 24：抗锯齿边会把相邻字母桥接成整词大连通域，超过面积上限
+        // 后整块跳过擦除，原字+可编辑层双写（2026-10-24 WPS 复测）。边缘
+        // 用连通域擦除后的 1px 邻域补边处理。
+        let inkThreshold = 45
+        var isInk = [Bool](repeating: false, count: total)
+        for row in 0..<rows {
+            let pixelRow = top + row
+            for column in 0..<columns {
+                let pixelColumn = x0 + column
+                let index = pixelRow * bytesPerRow + pixelColumn * 4
+                let dr = abs(Int(buffer[index]) - background.0)
+                let dg = abs(Int(buffer[index + 1]) - background.1)
+                let db = abs(Int(buffer[index + 2]) - background.2)
+                if dr + dg + db > inkThreshold {
+                    isInk[row * columns + column] = true
+                }
+            }
+        }
+
+        // 大面积深色栏头/照片不擦：只擦面积受限的连通域（文字笔画）。
+        // 1 500 会漏掉粗体标题整词相连的“Writing”（白字在 JPEG 里被抗锯齿
+        // 桥成一个大连通域），底图留白字、可编辑层再叠一遍。行框本身很窄，
+        // 放宽到 4 000 / 1/3 仍不会碰到整块深色装饰。
+        let maxComponentArea = max(4_000, total / 3)
+        var visited = [Bool](repeating: false, count: total)
+        var stack: [Int] = []
+        stack.reserveCapacity(256)
+        for start in 0..<total where isInk[start] && !visited[start] {
+            stack.removeAll(keepingCapacity: true)
+            stack.append(start)
+            visited[start] = true
+            var component: [Int] = []
+            while let current = stack.popLast() {
+                component.append(current)
+                let row = current / columns
+                let column = current % columns
+                if row > 0 {
+                    let next = current - columns
+                    if isInk[next] && !visited[next] {
+                        visited[next] = true
+                        stack.append(next)
+                    }
+                }
+                if row + 1 < rows {
+                    let next = current + columns
+                    if isInk[next] && !visited[next] {
+                        visited[next] = true
+                        stack.append(next)
+                    }
+                }
+                if column > 0 {
+                    let next = current - 1
+                    if isInk[next] && !visited[next] {
+                        visited[next] = true
+                        stack.append(next)
+                    }
+                }
+                if column + 1 < columns {
+                    let next = current + 1
+                    if isInk[next] && !visited[next] {
+                        visited[next] = true
+                        stack.append(next)
+                    }
+                }
+            }
+            guard component.count <= maxComponentArea else { continue }
+            for localIndex in component {
+                let row = localIndex / columns
+                let column = localIndex % columns
+                let index = (top + row) * bytesPerRow + (x0 + column) * 4
+                buffer[index] = red
+                buffer[index + 1] = green
+                buffer[index + 2] = blue
+                buffer[index + 3] = 255
+                // 1px 抗锯齿补边：只补与底色有差异、但还没到整块深色装饰的像素，
+                // 避免标题白字边缘留一圈亮 halo。深色栏头与底色一致，不会被补。
+                for dy in -1...1 {
+                    for dx in -1...1 where dx != 0 || dy != 0 {
+                        let nr = row + dy
+                        let nc = column + dx
+                        guard nr >= 0, nr < rows, nc >= 0, nc < columns else { continue }
+                        let nIndex = (top + nr) * bytesPerRow + (x0 + nc) * 4
+                        let dr = abs(Int(buffer[nIndex]) - background.0)
+                        let dg = abs(Int(buffer[nIndex + 1]) - background.1)
+                        let db = abs(Int(buffer[nIndex + 2]) - background.2)
+                        let distance = dr + dg + db
+                        guard distance > 8, distance <= 240 else { continue }
+                        buffer[nIndex] = red
+                        buffer[nIndex + 1] = green
+                        buffer[nIndex + 2] = blue
+                        buffer[nIndex + 3] = 255
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - 结构化档部件
@@ -970,7 +1413,8 @@ actor DocxExportService: DocxRendering {
         totalHeight: Int? = nil,
         baseCellFontPT: Double? = nil,
         position: (x: Int, y: Int)? = nil,
-        blockID: UUID? = nil
+        blockID: UUID? = nil,
+        positioned: Bool = true
     ) -> String? {
         guard let table, !table.rows.isEmpty else { return nil }
         let columns = max(table.columnCount, 1)
@@ -982,7 +1426,8 @@ actor DocxExportService: DocxRendering {
                 totalHeight: totalHeight,
                 baseCellFontPT: baseCellFontPT,
                 position: position,
-                blockID: blockID
+                blockID: blockID,
+                positioned: positioned
             )
         }
         let width = max(9000 / columns, 1200)
@@ -1038,7 +1483,8 @@ actor DocxExportService: DocxRendering {
         totalHeight: Int,
         baseCellFontPT: Double,
         position: (x: Int, y: Int),
-        blockID: UUID?
+        blockID: UUID?,
+        positioned: Bool = true
     ) -> String {
         let rowCount = max(table.rows.count, 1)
         // 列宽（dxa）：实测比例完整对应列数才生效（flatten 产出归一化和 = 1）
@@ -1055,6 +1501,10 @@ actor DocxExportService: DocxRendering {
         // 行高（dxa → 页 pt）：区域高 ÷ 行数，exact 封顶
         let rowHeightTwips = max(totalHeight / rowCount, 60)
         let rowHeightPT = Double(rowHeightTwips) / 20
+        // 表格基础字号再按行高封顶：真实 UI 底图表头被 OCR 估成 21pt（行高
+        // 75pt），WPS 里左格表头明显大于原稿并挤成三行。0.21×行高 ≈ 15.8pt，
+        // 与 14–16pt 的正文表格一致；表头/正文同基准再各自做宽度拟合。
+        let effectiveBaseCellFontPT = min(baseCellFontPT, rowHeightPT * 0.21)
 
         // 单元格字号自适应 + atLeast 升级判定（与预览共享同一对度量函数）
         var sizeHalfPoints: [[Int]] = []
@@ -1062,13 +1512,18 @@ actor DocxExportService: DocxRendering {
         for (rowIndex, row) in table.rows.enumerated() {
             let padded = row + Array(repeating: "", count: max(0, columns - row.count))
             var rowSizes: [Int] = []
+            // 正文行再降一档：75pt 行高下 15.5pt 会把“1 You can go … and do”
+            // 的第二行裁掉；0.16×行高 ≈ 12pt 与练习册正文一致，3 行也能装下。
+            let rowBaseFontPT = rowIndex == 0
+                ? effectiveBaseCellFontPT
+                : min(effectiveBaseCellFontPT, rowHeightPT * 0.23)
             for (column, cell) in padded.prefix(columns).enumerated() {
                 let columnWidthPT = Double(columnWidths[column]) / 20
                 let fontPT = LayoutTypography.tableCellFontPT(
                     text: cell,
                     columnWidthPT: columnWidthPT,
                     rowHeightPT: rowHeightPT,
-                    baseFontPT: baseCellFontPT
+                    baseFontPT: rowBaseFontPT
                 )
                 rowSizes.append(max(14, Int((fontPT * 2).rounded())))
                 let cellHeightPT = LayoutTypography.tableCellHeightPT(
@@ -1087,15 +1542,27 @@ actor DocxExportService: DocxRendering {
         }
         let hRule = growthRow != nil ? "atLeast" : "exact"
 
+        let headerFill = "2F334F"
         let rows = table.rows.enumerated().map { rowIndex, row -> String in
             let padded = row + Array(repeating: "", count: max(0, columns - row.count))
+            let isHeader = rowIndex == 0
             let cells = padded.prefix(columns).enumerated().map { column, cell -> String in
                 let size = sizeHalfPoints[rowIndex][column]
+                // 单元格内的换行在 Word 的 `w:t` 里不是换行；统一折成空格，避免
+                // 单元格显示成一行截断。表头深底白字，正文无网格。
+                let normalized = cell
+                    .replacingOccurrences(of: "\r\n", with: " ")
+                    .replacingOccurrences(of: "\n", with: " ")
+                let shading = isHeader
+                    ? "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"\(headerFill)\"/>"
+                    : "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"auto\"/>"
+                let color = isHeader ? "<w:color w:val=\"FFFFFF\"/>" : ""
                 return "<w:tc>"
-                    + "<w:tcPr><w:tcW w:w=\"\(columnWidths[column])\" w:type=\"dxa\"/></w:tcPr>"
+                    + "<w:tcPr><w:tcW w:w=\"\(columnWidths[column])\" w:type=\"dxa\"/>\(shading)"
+                    + "<w:vAlign w:val=\"center\"/></w:tcPr>"
                     + "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>"
-                    + "<w:r><w:rPr><w:sz w:val=\"\(size)\"/><w:szCs w:val=\"\(size)\"/></w:rPr>"
-                    + "<w:t xml:space=\"preserve\">\(escape(cell))</w:t></w:r></w:p>"
+                    + "<w:r><w:rPr>\(color)<w:sz w:val=\"\(size)\"/><w:szCs w:val=\"\(size)\"/></w:rPr>"
+                    + "<w:t xml:space=\"preserve\">\(escape(normalized))</w:t></w:r></w:p>"
                     + "</w:tc>"
             }.joined()
             return "<w:tr><w:trPr><w:trHeight w:val=\"\(rowHeightTwips)\" w:hRule=\"\(hRule)\"/></w:trPr>"
@@ -1103,18 +1570,19 @@ actor DocxExportService: DocxRendering {
                 + "</w:tr>"
         }.joined()
         let grid = columnWidths.map { "<w:gridCol w:w=\"\($0)\"/>" }.joined()
+        let positioningXML = positioned
+            ? "<w:tblpPr w:leftFromText=\"0\" w:rightFromText=\"0\" w:horzAnchor=\"page\" w:vertAnchor=\"page\""
+                + " w:tblpX=\"\(position.x)\" w:tblpY=\"\(position.y)\"/>"
+            : ""
         return "<w:tbl><w:tblPr>"
-            + "<w:tblpPr w:leftFromText=\"0\" w:rightFromText=\"0\" w:horzAnchor=\"page\" w:vertAnchor=\"page\""
-            + " w:tblpX=\"\(position.x)\" w:tblpY=\"\(position.y)\"/>"
+            + positioningXML
             + "<w:tblW w:w=\"\(totalWidth)\" w:type=\"dxa\"/>"
             + "<w:tblBorders>"
-            + "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
-            + "<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
-            + "<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
-            + "<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
-            + "<w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
-            + "<w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+            + "<w:top w:val=\"nil\"/><w:left w:val=\"nil\"/><w:bottom w:val=\"nil\"/>"
+            + "<w:right w:val=\"nil\"/><w:insideH w:val=\"nil\"/><w:insideV w:val=\"nil\"/>"
             + "</w:tblBorders>"
+            + "<w:tblCellMar><w:top w:w=\"40\" w:type=\"dxa\"/><w:left w:w=\"160\" w:type=\"dxa\"/>"
+            + "<w:bottom w:w=\"40\" w:type=\"dxa\"/><w:right w:w=\"160\" w:type=\"dxa\"/></w:tblCellMar>"
             + "<w:tblLayout w:type=\"fixed\"/>"
             + "</w:tblPr>"
             + "<w:tblGrid>\(grid)</w:tblGrid>"

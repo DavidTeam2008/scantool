@@ -125,6 +125,48 @@ struct LayoutMaskBuilderTests {
         #expect(fill.rect.width > 0 && fill.rect.height > 0)
     }
 
+    @Test("栅格坐标方向：上半页块取上半页底色，不被垂直镜像到下半页")
+    func rasterSamplesTopBlockFromTopHalf() throws {
+        // 上半页红、下半页蓝；顶部块的环带仍落在红半页。
+        let width = 300
+        let height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let isTop = y < height / 2
+            for x in 0..<width {
+                let index = (y * width + x) * 4
+                pixels[index] = isTop ? 220 : 40
+                pixels[index + 1] = 40
+                pixels[index + 2] = isTop ? 40 : 220
+                pixels[index + 3] = 255
+            }
+        }
+        let data = Data(pixels)
+        let provider = try #require(CGDataProvider(data: data as CFData))
+        let image = try #require(CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ))
+        // Vision 左下原点：顶部块 y ∈ [0.92, 0.98]。
+        let topBlock = CGRect(x: 0.2, y: 0.92, width: 0.5, height: 0.06)
+        let mask = LayoutMaskBuilder.build(blocks: [textBlock(topBlock)], baseImage: image)
+        let fill = try #require(mask.fills.first)
+        #expect(
+            abs(Int(fill.red) - 220) <= Int(colorTolerance),
+            "顶部块应取红半页，实际 R=\(fill.red) G=\(fill.green) B=\(fill.blue)"
+        )
+        #expect(abs(Int(fill.blue) - 40) <= Int(colorTolerance), "顶部块不应被镜像到蓝半页")
+    }
+
     // MARK: - 填充色（环带 median）
 
     @Test("白纸页 → 白填充（环带是白纸）")

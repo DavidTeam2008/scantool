@@ -40,8 +40,14 @@ struct LayoutCanvas: View {
             // 退化恒等。mask 与元素层同源同一份。
             let blocks = page.restoredBlocks ?? page.blocks
             // 覆盖矩形只在有底座时构建（采样底色）；无底座退化白底时无需净化。
+            // 混合模式 H2：逐行/逐段擦字，保留行间边框、深色栏头与照片像素。
+            // 与 DOCX 导出共用同一份行级 mask；文字颜色也从这份 mask 推断。
             let mask = (baseImage?.cgImage).map { cgImage in
-                LayoutMaskBuilder.build(blocks: blocks, baseImage: cgImage)
+                LayoutMaskBuilder.build(
+                    blocks: blocks,
+                    baseImage: cgImage,
+                    granularity: .line
+                )
             } ?? LayoutMask(fills: [])
             // 画布与页面同比例 → 纯线性缩放（offset = 0），y 翻转集中在映射里。
             let map = PageLayoutMapper.map(
@@ -74,7 +80,7 @@ struct LayoutCanvas: View {
                 }
                 // 3. 元素层：文本/表格原位重排；figure/barcode/artwork 不绘制（底座透出）
                 ForEach(blocks) { block in
-                    canvasElement(block, map: map)
+                    canvasElement(block, map: map, mask: mask)
                 }
             }
         }
@@ -89,7 +95,11 @@ struct LayoutCanvas: View {
     // MARK: - 元素层
 
     @ViewBuilder
-    private func canvasElement(_ block: ReconstructBlock, map: PageLayoutMap) -> some View {
+    private func canvasElement(
+        _ block: ReconstructBlock,
+        map: PageLayoutMap,
+        mask: LayoutMask
+    ) -> some View {
         switch block.kind {
         case .figure, .barcode, .artwork:
             // 底座原像素透出：不绘制、不覆盖（FR-003/FR-005）。
@@ -114,9 +124,14 @@ struct LayoutCanvas: View {
                 // T013（spec/scan-fidelity US2 / FR-005）：空隙下划线判定与 DOCX
                 // （T012）共用 `gapPlaceholderSpaces` 阈值——双端同一空档同画/同不画。
                 let pageWidthPT = Double(map.pageSize.width) * LayoutTypography.ptPerPixel
+                // 与 DOCX 导出共用同一套 WPS/Word 文本校准偏移（见 LayoutTypography）。
+                let textShiftX = map.targetSize.width * CGFloat(LayoutTypography.restoredTextHorizontalOffsetRatio)
+                let textShiftY = map.targetSize.height * CGFloat(LayoutTypography.restoredTextVerticalLiftRatio)
                 ForEach(lines.indices, id: \.self) { index in
                     let line = lines[index]
                     let lineRect = map.rect(frames[index])
+                        .offsetBy(dx: textShiftX, dy: -textShiftY)
+                    let lineInk = mask.isDarkBackground(at: frames[index]) ? Color.white : Tokens.ink
                     let lineFontPTValue = LayoutTypography.lineFontPT(
                         line: line,
                         block: block,
@@ -137,17 +152,22 @@ struct LayoutCanvas: View {
                         // 几何恒等（offset == leadingOffset、width == 行宽）。
                         ForEach(segments.indices, id: \.self) { segIndex in
                             let segment = segments[segIndex]
-                            let segRect = map.rect(
-                                CGRect(
-                                    x: block.bbox.minX + segment.offset,
-                                    y: frames[index].minY,
-                                    width: segment.width,
-                                    height: frames[index].height
-                                )
+                            let normalizedRect = CGRect(
+                                x: block.bbox.minX + segment.offset,
+                                y: frames[index].minY,
+                                width: segment.width,
+                                height: frames[index].height
                             )
+                            let segRect = map.rect(normalizedRect)
+                                .offsetBy(dx: textShiftX, dy: -textShiftY)
+                            // 深色栏头里的白字：颜色来自同一份行级 mask，不是靠
+                            // 块类型/页位置硬编码。浅底仍用正文墨色。
+                            let segmentInk = mask.isDarkBackground(at: normalizedRect)
+                                ? Color.white
+                                : Tokens.ink
                             Text(segment.text)
                                 .font(.system(size: lineFont, weight: weight))
-                                .foregroundStyle(Tokens.ink)
+                                .foregroundStyle(segmentInk)
                                 .fixedSize()
                                 .frame(
                                     width: max(segRect.width, 12),
@@ -176,9 +196,9 @@ struct LayoutCanvas: View {
                                             width: gap,
                                             height: frames[index].height * 0.10
                                         )
-                                    )
+                                    ).offsetBy(dx: textShiftX, dy: -textShiftY)
                                     Rectangle()
-                                        .fill(Tokens.ink)
+                                        .fill(lineInk)
                                         .frame(
                                             width: max(underlineRect.width, 2),
                                             height: max(underlineRect.height, 1)
@@ -191,7 +211,7 @@ struct LayoutCanvas: View {
                         // 无 segments 的旧行（旧持久化档）：整行文本路径，行为不变。
                         Text(line.text)
                             .font(.system(size: lineFont, weight: weight))
-                            .foregroundStyle(Tokens.ink)
+                            .foregroundStyle(lineInk)
                             .frame(
                                 width: max(lineRect.width, 12),
                                 height: max(lineRect.height, 14),
@@ -204,6 +224,7 @@ struct LayoutCanvas: View {
                 let rect = map.rect(block.bbox)
                 let boxWidth = max(rect.width, 12)
                 let boxHeight = max(rect.height, 14)
+                let blockInk = mask.isDarkBackground(at: block.bbox) ? Color.white : Tokens.ink
                 Group {
                     switch block.kind {
                     case .table:
@@ -227,18 +248,18 @@ struct LayoutCanvas: View {
                             // 与 Word 侧布局期预缩 w:sz 语义同构（缩到放得下、不裁剪）。
                             Text(block.displayText)
                                 .font(.system(size: font))
-                                .foregroundStyle(Tokens.ink)
+                                .foregroundStyle(blockInk)
                                 .minimumScaleFactor(0.5)
                         }
                     case .heading:
                         Text(block.text)
                             .font(.system(size: font, weight: .bold))
-                            .foregroundStyle(Tokens.ink)
+                            .foregroundStyle(blockInk)
                             .minimumScaleFactor(0.5)
                     default:
                         Text(block.text)
                             .font(.system(size: font))
-                            .foregroundStyle(Tokens.ink)
+                            .foregroundStyle(blockInk)
                             .minimumScaleFactor(0.5)
                     }
                 }

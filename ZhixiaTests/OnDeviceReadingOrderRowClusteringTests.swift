@@ -482,3 +482,34 @@ struct OnDeviceReadingOrderRowClusteringTests {
         }
     }
 }
+
+/// 2026-10-24 真机回归：右上三行题头的 OCR 输入序是「下行在前、上行在后」，
+/// 且行距为负。旧 `clusterRows` 在 minY 差小于「同一行阈值」时退化成按 minX
+/// 排，导致上下颠倒；同时第三条右栏续行被 `indentJump` 拆成独立块。
+struct HeaderLineOrderRegressionTests {
+    @Test("负行距的三行题头：自上而下，右栏续行不拆块")
+    func negativeGapHeaderStaysTopDown() throws {
+        let lines = [
+            OCRLine(
+                text: "friends after school? something different from",
+                boundingBox: CGRect(x: 0.5537, y: 0.8979, width: 0.3774, height: 0.0146)
+            ),
+            OCRLine(
+                text: "What's fun to do with your How important is it to do",
+                boundingBox: CGRect(x: 0.5537, y: 0.9125, width: 0.3774, height: 0.0167)
+            ),
+            OCRLine(
+                text: "studying after school?",
+                boundingBox: CGRect(x: 0.7600, y: 0.8838, width: 0.1522, height: 0.0151)
+            )
+        ]
+        let blocks = OnDeviceReadingOrder.makeBlocks(from: lines)
+        #expect(blocks.count == 1)
+        let block = try #require(blocks.first)
+        let texts = (block.lines ?? []).map(\.text)
+        #expect(texts.count == 3)
+        #expect(texts[0].hasPrefix("What's fun"))
+        #expect(texts[1].hasPrefix("friends after"))
+        #expect(texts[2].hasPrefix("studying after"))
+    }
+}

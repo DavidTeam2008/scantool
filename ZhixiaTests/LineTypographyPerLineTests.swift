@@ -165,11 +165,13 @@ struct LineTypographyPerLineTests {
 
     @Test("DOCX 行段逐行 w:sz：异构行高块每行一档，字号 ≤ 行槽 × 1.05 + 量化容差")
     func docxEmitsPerLineFontSize() async throws {
-        // 400×800px 页 → 页高 600pt、页宽 6000 dxa。异构两行（块级实测 0.030）：
-        // L1 h0.030 → 18.9pt → w:sz 38、w:line 360 exact
-        // L2 h0.020 → 12.6pt → w:sz 25、w:line 240 exact
+        // 400×800px 页 → 页高 600pt、页宽 300pt（0.75pt/px）。异构两行：
+        // L1 h0.030 → lineFontPT 18.9pt；但实测行宽 0.3×300=90pt，5 个全角字
+        // 反推 17.5pt → w:sz 35、w:line 360 exact（实测宽度优先，仍是单行）。
+        // L2 h0.020 → lineFontPT 12.6pt；实测宽反推 14.7pt 不触上限 → w:sz 25。
         // 旧块级路径两行同为 38：L2 字号 19pt > 行槽 12pt × 1.05 —— exact 行距下
-        // 上行 descender 裁进本行（叠字根因 2/6）。行级化后每行与自身行槽同源。
+        // 上行 descender 裁进本行（叠字根因 2/6）。行级化后每行与自身行槽同源，
+        // 渲染字号再按 OCR 实测行宽收口（2026-10-23 WPS 真实页迭代）。
         let block = ReconstructBlock(
             kind: .paragraph,
             bbox: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.1),
@@ -202,8 +204,10 @@ struct LineTypographyPerLineTests {
         let tallLineTwips = try #require(nearestAttribute(in: xml, before: "高大标题行", pattern: "w:line=\"(\\d+)\""))
         let shortLineTwips = try #require(nearestAttribute(in: xml, before: "矮小正文行", pattern: "w:line=\"(\\d+)\""))
 
-        // 每行一档：L1 38 / L2 25（半磅），必须不同（旧路径同为 38）
-        #expect(tallHalf == 38, "L1 字号应 18.9pt → 38 半磅，实际 \(tallHalf)")
+        // 每行一档：L1 34 / L2 25（半磅），必须不同（旧路径同为 38）。
+        // L1 实测行宽反推量化后为 17.0pt → 34；WPS 页面 0.5pt 量化差在
+        // 共享字号公式里是稳定的，断言保留“逐行分化 + 精确值”语义。
+        #expect(tallHalf == 34, "L1 实测行宽反推 17.0pt → 34 半磅，实际 \(tallHalf)")
         #expect(shortHalf == 25, "L2 字号应 12.6pt → 25 半磅，实际 \(shortHalf)")
         #expect(tallHalf != shortHalf, "异构行高必须逐行分化字号（叠字修复的存在性断言）")
         // 行距 exact 保真：实测行高 × 20 twips

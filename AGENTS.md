@@ -13,7 +13,7 @@
 |---|---|
 | 语言 / 最低部署 | Swift 6 · iOS 18.0+（结构化识别用 iOS 26 `RecognizeDocumentsRequest`） |
 | bundle id | `com.david.Zhixia` |
-| 测试基线 | **449 = 448 passed + 1 expected failure + 0 failed**（`ZhixiaTests/`；2026-10-21 实测；只增不减） |
+| 测试基线 | **456 = 455 passed + 1 expected failure + 0 failed**（`ZhixiaTests/`；iPhone 18 Pro / iOS 27；只增不减） |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构 | App → Features(SwiftUI VM) → Domain(纯函数) → Services(actor 副作用)，依赖只向下 |
 | 构建 | `Zhixia.xcodeproj`，Xcode 26.x，scheme `Zhixia`，PBXFileSystemSynchronizedRootGroup（新文件免改 pbxproj） |
@@ -85,10 +85,10 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
 · `spec/scan-fidelity` · `spec/scan-edge-accuracy` · `spec/live-edge-crop` ·
 `spec/overlay-frame-visibility` · `spec/wysiwyg-crop` · `spec/wps-parity-layout` ·
 `spec/agent-handover` · `spec/case-b-sticky-v2` · `spec/folded-page-capture` ·
-`spec/frame-truth` · `spec/scan-enhance` · **`spec/guided-capture`（当前周期，待实施）**。
+`spec/frame-truth` · `spec/scan-enhance` · `spec/guided-capture` · **`spec/page-preprocess`（当前周期）**。
 真机验收清单都在各周期 `device-acceptance.md`。
 
-## 6. 当前状态指针（2026-10-22）
+## 6. 当前状态指针（2026-10-25）
 
 - **当前状态**：Case A（折页书）与 Case B（摊开书）的既有修复已交付
   （case-b-sticky-v2 + folded-page-capture + frame-truth 三周期；全量
@@ -105,7 +105,7 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
   10-10 u 误差 ≤2%）。**未做**：T005 真机 V1/V2/V3、真机 A/B（T030~T034）。
   **动 capture 侧前先读 `spec/guided-capture/plan.md` D1~D10**；引导路径与
   自动路径**互不影响**（自动路径本周期零改动）。
-- **word-fidelity 周期（2026-10-22，当前周期）**：**Word 导出保真度**——用户实测
+- **word-fidelity 周期（2026-10-22，已收尾）**：**Word 导出保真度**——用户实测
   「复杂页面的 Word 样式会乱」。评估见 [`docs/16`](docs/16-word-export-fidelity.md)，
   工件在 [`spec/word-fidelity/`](spec/word-fidelity/)。Phase 0 已交付：新增**图片版**
   导出档（整页图铺页，样式不可能乱）+ **静帧页面判定**（认不出页面就不裁，绝不裁到
@@ -113,7 +113,12 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
   实测 0.914/0.919；可编辑的「版面还原」档对照 0.785 **未达标** → 迭代方案见
   [`docs/17`](docs/17-editable-tier-fidelity-iteration.md)（归因/口径分层/子目标 G1~G6/
   排期 R2~R5）。档位命名：**高保真 = 图片版**（默认），旧「高保真」= 可编辑版面还原
-  （rawValue 迁移到 `layoutEditable`，老用户行为不变）。
+  （rawValue 迁移到 `layoutEditable`，老用户行为不变）。**真机收尾**：WPS 真实渲染
+  0.906/0.907（docs/17 §八），真机表格 3×4→2×5 已修；背景字重影暂缓。
+- **page-preprocess 周期（2026-10-25，当前周期）**：先做页面边界/页外裁切，
+  再做折痕/光照与页边拉直；计划见 [`docs/19`](docs/19-page-preprocess-plan.md)，
+  任务见 [`spec/page-preprocess/tasks.md`](spec/page-preprocess/tasks.md)、
+  执行清单 [`TODO.md`](TODO.md)。
 - **WPS 参考录屏已评估（2026-10-21）**：49s 录屏显示手动快门 + 单实线自动跟随框 +
   拍后自动重裁/滤镜；框在右页/整页间切换，快门时也不紧。结论：我们的固定引导框
   是替代范式而非 WPS 同款；不照搬静默换框，WPS 式自动裁边/滤镜列为 `T040`/`T041`

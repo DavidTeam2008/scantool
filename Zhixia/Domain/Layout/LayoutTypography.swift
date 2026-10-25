@@ -38,6 +38,14 @@ enum LayoutTypography {
     /// 1 px @96dpi = 0.75 pt（= `PageLayoutMapper.emuPerPixel` 9525 ÷ 12700 EMU/pt）。
     /// 文档页 pt 与 DOCX 动态页（`emuPageSize` ÷ 12700）是同一数值空间。
     static let ptPerPixel: Double = 9525 / 12_700
+    /// 版面还原档文本相对 Vision bbox 的**渲染校准偏移**（页宽/页高比例）。
+    ///
+    /// WPS/Word 的 exact 行距把字形压在行盒底部，而 Vision bbox 以墨迹
+    /// 上缘为准；不校准会让重排文本整体偏低、偏左（真机/模拟器 WPS
+    /// 2026-10-24 实测：文本层 SSIM 0.89 → 0.90+ 的关键项）。
+    /// 数值来自同一页 WPS 渲染的网格搜索，量级 < 0.4% 页宽/页高。
+    static let restoredTextHorizontalOffsetRatio: Double = 0.00313
+    static let restoredTextVerticalLiftRatio: Double = 0.00189
 
     // MARK: - 字号
 
@@ -192,6 +200,82 @@ enum LayoutTypography {
         return units
     }
 
+    /// 渲染宽度单位（em 数，按**实际字形**而非保守换行估算）：
+    /// - 全宽字符 1.0；
+    /// - 拉丁字母 0.5；全大写行 0.6（实测 WPS/Calibri 大写平均更宽）；
+    /// - 数字 0.52；空格 0.25；标点 0.3。
+    /// 用途：DOCX/预览把 OCR 实测行宽（`BlockLine.width`）换算成字号。`charUnits`
+    /// 的 0.6 是保守上界，用它反推字号会把真实页文字系统性缩小 ~20%。
+    static func renderedWidthUnits(of text: String) -> Double {
+        let scalars = Array(text.unicodeScalars)
+        let letters = scalars.filter { CharacterSet.letters.contains($0) }
+        let uppercaseRatio = letters.isEmpty
+            ? 0
+            : Double(letters.filter { CharacterSet.uppercaseLetters.contains($0) }.count) / Double(letters.count)
+        let latinLetterUnit = uppercaseRatio > 0.7 ? 0.6 : 0.5
+        var units: Double = 0
+        for scalar in scalars {
+            if isFullWidth(scalar) {
+                units += 1
+            } else if scalar == " " {
+                units += 0.25
+            } else if CharacterSet.decimalDigits.contains(scalar) {
+                units += 0.52
+            } else if CharacterSet.letters.contains(scalar) {
+                units += latinLetterUnit
+            } else {
+                units += 0.3
+            }
+        }
+        return units
+    }
+
+    /// 逐行**渲染**字号：让这一行在目标字体下复现 OCR 实测行宽，最多不超过
+    /// `lineFontPT` 的行槽上限。与 `fittedFontPT`（按块宽 + 保守 0.6 单位）
+    /// 的分工：
+    /// - 溢出估算继续用 `fittedFontPT` 的保守上界，避免漏判换行；
+    /// - 真正写进 `w:sz` / 预览的字号按实测行宽反推，文字宽度/换行才与原图一致。
+    ///
+    /// 多段行（填空/双栏）先扣除段间空隙的固定页宽，只把「字形宽」摊到字号上；
+    /// 否则把 gap 也算成字符会放大字号、把两侧段挤出文本框。
+    static func renderedLineFontPT(
+        line: BlockLine,
+        block: ReconstructBlock,
+        pageWidthPT: Double,
+        pageHeightPT: Double
+    ) -> Double {
+        let blockWidth = block.bbox.width
+        let base = lineFontPT(line: line, block: block, pageHeightPT: pageHeightPT)
+        // 退化行（无实测行高）按块级实测字号回退；不能再走“行宽反推”，
+        // 否则 0 高行会被行宽压到比块级基准更小的字号（2026-10-24 测试回归）。
+        guard line.height > 0 else { return base }
+        guard pageWidthPT > 0, blockWidth > 0 else { return base }
+        let availablePT = max((blockWidth - line.leadingOffset) * pageWidthPT, 1)
+        let measuredPT = line.width > 0 ? line.width * pageWidthPT : availablePT
+        var gapPT: Double = 0
+        let segments = line.segments ?? []
+        if segments.count > 1 {
+            for index in 0..<(segments.count - 1) {
+                let current = segments[index]
+                let next = segments[index + 1]
+                gapPT += max(0, next.offset - (current.offset + current.width)) * pageWidthPT
+            }
+        }
+        let glyphPT = max(min(measuredPT, availablePT) - gapPT, min(measuredPT, availablePT) * 0.35)
+        let units = segments.count > 1
+            ? segments.reduce(0) { $0 + renderedWidthUnits(of: $1.text) }
+            : renderedWidthUnits(of: line.text)
+        guard units > 0 else { return base }
+        // 0.94：WPS/Word 的替换字体比原稿 Arial/Calibri 宽约 2~4%，
+        // 0.98 时首行仍会把句末 "to" 挤到下一行（真实页 2026-10-23 WPS6 实测）。
+        let desired = glyphPT * 0.94 / units
+        return clampToFontRange(min(base, desired))
+    }
+
+    private static func block(width: Double) -> ReconstructBlock {
+        ReconstructBlock(kind: .paragraph, bbox: CGRect(x: 0, y: 0, width: width, height: 1), text: "")
+    }
+
     /// 宽度封顶字号：以 `baseFontPT` 渲染 `text` 若超出可用宽，则按比例下调至恰好单行放满；
     /// 下限 7pt（更低交给换行估算与渲染期兜底）。**只缩不放**，空文本不缩。
     /// 渲染端（w:sz / 预览字号）与溢出估算（`estimatedRenderHeight`）共用——
@@ -217,7 +301,8 @@ enum LayoutTypography {
         blockWidth: Double,
         pageWidthPT: Double,
         pageHeightPT: Double,
-        baseFontPT: Double
+        baseFontPT: Double,
+        fitFontToWidth: Bool = true
     ) -> Double {
         guard !lines.isEmpty else { return 0 }
         var total: Double = 0
@@ -234,11 +319,26 @@ enum LayoutTypography {
             } else {
                 lineBase = baseFontPT
             }
-            let fitted = fittedFontPT(text: line.text, availableWidthPT: available, baseFontPT: lineBase)
+            // 先给安全系数留出宽度，再拟合字号——否则 fitted 恰好贴满可用宽，
+            // 后面的 ×1.05 必然 > 可用宽，每一行都被误判成 2 行，溢出阶梯会把
+            // 真实页所有文字无谓缩小（2026-10-23 真实 UI 底图 restoredBlocks
+            // 行高被压到 ~0.64 的根因）。渲染端用同一除数，估算与渲染同宽。
+            let fitted = fitFontToWidth
+                ? fittedFontPT(
+                    text: line.text,
+                    availableWidthPT: available / wrapSafetyFactor,
+                    baseFontPT: lineBase
+                )
+                : lineBase
             let estimatedWidth = charUnits(of: line.text) * fitted * wrapSafetyFactor
-            let wrappedRows = max(1, Int(ceil(estimatedWidth / available)))
+            // 拟合后 estimatedWidth 与 available 数学上相等；浮点除法可能得到
+            // 1.0000000000000002，`ceil` 会误判 2 行。减 1e-9 仅吸收这一尘埃，
+            // 真超宽（哪怕 0.01pt）仍按 2 行保守计入。
+            let wrappedRows = max(1, Int(ceil(estimatedWidth / available - 1e-9)))
             let measuredPitch = line.height * pageHeightPT
-            let pitch = measuredPitch > 0 ? measuredPitch : fitted * nominalLineHeightFactor
+            let pitch = measuredPitch > 0
+                ? measuredPitch
+                : fitted * (fitFontToWidth ? nominalLineHeightFactor : 1.0)
             total += Double(wrappedRows) * pitch
             if index > 0 {
                 total += line.gapToPrevious * pageHeightPT

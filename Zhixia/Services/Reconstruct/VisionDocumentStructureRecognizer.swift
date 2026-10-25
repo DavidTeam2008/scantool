@@ -20,12 +20,16 @@ import Vision
 actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
     private let languages: [Locale.Language]
 
-    /// 与 `VisionTextRecognizer` 保持同一组语言。
+    /// 结构识别语言：简体中文 + 英文。
     /// ⚠️ 中文只支持 `.accurate` 级别的识别，且 CJK **没有 word 级**结果 ——
     /// 但这不影响表格：表格结构来自 `Table` 容器，不依赖 word 粒度。
+    ///
+    /// **不要加 `zh-Hant`**：2026-10-23 真实页复测，`zh-Hans + zh-Hant + en-US`
+    /// 会把本页的 2 列表格识别成 1 列（宿主机 Vision 从 2 张表降为 1 张，
+    /// 模拟器直接 0 张）；去掉繁中后简中/英文页面表格恢复。繁体页面后续若要
+    /// 支持，应在「简体+英文」无表格时再做一次繁中回退，而不是默认三语一起跑。
     static let defaultLanguages: [Locale.Language] = [
         Locale.Language(identifier: "zh-Hans"),
-        Locale.Language(identifier: "zh-Hant"),
         Locale.Language(identifier: "en-US")
     ]
 
@@ -68,9 +72,10 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
 
     @available(iOS 26.0, *)
     private static func map(_ container: DocumentObservation.Container) -> StructuredDocumentPage {
-        StructuredDocumentPage(
-            lines: lines(from: container),
-            tables: tables(from: container),
+        let lines = lines(from: container)
+        return StructuredDocumentPage(
+            lines: lines,
+            tables: tables(from: container, lines: lines),
             barcodes: barcodes(from: container),
             source: .documentRequest
         )
@@ -108,16 +113,60 @@ actor VisionDocumentStructureRecognizer: DocumentStructureRecognizing {
     }
 
     @available(iOS 26.0, *)
-    private static func tables(from container: DocumentObservation.Container) -> [DetectedTable] {
+    private static func tables(
+        from container: DocumentObservation.Container,
+        lines: [OCRLine]
+    ) -> [DetectedTable] {
         container.tables.compactMap { table in
             let rawRows = rawRows(of: table)
+            let bbox = table.boundingRegion.boundingBox.cgRect
+            if let repaired = TableStructureRepair.repair(
+                rawRows: rawRows,
+                tableBBox: bbox,
+                lines: lines
+            ), isUsableTable(repaired.rows) {
+                return DetectedTable(
+                    table: ReconstructTable(
+                        rows: repaired.rows,
+                        columnRatios: repaired.columnRatios
+                    ),
+                    bbox: bbox
+                )
+            }
             let rows = flatten(rawRows)
             guard !rows.isEmpty else { return nil }
+            // 单列/一半为空列的表在练习册页上是典型的“段落框误判”：它会把整段
+            // 故事吞成表格，同时让 figure 通道失效（Golden iOS 27 回归）。不收。
+            guard isUsableTable(rows) else { return nil }
             return DetectedTable(
                 table: ReconstructTable(rows: rows, columnRatios: columnRatios(rawRows)),
-                bbox: table.boundingRegion.boundingBox.cgRect
+                bbox: bbox
             )
         }
+    }
+
+    /// 至少 2 个非空列、2 行才算可编辑表格；否则视为段落框误判。
+    static func isUsableTable(_ rows: [[String]]) -> Bool {
+        guard rows.count >= 2 else { return false }
+        let width = rows.map(\.count).max() ?? 0
+        guard width >= 2 else { return false }
+        let nonEmptyColumns = (0..<width).filter { column in
+            rows.contains { row in
+                column < row.count
+                    && !row[column].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        }
+        guard nonEmptyColumns.count >= 2 else { return false }
+        // 长“表”里超过一半行只有一个非空单元格 → 多半是段落被按行切成了假表格
+        // （Golden iOS 27 的 24 行故事被切出 2 列，空列占一半）。
+        let nonEmptyCells = rows.reduce(0) { partial, row in
+            partial + row.filter {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }.count
+        }
+        let occupancy = Double(nonEmptyCells) / Double(rows.count)
+        if rows.count > 8, occupancy < 1.5 { return false }
+        return true
     }
 
     @available(iOS 26.0, *)

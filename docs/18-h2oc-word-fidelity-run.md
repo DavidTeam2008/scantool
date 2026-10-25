@@ -1,6 +1,7 @@
 # 18 · 用 h2oc 跑「可编辑版面还原 Word」迭代（2026-10-22）
 
-> 状态：**运行中（第一轮 T021）**。本文是执行日志 + 证据索引，不是最终结论。
+> 状态：**已收尾（2026-10-25）**。h2oc 第一轮 T021 已完成；本文是执行日志 + 证据索引 + 跨任务经验。
+> 真实 WPS 验收见 §七；0.961/0.965 是 QuickLook 代理，不是最终门限。
 > 上游：[`docs/17-editable-tier-fidelity-iteration.md`](17-editable-tier-fidelity-iteration.md)、
 > [`spec/word-fidelity/tasks.md`](../spec/word-fidelity/tasks.md)。
 
@@ -122,3 +123,53 @@
 - **用户路径通过**：WPS/Word 实际打开 docx → 转图片 → 与原片比对 ≥ 0.90，且目视无叠字。
 - **未通过**：记录失败层（模型 / OOXML / 渲染器），进入下一轮 R4（字号行距、遮罩瘦身）；
   连续 2 轮无进展则按 docs/17 止损线冻结可编辑档。
+
+---
+
+## 七、最终状态（2026-10-25）
+
+### 7.1 h2oc 运行结果
+
+- 第一轮 T021 的交付：内联净化底图、零 `name="Mask"` shape、保留 `wps:txbx` / 原生
+  `w:tbl`；`make editable-fidelity` 的 QuickLook 代理 SSIM = **0.961 / 0.965**。
+- 运行过程中 `agg1` 在 green gate 后的 `make test` 出现 6 个失败并超时；`inv1` 在
+  848.5s 内完成 `DocxRestoredLayoutTests` 21/21 + gate + 全量 449。该差异被记录为
+  **confounded**（多个组件同时变化）。
+- 运行证据：`.harness2/runs/local-oc-agg1/editable-word-fidelity/`；
+  harness 库：`.harness2/library/k1/agg/word-fidelity/`。
+
+### 7.2 真实 WPS 收尾
+
+h2oc 的 gate 用 QuickLook，不能替代 WPS。2026-10-24 用 WPS 真实渲染：
+
+| 场景 | WPS SSIM |
+|---|---:|
+| 模拟器 `original-base.jpg` | **0.906224** |
+| iPhone 13 rendered 页 | **0.907581** |
+
+同时修掉真机 3 列×4 行表格过分割、题头行序反转、右栏续行拆块；详见 `docs/17` §八。
+因此 h2oc 代理分数不再作为最终验收数字。
+
+### 7.3 h2oc 对项目的帮助 / 跨任务经验
+
+**帮助**：
+1. 提供确定性 verify（`make editable-fidelity ...`）与 protected 边界（`WordFidelityExportTests`、`Tools/word-fidelity/`），让多轮 agent 改动用同一门限。
+2. 运行隔离 + library：每轮 diff/trajectory/verify 落盘；被选 harness 与 `EXPERIENCE.md` 可被后续任务复用。
+3. 暴露验证盲区：gate 只跑 `WordFidelityExportTests`，**`DocxRestoredLayoutTests` 必须单独跑**；这直接促成本轮测试清理。
+4. 生成可迁移经验（`EXPERIENCE.md`）：
+
+> **cue**：验收命令只执行测试子集，而任务允许/要求修改子集外的测试。
+> **lesson**：在 verify 步骤要求执行本次改过的每个测试文件/类，给出具体命令
+> （`make test-only T=<Class>`），并在最后一次编辑后检查该命令确实跑过。
+> **confidence**：medium（多组件同时变化，无法完全隔离；但 2/2 带指令的 run 都执行了被改测试类，
+> 未带指令的 base1 改了测试但从未运行）。
+
+**局限**：
+- `k=1` 只有一个被选 harness，跨任务泛化证据有限；
+- 没有 WPS 真实渲染能力，0.961/0.965 只是代理；
+- `.harness2` 是仓库内 h2oc 工具，不是 Google 依赖，也不进入 App 运行时。
+
+### 7.4 下一阶段
+
+Word 可编辑档暂告一段落；下一阶段按 [`docs/19-page-preprocess-plan.md`](19-page-preprocess-plan.md)
+做页面预处理（页外裁切 → 折痕/光照 → 页边拉直），再回来处理重影。

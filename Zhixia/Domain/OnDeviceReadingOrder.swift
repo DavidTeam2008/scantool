@@ -129,8 +129,7 @@ enum OnDeviceReadingOrder {
         // 让 Section 1/2（minY 差 0.018、height ~0.06）不再被合并为同一行。
         // 0.018 < 0.025 ✓ 分行；0.4 × 0.029 = 0.012，又避免太敏感把大行距的相邻行也合掉。
         let heights = lines.map(\.boundingBox.height)
-        let medianH = median(heights)
-        let rowThreshold = min(0.025, max(0.012, 0.4 * medianH))
+        let rowThreshold = min(0.025, max(0.012, 0.4 * median(heights)))
         let sorted = lines.sorted { lhs, rhs in
             if abs(lhs.boundingBox.minY - rhs.boundingBox.minY) > rowThreshold {
                 return lhs.boundingBox.minY > rhs.boundingBox.minY
@@ -154,6 +153,14 @@ enum OnDeviceReadingOrder {
                 rows.append(Row(lines: [line], bbox: line.boundingBox))
             }
         }
+        // 行内碎片合并后，行序再按视觉中心兜底一次：同一行分段的 midY 可能
+        // 略有差异，首成员出现序不保证严格自上而下。
+        rows.sort { lhs, rhs in
+            if abs(lhs.bbox.midY - rhs.bbox.midY) > 0.0001 {
+                return lhs.bbox.midY > rhs.bbox.midY
+            }
+            return lhs.bbox.minX < rhs.bbox.minX
+        }
         return rows
     }
 
@@ -162,7 +169,16 @@ enum OnDeviceReadingOrder {
         for row in rows {
             if var last = paragraphs.last {
                 let gap = last.bbox.minY - row.bbox.maxY
+                // 只有在上一行**没有覆盖**新行左缘时，缩进跳变才代表换栏/换段。
+                // 两栏题头的右栏续行（「studying after school?」）左缘虽比上一行
+                // 缩进 0.20，但上一行并集已经覆盖到它的右缘，属于同一视觉段落。
+                let rowStartsRightOfPrevious = row.bbox.minX > last.bbox.maxX - 0.01
+                // 只有“上一行横跨两栏、当前行是右栏短续行”才允许合段；
+                // 普通两栏页面的独立右栏段落仍按缩进跳变拆开（Golden 回归）。
+                let previousSpansRow = last.bbox.width > row.bbox.width * 1.8
                 let indentJump = abs(row.bbox.minX - last.bbox.minX) > 0.18
+                    && rowStartsRightOfPrevious
+                    && previousSpansRow
                 if gap > medianHeight * 1.6 || indentJump {
                     paragraphs.append(Paragraph(rows: [row], bbox: row.bbox))
                 } else {

@@ -87,7 +87,6 @@ struct BlockLine: Sendable, Equatable, Codable, Hashable {
     /// 单段行）→ 渲染端走整行文本路径，行为不变；非 nil 时按段定位渲染 +
     /// 空隙下划线占位。Codable 旧档缺键 → `decodeIfPresent` → nil，零破坏。
     var segments: [LineSegment]?
-
     init(
         text: String,
         height: Double,

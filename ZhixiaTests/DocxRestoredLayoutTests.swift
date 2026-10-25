@@ -8,10 +8,9 @@ import UIKit
 ///
 /// 版面还原档的 Word 结构（与 LayoutCanvas 预览同构）：
 /// - 每页独立 `sectPr`，页面宽高比随原图（映射退化为纯线性缩放）；
-/// - 底图 `behindDoc` 衬底，引用 `baseImageRelativePath`；
-/// - 覆盖矩形浮动 shape（`LayoutMask` 的净化矩形 + 环带 median 底色）；
+/// - **净化底图**内联衬底（擦除已烘进底图像素），引用 `baseImageRelativePath`；
 /// - 文本块浮动文本框（`wps:txbx`），内含**真实段落**（可编辑，FR-007）；
-/// - figure/barcode/artwork 复用**同一张底图** + `a:srcRect` 裁剪（每页 media 单图，FR-010）；
+/// - figure/barcode/artwork 复用**同一张净化底图** + `a:srcRect` 裁剪（每页 media 单图，FR-010）；
 /// - EMU 定位与 Vision y 翻转全部经 `PageLayoutMapper`（posOffset 误用 twips 的旧事故不再重演）。
 ///
 /// 这组测试改的是「Word 打开是否同构」——断言全部对着 document.xml 的具体数值，
@@ -55,10 +54,10 @@ struct DocxRestoredLayoutTests {
         #expect(DocxProbe.count(of: "</w:sectPr></w:pPr>", in: xml) == 0, "单页无需分节段落")
     }
 
-    // MARK: - 底图（behindDoc / 每页单图）
+    // MARK: - 净化底图（内联 / 每页单图）
 
-    @Test("底图 behindDoc 逐页归属，每页恰好一张 media")
-    func baseImageBehindDocSingleMediaPerPage() async throws {
+    @Test("净化底图内联逐页归属，每页恰好一张 media")
+    func baseImageInlineSingleMediaPerPage() async throws {
         let base1 = try RestoredBaseImage.writeWhite(width: 400, height: 800)
         let base2 = try RestoredBaseImage.writeWhite(width: 800, height: 400)
         defer {
@@ -72,16 +71,18 @@ struct DocxRestoredLayoutTests {
         let url = try await export(document, name: "base")
         defer { try? FileManager.default.removeItem(at: url) }
 
-        // 每页恰好一张底图 media（JPEG 保持原扩展名，Content Types 得能认）
+        // 每页恰好一张底图 media（净化底图统一编码 JPEG，Content Types 得能认）
         let entries = MiniZip.entries(from: try Data(contentsOf: url))
         let media = entries.keys.filter { $0.hasPrefix("word/media/") }
         #expect(media.count == 2, "每页一张底图：\(media)")
-        #expect(media.allSatisfy { $0.hasSuffix(".jpg") }, "底图 media 应保持原格式扩展名：\(media)")
+        #expect(media.allSatisfy { $0.hasSuffix(".jpg") }, "净化底图应为 JPEG：\(media)")
 
         let xml = try DocxProbe.documentXML(from: url)
-        // 每页一个 behindDoc 底图衬底（旧 C 档把多页衬底全堆第 1 页的事故不许重演）；
-        // US5 起覆盖 shape / 保留区与底图同处 behindDoc 层，须按 BaseImage 锚点计数
-        #expect(baseAnchorCount(in: xml) == 2)
+        // 每页一个内联底图（旧 C 档把多页衬底全堆第 1 页的事故不许重演）；
+        // 锚定图在部分宿主渲染器不落图（docs/17 §2.2）→ 底图必须内联，不得再有
+        // anchored BaseImage。
+        #expect(inlineBaseCount(in: xml) == 2)
+        #expect(anchoredBaseCount(in: xml) == 0, "净化底图必须是内联图（锚定图宿主不画）")
         // 衬底铺满动态页：400×800px → 3_810_000×7_620_000 EMU；第二页横过来
         #expect(xml.contains(#"cx="3810000" cy="7620000""#))
         #expect(xml.contains(#"cx="7620000" cy="3810000""#))
@@ -116,11 +117,18 @@ struct DocxRestoredLayoutTests {
 
         // EMU 定位（posOffset 用 EMU，y 翻转经 PageLayoutMapper）：
         // bbox (0.1, 0.7, 0.5, 0.1) @ 400×800px 页
-        // posH = 0.1 × 3_810_000 = 381000；posV = (1 − 0.8) × 7_620_000 = 1524000
-        #expect(xml.contains(#"<wp:posOffset>381000</wp:posOffset>"#))
-        #expect(xml.contains(#"<wp:posOffset>1524000</wp:posOffset>"#))
-        // 文本框尺寸 = bbox 尺寸（0.5×3_810_000 × 0.1×7_620_000）
-        #expect(xml.contains(#"cx="1905000" cy="762000""#))
+        // 基础 posH = 0.1 × 3_810_000 = 381000；再叠加 WPS 文本校准偏移
+        // （LayoutTypography.restoredTextHorizontalOffsetRatio）；
+        // 基础 posV = (1 − 0.8) × 7_620_000 = 1524000，再减去垂直校准。
+        let calibrationX = Int((3_810_000 * LayoutTypography.restoredTextHorizontalOffsetRatio).rounded())
+        let calibrationY = Int((7_620_000 * LayoutTypography.restoredTextVerticalLiftRatio).rounded())
+        #expect(xml.contains("<wp:posOffset>\(381000 + calibrationX)</wp:posOffset>"))
+        #expect(xml.contains("<wp:posOffset>\(1524000 - calibrationY)</wp:posOffset>"))
+        // 文本框尺寸 = bbox 尺寸（0.5×3_810_000） + 高度吸收 0.3% 页高
+        // （`restoredPageXML` 的 contentExtra，防 WPS 按 shape 高度裁最后一行）。
+        let expectedHeight = 762000 + Int((7_620_000 * 0.003).rounded())
+        #expect(xml.contains(#"cx="1905000""#))
+        #expect(xml.contains(#"cy="\#(expectedHeight)""#))
     }
 
     // MARK: - srcRect 复用底图
@@ -167,31 +175,63 @@ struct DocxRestoredLayoutTests {
         )
     }
 
-    // MARK: - 覆盖矩形 shape
+    // MARK: - 净化底图（擦除烘焙）
 
-    @Test("覆盖矩形 shape：带底色填充、盖住文本区域")
-    func maskShapesCoverTextRegions() async throws {
-        let base = try RestoredBaseImage.writeWhite()
+    @Test("净化底图：原文字区域烘进像素，docx 不再发射 mask shape")
+    func bakedBaseErasesTextRegionWithoutMaskShape() async throws {
+        // 浅灰底 + 文字区深色块 + 擦除区外的对照组深色块：
+        // - 文字区（bbox + 1.5% 外扩）烘焙后应变回环带 median 浅灰；
+        // - 擦除区外的像素一个都不许动。
+        let background = UIColor(white: 0.92, alpha: 1)
+        let base = try RestoredBaseImage.writeBase(
+            width: 400,
+            height: 800,
+            background: background,
+            darkRects: [
+                // bbox (0.1, 0.7, 0.5, 0.1) @400×800 → 左上原点 (40,160,200,80)；
+                // 外扩 1.5% 后 (34,148,212,104)。深色块严格落在外扩区内。
+                CGRect(x: 36, y: 150, width: 202, height: 100),
+                // 对照组：远离文字区，烘焙后必须保持深色。
+                CGRect(x: 300, y: 400, width: 40, height: 40)
+            ],
+            darkColor: UIColor(white: 0.08, alpha: 1)
+        )
         defer { try? FileManager.default.removeItem(at: base) }
-        let document = ReconstructDocument(documentID: UUID(), title: "覆盖", pages: [
+        let document = ReconstructDocument(documentID: UUID(), title: "净化底图", pages: [
             makePage(
                 size: CGSize(width: 400, height: 800),
                 blocks: [textBlock("正文内容")],
                 baseURL: base
             )
         ])
-        let url = try await export(document, name: "mask")
+        let url = try await export(document, name: "baked")
         defer { try? FileManager.default.removeItem(at: url) }
-        let xml = try DocxProbe.documentXML(from: url)
 
-        // 覆盖 shape 带 solidFill（白底图 → 环带 median = FFFFFF）
-        #expect(xml.contains("<a:solidFill>"))
-        #expect(xml.contains(#"val="FFFFFF""#))
-        // 覆盖矩形 = bbox 外扩 1.5%（LayoutMaskBuilder.expansion）后映射：
-        // 0.1 − 0.015 = 0.085 → posH = 0.085 × 3_810_000 = 323850
-        #expect(xml.contains(#"<wp:posOffset>323850</wp:posOffset>"#))
-        // 文本框自身不填充（noFill），否则会盖住覆盖色
-        #expect(xml.contains("<a:noFill/>"))
+        let xml = try DocxProbe.documentXML(from: url)
+        // 1) 不再发射 mask shape（宿主渲染器不画形状 = 叠字根因，T021/G3'）
+        #expect(!xml.contains(#"name="Mask"#), "docx 不应再有 Mask shape")
+        #expect(!xml.contains("<a:solidFill>"), "擦除已烘进底图，不应再有 solidFill 覆盖层")
+        // 2) 文字仍走可编辑文本框（不得为了擦除退化成图片版）
+        #expect(xml.contains("<wps:txbx>"))
+        #expect(xml.contains("正文内容"))
+
+        // 3) media = 烘焙后的净化底图（重新编码，不是原文件原字节）
+        let entries = MiniZip.entries(from: try Data(contentsOf: url))
+        let media = try #require(
+            entries.first { $0.key.hasPrefix("word/media/") },
+            "缺少底图 media"
+        )
+        let original = try Data(contentsOf: base)
+        #expect(media.value != original, "底图 media 应是烘焙后的字节，不是原图原字节")
+
+        // 4) 擦除区被刷成环带 median 底色；区外像素原样
+        let center = try #require(pixelRGB(in: media.value, x: 140, y: 200))
+        #expect(isLight(center), "bbox 中心应被刷成环带底色，实际 \(center)")
+        // 外扩边带（x=36 在 bbox 左缘 40 之外、外扩左缘 34 之内）也必须净化
+        let expandedEdge = try #require(pixelRGB(in: media.value, x: 36, y: 200))
+        #expect(isLight(expandedEdge), "bbox 外扩 1.5% 的边带也应被净化，实际 \(expandedEdge)")
+        let control = try #require(pixelRGB(in: media.value, x: 320, y: 420))
+        #expect(isDark(control), "擦除区外的原像素不得被改，实际 \(control)")
     }
 
     // MARK: - 控制字符清洗（不回归）
@@ -259,18 +299,21 @@ struct DocxRestoredLayoutTests {
         let heightTwips = Int((emu.height / 635).rounded())
         #expect(xml.contains("w:w=\"\(widthTwips)\" w:h=\"\(heightTwips)\""), "sectPr 未随原图尺寸")
 
-        // ② 底图：每页恰一张 media，字节 = 底座原文件（jpg 不转 png）；
+        // ② 底图：每页恰一张 media = **净化底图**（擦除已烘进像素，JPEG 重编码）；
         //    figure 若有检出也只 srcRect 复用，不重复嵌图（FR-010 链路级验证）
         let media = entries.keys.filter { $0.hasPrefix("word/media/") }
         #expect(media.count == 1, "每页单图（保留区全靠 srcRect 复用）：\(media)")
-        #expect(media.allSatisfy { $0.hasSuffix(".jpg") }, "底图应保持原扩展名：\(media)")
+        #expect(media.allSatisfy { $0.hasSuffix(".jpg") }, "净化底图应为 JPEG：\(media)")
         let baseName = try #require(media.first)
+        let bakedData = try #require(entries[baseName])
         let baseData = try Data(contentsOf: image)
-        #expect(entries[baseName] == baseData, "底图 media 必须是 baseImageRelativePath 原文件的字节")
-        #expect(baseAnchorCount(in: xml) == 1, "底图衬底应恰好一个")
+        #expect(bakedData != baseData, "底图必须是烘焙后的净化底图，不能是原文件字节")
+        #expect(UIImage(data: bakedData) != nil, "净化底图必须是可解码的 JPEG")
+        #expect(inlineBaseCount(in: xml) == 1, "净化底图应为内联图")
+        #expect(anchoredBaseCount(in: xml) == 0, "净化底图不得再用锚定图（宿主渲染器不画）")
 
-        // ③ 结构：覆盖 shape + 表格 + 正文（可编辑文本框）
-        #expect(xml.contains("<a:solidFill>"), "覆盖 shape 缺失")
+        // ③ 结构：无 mask shape + 表格 + 正文（可编辑文本框）
+        #expect(!xml.contains(#"name="Mask"#), "docx 不应再有 Mask shape")
         #expect(xml.contains("<wps:txbx>"))
         #expect(xml.contains("<w:tbl>"), "表格内容丢了")
         #expect(xml.contains("1429"), "表格数值丢了")
@@ -287,8 +330,10 @@ struct DocxRestoredLayoutTests {
             }
         })
         let rect = map.rect(textBlock.bbox)
-        let expectedX = "<wp:posOffset>\(Int64(rect.minX.rounded()))</wp:posOffset>"
-        let expectedY = "<wp:posOffset>\(Int64(rect.minY.rounded()))</wp:posOffset>"
+        let calibrationX = emu.width * CGFloat(LayoutTypography.restoredTextHorizontalOffsetRatio)
+        let calibrationY = emu.height * CGFloat(LayoutTypography.restoredTextVerticalLiftRatio)
+        let expectedX = "<wp:posOffset>\(Int64((rect.minX + calibrationX).rounded()))</wp:posOffset>"
+        let expectedY = "<wp:posOffset>\(Int64((rect.minY - calibrationY).rounded()))</wp:posOffset>"
         #expect(xml.contains(expectedX), "文本框 posH 应等于预览映射输出 \(expectedX)")
         #expect(xml.contains(expectedY), "文本框 posV 应等于预览映射输出 \(expectedY)")
     }
@@ -392,8 +437,12 @@ struct DocxRestoredLayoutTests {
     }
 
     /// nutrition 夹具端到端（US5）：真实样张 parse 出的表格块在 `.restored` 导出里
-    /// 原位浮动 —— tblpX/tblpY 与 `PageLayoutMapper` 对同一 bbox 的输出逐位相等。
-    @Test("nutrition 夹具端到端：表格原位浮动，tblpPr = 预览映射输出")
+    /// 原位浮动 —— 表格坐标与 `PageLayoutMapper` 对同一 bbox 的输出逐位相等。
+    ///
+    /// 该页有正文 + 表格：表格走**浮动文本框（TableBox）**包装，保证 WPS 在
+    /// 「内联底图 + 页高承载段落」下仍是一页（WPS 会把 body 级 `w:tbl` 推到下一页）；
+    /// 纯表格页仍走原生 `w:tblpPr`（`tablesFloatInPlaceViaTblpPr` 守护）。
+    @Test("nutrition 夹具端到端：正文页表格原位浮动，TableBox = 预览映射输出")
     func nutritionFixtureTableFloatsInPlace() async throws {
         let image = try ReconstructSampleImage.nutritionMango()
         let fixture = ReconstructV2Fixtures.nutritionMango
@@ -408,11 +457,17 @@ struct DocxRestoredLayoutTests {
         let tableBlock = try #require(page.blocks.first { $0.kind == .table && $0.table?.rows.isEmpty == false })
         let emu = PageLayoutMapper.emuPageSize(for: page.size)
         let rect = PageLayoutMapper.map(pageSize: page.size, targetSize: emu).rect(tableBlock.bbox)
-        let expectedX = "w:tblpX=\"\(Int((rect.minX / 635).rounded()))\""
-        let expectedY = "w:tblpY=\"\(Int((rect.minY / 635).rounded()))\""
-        #expect(xml.contains("<w:tblpPr"), "夹具表格没有原生浮动定位")
-        #expect(xml.contains(expectedX), "tblpX 应等于映射输出：\(expectedX)")
-        #expect(xml.contains(expectedY), "tblpY 应等于映射输出：\(expectedY)")
+        let tableBox = try #require(xml.range(of: #"name="TableBox"#), "正文页表格应进 TableBox")
+        let anchor = try #require(
+            xml.range(of: "<wp:anchor", options: .backwards, range: xml.startIndex..<tableBox.lowerBound),
+            "TableBox 缺少锚点"
+        )
+        let anchorPrefix = xml[anchor.lowerBound..<tableBox.lowerBound]
+        let expectedX = "<wp:posOffset>\(Int(rect.minX.rounded()))</wp:posOffset>"
+        let expectedY = "<wp:posOffset>\(Int(rect.minY.rounded()))</wp:posOffset>"
+        #expect(anchorPrefix.contains(expectedX), "TableBox 水平位置应等于映射输出：\(expectedX)")
+        #expect(anchorPrefix.contains(expectedY), "TableBox 垂直位置应等于映射输出：\(expectedY)")
+        #expect(!xml.contains("<w:tblpPr"), "TableBox 内表格不应再带 tblpPr（定位交给文本框锚点）")
         // 行数保真（表头 + 数据行 ≥ 6）且数值在
         #expect(DocxProbe.count(of: "<w:tr>", in: xml) >= 6, "表格行数不足")
         #expect(xml.contains("1429"))
@@ -557,7 +612,9 @@ struct DocxRestoredLayoutTests {
         let paragraphCount = DocxProbe.count(of: "<w:p>", in: content)
         #expect(paragraphCount == 2, "两行应两段，实际 \(paragraphCount)")
         #expect(content.contains(#"w:before="0" w:after="0" w:line="240" w:lineRule="exact""#), "L1 行高 0.02×600pt×20 = 240 twips exact")
-        #expect(content.contains(#"w:before="0" w:after="0" w:line="300" w:lineRule="exact""#), "L2 行高 0.025×600pt×20 = 300 twips exact")
+        // L2 与上一行有 0.01 页高正间隙 → w:before = 0.01×600pt×20 = 120 twips；
+        // 行高仍是 0.025×600pt×20 = 300 twips exact。
+        #expect(content.contains(#"w:before="120" w:after="0" w:line="300" w:lineRule="exact""#), "L2 正间隙 120 + 行高 300 twips exact")
         #expect(content.contains(#"<w:ind w:left="300"/>"#), "L2 行首偏移 0.05×6000 dxa = 300")
         #expect(content.contains("第一行") && content.contains("第二行"))
         // 每行一段后不应再出现 w:br（行间由段落分隔，不再用软换行）
@@ -629,21 +686,18 @@ struct DocxRestoredLayoutTests {
 
         // w:line exact 行距维持逐行实测（0.030×600×20=360、0.020×600×20=240）
         #expect(content.contains(#"w:before="0" w:after="0" w:line="360" w:lineRule="exact""#), "L1 行高应保持实测 360 twips")
-        #expect(content.contains(#"w:before="0" w:after="0" w:line="240" w:lineRule="exact""#), "L2 行高应保持实测 240 twips")
+        #expect(content.contains(#"w:before="120" w:after="0" w:line="240" w:lineRule="exact""#), "L2 正间隙 120 + 行高 240 twips exact")
     }
 
     /// T012 导出通路（FR-004 出口侧证据，补 SC-006 覆盖）：带 `segments` 的行按
-    /// 分段多 run 渲染——宽空隙（≥ 0.6 字符宽）插**下划线空格 run**
-    /// （`w:u w:val="single"` + `gapPlaceholderSpaces` 个空格 + preserve，
-    /// Word 中可见可编辑），窄空隙用普通单空格 run 连接；空格 run 与文本 run
-    /// 同字号（一行一档，T007）。
+    /// 分段多 run 渲染——宽空隙（≥ 2% 页宽）用绝对 `w:tab` 定位到下一段，
+    /// 窄空隙用普通单空格 run 连接；run 与文本 run 同字号（一行一档，T007）。
     ///
     /// @ 400×800px 页（页宽 300pt、页高 600pt），行高 0.02 → 字号 12.6pt：
-    /// - L1 段 [Name(0,0.1), Date(0.5,0.1)]：空隙 0.4 → 120pt ≥ 0.6×12.6=7.56pt
-    ///   → round(120 ÷ (0.25×12.6)) = **38** 个下划线空格；
-    /// - L2 段 [A(0,0.1), B(0.11,0.1)]：空隙 0.01 → 3pt < 7.56pt → 普通单空格。
-    @Test("分段行导出：宽空隙下划线空格 run + 窄空隙普通空格 run")
-    func segmentGapsRenderUnderlinePlaceholderRuns() async throws {
+    /// - L1 段 [Name(0,0.1), Date(0.5,0.1)]：空隙 0.4 → 120pt → tab；
+    /// - L2 段 [A(0,0.1), B(0.11,0.1)]：空隙 0.01 → 3pt → 普通单空格。
+    @Test("分段行导出：宽空隙绝对 tab + 窄空隙普通空格 run")
+    func segmentGapsRenderTabAndPlainSpaceRuns() async throws {
         let block = ReconstructBlock(
             kind: .paragraph,
             bbox: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.1),
@@ -679,15 +733,17 @@ struct DocxRestoredLayoutTests {
         for text in ["Name", "Date", "A", "B"] {
             #expect(content.contains(">\(text)</w:t>"), "分段文本 run 缺失：\(text)")
         }
-        // 宽空隙：恰一个下划线空格 run（L1 连接符），38 个空格 + preserve
+        // 宽空隙（≥ 2% 页宽）= 栏间/格间 gutter，用绝对 tab 定位到下一段；
+        // 下划线空格在 WPS 会因累计宽度超框整行回绕（双栏表头只剩一行可见），
+        // 不能再用空格近似宽 gutter（2026-10-23 WPS 真实页回归后的契约）。
         #expect(
-            DocxProbe.count(of: #"<w:u w:val="single"/>"#, in: content) == 1,
-            "只有宽空隙（≥ 0.6 字符宽）该画下划线"
+            DocxProbe.count(of: "<w:tab/>", in: content) == 1,
+            "宽空隙应恰有一个绝对 tab 连接符"
         )
-        let underlinedBlanks = "<w:t xml:space=\"preserve\">"
-            + String(repeating: " ", count: 38)
-            + "</w:t>"
-        #expect(content.contains(underlinedBlanks), "宽空隙应为 38 个下划线空格（120pt ÷ 3.15pt）")
+        #expect(
+            DocxProbe.count(of: #"<w:u w:val="single"/>"#, in: content) == 0,
+            "宽 gutter 不再用下划线空格（WPS 会回绕）"
+        )
         // 窄空隙：普通单空格 run 连接（无下划线变体）
         let plainSpace = "<w:t xml:space=\"preserve\"> </w:t>"
         #expect(content.contains(plainSpace), "窄空隙应用普通单空格 run 连接")
@@ -957,16 +1013,63 @@ struct DocxRestoredLayoutTests {
         return result
     }
 
-    /// 底图锚点计数：按 `<wp:anchor` 切片后过滤 `behindDoc="1"` 且 docPr 名为
-    /// BaseImage 的片段 —— US5 起覆盖 shape / srcRect 保留区与底图同处 behindDoc
-    /// 层（原生浮动表格在文本层之下、文本框之上），裸计 `behindDoc="1"` 会把它们
-    /// 误算进底图数。
-    private func baseAnchorCount(in xml: String) -> Int {
-        xml
-            .components(separatedBy: "<wp:anchor")
-            .dropFirst()
-            .filter { $0.contains(#"behindDoc="1""#) && $0.contains(#"name="BaseImage"#) }
-            .count
+    /// 内联底图计数：按 `</wp:inline>` 分块后取最后出现的 `<wp:inline` 片段，
+    /// 只看该 drawing 自己的 docPr（避免把下一块的内容算进来）。
+    private func inlineBaseCount(in xml: String) -> Int {
+        xml.components(separatedBy: "</wp:inline>").filter { chunk in
+            guard let start = chunk.range(of: "<wp:inline", options: .backwards) else {
+                return false
+            }
+            return chunk[start.lowerBound...].contains(#"name="BaseImage"#)
+        }.count
+    }
+
+    /// 锚定底图计数（旧路径）：按 `</wp:anchor>` 分块后取最后出现的 `<wp:anchor`
+    /// 片段。净化底图必须内联（锚定图/形状在宿主渲染器不落图），此计数应恒为 0。
+    private func anchoredBaseCount(in xml: String) -> Int {
+        xml.components(separatedBy: "</wp:anchor>").filter { chunk in
+            guard let start = chunk.range(of: "<wp:anchor", options: .backwards) else {
+                return false
+            }
+            return chunk[start.lowerBound...].contains(#"name="BaseImage"#)
+        }.count
+    }
+
+    /// 读解码后图片在**左上原点**坐标 `(x, y)` 处的 RGB（0~255）。
+    /// 整图一次性画进 RGBA 位图再取样：JPEG/色彩空间差异由 CG 统一。
+    private func pixelRGB(in data: Data, x: Int, y: Int) -> (r: Int, g: Int, b: Int)? {
+        guard let image = UIImage(data: data)?.cgImage else { return nil }
+        let width = image.width
+        let height = image.height
+        guard x >= 0, x < width, y >= 0, y < height else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return nil }
+        // 位图缓冲首行 = 图片顶行（与 CGImage 的行序一致）：左上原点直接取 y。
+        let index = (y * width + x) * 4
+        return (Int(pixels[index]), Int(pixels[index + 1]), Int(pixels[index + 2]))
+    }
+
+    private func isLight(_ color: (r: Int, g: Int, b: Int)) -> Bool {
+        color.r > 150 && color.g > 150 && color.b > 150
+    }
+
+    private func isDark(_ color: (r: Int, g: Int, b: Int)) -> Bool {
+        color.r < 100 && color.g < 100 && color.b < 100
     }
 }
 
@@ -980,16 +1083,38 @@ private struct FixtureRecognizer: TextRecognizing {
     }
 }
 
-/// 纯白 JPEG 底座。LayoutMaskBuilder 的环带 median 采样 → (255,255,255)，
-/// 覆盖 shape 的填充色断言（FFFFFF）得以钉死。
+/// 纯白 JPEG 底座。`LayoutMaskBuilder` 的环带 median 采样 → (255,255,255)，
+/// 净化底图的烘焙底色断言（浅色）得以钉死。
 private enum RestoredBaseImage {
     static func writeWhite(width: Int = 400, height: Int = 800) throws -> URL {
+        try writeBase(
+            width: width,
+            height: height,
+            background: .white,
+            darkRects: [],
+            darkColor: .black
+        )
+    }
+
+    /// 指定底色的 JPEG 底座，可画若干深色块（模拟原文字迹）。坐标用**左上原点**，
+    /// 与 `LayoutMaskBuilder` 的 y 翻转互为镜像（测试里按此换算）。
+    static func writeBase(
+        width: Int = 400,
+        height: Int = 800,
+        background: UIColor,
+        darkRects: [CGRect],
+        darkColor: UIColor
+    ) throws -> URL {
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
         let image = renderer.image { context in
-            UIColor.white.setFill()
+            background.setFill()
             context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            darkColor.setFill()
+            for rect in darkRects {
+                context.fill(rect)
+            }
         }
         guard let data = image.jpegData(compressionQuality: 0.9) else {
             throw ZhixiaError.exportFailed

@@ -114,7 +114,7 @@ SSIM：
 |---|---|---|---|
 | **G1** | 页面尺寸回到正常纸面（图片版） | ✅ **已落地**（`fittedPageEMU`） | 导出 docx 的 `w:pgSz` ≈ A4 贴合尺寸 |
 | **G1'** | 同上，但**可编辑档** | ⏳ 下一轮（改动 17 条既有结构断言：`DocxRestoredLayoutTests` 16 + `LineTypographyPerLineTests` 1，它们钉住了「页面 = 像素×96DPI」） | 同上 + 翻转清单逐条记录 |
-| **G3'** | **叠字从根上消失**：把「擦除原文字」**烘进底图**（App 生成「净化底图」：把文字行带刷成底色后作为背景图嵌入），**不再依赖 mask shape 被渲染** | 下一轮（R3） | 渲染图目视无叠字 + 差分图取证；**不依赖渲染器是否支持 shape** |
+| **G3'** | **叠字从根上消失**：把「擦除原文字」**烘进底图**（App 生成「净化底图」：把文字行带刷成底色后作为背景图嵌入），**不再依赖 mask shape 被渲染** | ✅ **已落地**（R3，2026-10-22）：`DocxExportService.bakedJPEGData` 把 `LayoutMaskBuilder` 净化矩形刷进底图像素 → 每页唯一 JPEG media；底图改内联铺页、不再发 `wps:wsp` mask | QuickLook 代理实测 **0.961 / 0.965**；真实 WPS 收尾 **0.906 / 0.907**（2026-10-24，见 §八）；渲染图目视无叠字 |
 | **G5'** | **字体度量对齐**：文本框字体与预览同源（或嵌入字体/用度量可预测的字体），消除替换字体的行距漂移 | 下一轮（R4） | 行距偏差 ≤ 10% |
 | **G2** | 铺一层可信渲染器 | LibreOffice（headless → PDF → PNG）进 `Tools/word-fidelity/`；`check.sh` 支持 `--renderer libreoffice` | 能稳定渲染 `.restored` 且**底图可见**（L0 SSIM ≥ 0.85） |
 | **G3** | 叠字归零 | 浮动文本框必须**盖住**原文字区域：① 用 OCR 行级 bbox（不是块级 bbox）做擦除区；② 文本框的擦除底色与遮罩同源 | 叠字率 ≈ 0（渲染图目视 + 差分图取证） |
@@ -175,5 +175,50 @@ SSIM：
 | QuickLook 不画锚定图/shape | L0 变体渲染图 = 空白页（`build/word-fidelity/` 留档） |
 | 图片版达标 | `make word-fidelity` → 0.914 / 0.919 |
 | **模型保真、坏在导出层** | `make word-fidelity` 的「SSIM(导出模型) / 导出层损失」：可编辑档 0.984 → 0.767（损失 0.218）vs 图片版 0.997 → 0.914（0.083） |
+| **G3' 达标：擦除烘进底图 + 内联底图** | `make editable-fidelity` → 可编辑档 **0.961 / 0.965**（旧路径 0.767/0.773）；渲染图 `build/word-fidelity/out-restored-rendered.png` 目视无叠字；`DocxRestoredLayoutTests` 21/21、`make test` 449 全绿 |
 | 叠字/错位的两个机制 | ① `wps:wsp` 遮罩不被渲染（L1==L0）；② 文本框字体替换导致行距漂移 |
 | 巨页问题（已修） | `DocxExportService.restoredPageSpaces` → `fittedPageEMU` |
+
+---
+
+## 八、真机收尾（2026-10-24 / 25）
+
+### 8.1 真机差异根因
+
+同一张 `IMG_7544.jpg`，iPhone 13（iOS 27.0.1）的 `RecognizeDocumentsRequest`
+把表格识别成 **3 列 × 4 行**，模拟器（iPhone 18 Pro / iOS 27.0）是 **2 列 × 5 行**：
+
+- 右列被 Vision 从中间劈成两列（列框首尾相接，没有真实 gutter）；
+- 第 3/4 行被并成一行，单元格里出现 `3 ... 4 ...`；
+- 右上题头相邻两行因负行距、minY 差小于旧“同行阈值”，被按 minX 排序成上下颠倒；
+- 右栏续行被 `indentJump` 拆成独立块。
+
+### 8.2 修复
+
+- 新增 `TableStructureRepair`：
+  - 列框无间隙 + OCR 行跨过列边界（且正文区也有跨栏）→ 合并假列；
+  - 用 OCR 行按 y/x 重建单元格，而不是拼接被劈开的 `cell.text`；
+  - 行高 >1.3×中位且一列出现多个行首编号 → 拆回逻辑行。
+- `OnDeviceReadingOrder.clusterRows` 改为按视觉中心自上而下排序；`clusterParagraphs`
+  只在上一行未覆盖新行左缘时按缩进换段。
+- 文本层增加统一 WPS/Word 校准偏移（`LayoutTypography.restoredTextHorizontalOffsetRatio`
+  / `restoredTextVerticalLiftRatio`），预览与 DOCX 共用。
+- 图片底图保持 2200px 长边、JPEG 1.0；表格仍走原生 `w:tbl` + TableBox。
+
+### 8.3 最终真实 WPS 数字
+
+| 场景 | WPS 渲染 vs 源页 | 证据 |
+|---|---:|---|
+| 模拟器 `original-base.jpg` | **0.906224** | `build/word-fidelity/realbase-wps-final/out-restored-realbase-wps.png` |
+| iPhone 13 rendered 页 | **0.907581** | `build/word-fidelity/device-repro-wps/device-repro-wps.png` |
+
+两口径均 ≥0.90。此前的 0.961/0.965 是 **QuickLook 代理**，不是 WPS 真实验收；
+`docs/18` 已改为最终状态，避免把代理分数当门限。
+
+### 8.4 残留问题（已记录，不在本轮继续）
+
+- 背景图原字与可编辑字未严格重合 → 拍摄畸变/折痕造成的重影。用户决定**暂缓**，
+  下一阶段先做页面预处理（裁掉页外、去折痕、页边拉直），见
+  [`docs/19-page-preprocess-plan.md`](19-page-preprocess-plan.md) 与 `TODO.md`。
+- 粗体行（Articles wanted / FUN ACTIVITIES）仍为常规字重；像素墨量推断误判率高，暂缓。
+- 表格左/上内边距、右上题头顶部裁切、`Exam advice` 位置仍有小偏差。

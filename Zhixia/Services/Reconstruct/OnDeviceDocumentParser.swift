@@ -36,7 +36,8 @@ actor OnDeviceDocumentParser: DocumentParsing {
 
     func parse(imageURL: URL, pageID: UUID, scene: ReconstructScene) async throws -> ReconstructPage {
         let image = loadCGImage(at: imageURL)
-        let inputs = try await resolveInputs(imageURL: imageURL, pageID: pageID, image: image)
+        let resolvedInputs = try await resolveInputs(imageURL: imageURL, pageID: pageID, image: image)
+        let inputs = Self.normalizingListMarkers(resolvedInputs)
         let barcodes = inputs.barcodes
         let resolved = scene == .auto
             ? ReconstructSceneRouter.route(text: inputs.joinedText, barcodeCount: barcodes.count)
@@ -125,6 +126,7 @@ actor OnDeviceDocumentParser: DocumentParsing {
                     layout: layout ?? LayoutAnalyzer.zeroLayout(),
                     occupied: occupied
                 )) + inkDetection.figures
+
             )
             // artwork 判定优先（单份表示，plan D4）：同一区域同时是 figure 候选与
             // 乱码判定区域时只留 artwork —— 乱码行已剔除、原像素靠底座透出，
@@ -503,6 +505,29 @@ actor OnDeviceDocumentParser: DocumentParsing {
             barcodes: barcodes,
             source: .geometric
         )
+    }
+
+    /// OCR 常把中文项目符号「•」读成句号「。」。行首的「。」后面直接跟汉字时，
+    /// 它几乎不可能是句末标点——按项目符号还原，避免在渲染层出现一个孤零零的
+    /// 全角句号 + 巨大缩进（真机/模拟器样张的「仔细读说明」「注意考试…」两行）。
+    private static func normalizingListMarkers(_ page: StructuredDocumentPage) -> StructuredDocumentPage {
+        var normalized = page
+        normalized.lines = page.lines.map { line in
+            var copy = line
+            copy.text = normalizeListMarker(line.text)
+            return copy
+        }
+        return normalized
+    }
+
+    private static func normalizeListMarker(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("。") else { return text }
+        let rest = trimmed.dropFirst()
+        guard let first = rest.unicodeScalars.first,
+              (0x4E00...0x9FFF).contains(first.value)
+        else { return text }
+        return "• " + rest
     }
 
     /// 把 OCR 行分成「干净的正文行」和「降级为链接/条码的行」。

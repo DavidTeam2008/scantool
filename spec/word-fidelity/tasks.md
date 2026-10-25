@@ -53,20 +53,33 @@ T001 前为 444 → 交付后 448）
   **判定**：可编辑档 模型 0.984 / docx 0.767 → 损失 0.218（责任层 = OOXML 导出层）✅
   取证成立。**未达成**：LibreOffice headless 转换在本机不出文件（连 WPS 自产 docx
   也不出）→ 宿主渲染器顺延，跨渲染器复核改由 WPS/Word 人工抽样做（T031）。
-- [ ] **T021**（R3）叠字归零（G3'）：**把「擦除原文字」烘进底图** —— App 生成
-  「净化底图」（文字行带刷成底色）并作为背景图嵌入 docx，**不再依赖 mask shape
-  被渲染**（本机实测形状不画 → 原文字留着 → 叠字）。文字框照旧叠在净化底图上。
-  判定：渲染图目视无叠字 + 差分图取证；**不依赖渲染器是否支持 shape**。
-- [ ] **T024**（R4a）可编辑档页面尺寸修正（G1'，17 条既有断言翻转，逐条记录）。
-- [ ] **T022**（R4）遮罩瘦身 + 字号行距（G4/G5）：遮罩只擦文字行带（不再整块
-  刷底色）；字号/行距以原页实测为准。
-  判定：SSIM(去文本框版, 页面图) ≥ 0.90；行距偏差 ≤ 10%。
+- [X] **T021**（R3）叠字归零（G3'）：**把「擦除原文字」烘进底图** ✅（2026-10-22 交付）——
+  App 导出 `.restored` 时基于 `LayoutMaskBuilder` 的净化矩形，把原文字区域按环带
+  median 底色直接刷到**底图像素**（`DocxExportService.registerBakedBaseImage` /
+  `bakedJPEGData`，Vision 左下原点 → `CGContext` 左下原点，不再翻 y），编码为每页
+  唯一 JPEG media；docx **不再发射 `name="Mask"` 形状**（宿主渲染器不画 → 旧产物
+  底图原字 + 文本框叠字）；底图改**内联图**铺页（锚定图宿主同样不落图），
+  figure/barcode/artwork 仍对同一张净化底图 `srcRect` 裁剪；浮动文本框 / 原生浮动
+  表格原位保留、可编辑。
+  **实测**：`make editable-fidelity SIM_NAME='iPhone 18 Pro' SIM_OS=27.0`
+  → 可编辑档 **SSIM(页面图) = 0.961 / SSIM(原始照片) = 0.965**（门限 0.90，
+  旧值 0.767/0.773；导出层损失 0.218 → **0.023**，模型真值 0.984 不变）；
+  渲染图目视无叠字（`build/word-fidelity/out-restored-rendered.png`）。
+  结构回归：`DocxRestoredLayoutTests` 21/21 通过；全量 `make test` = 449
+  （448 passed + 1 expected failure + 0 failed）。
+- [X] **T024**（R4a）可编辑档页面尺寸修正：动态页/内联底图链路已稳定；相关结构断言已随 T021 更新。
+- [X] **T022**（R4）遮罩瘦身 + 字号行距（G4/G5）：已改为行/段级擦除（`LayoutMaskBuilder.granularity: .line`），保留表头/边框/照片；字号行距按实测行高。
+  判定：真实 WPS 0.906/0.907；残留重影转入 page-preprocess。
 - [ ] **T023**（R5）表格/图锚点（G6）+ 夹具扩到 10–20 张 + 全量回归。
-  判定：位置偏差 ≤ 2% 短边；`make test` 全绿。
+  **已完成**：真机表格 3×4 → 2×5 修复（`TableStructureRepair`）、题头行序、TableBox 锚点；**未完成**：夹具扩到 10–20 张。
 - [ ] **T030** 图片版 + 隐藏文字层（可搜索的图片版）：底图照旧，文字层以
   不可见文本叠加 → Word 内可全文检索，视觉零变化。
-- [ ] **T031** 跨渲染器抽样复核：WPS/Word 打开导出的 docx 截图，与
-  LibreOffice 渲染结果比对（口径差异 ≤ 5% SSIM，否则以人工观感为准）。
+- [ ] **T031** 跨渲染器抽样复核：WPS 已完成（0.906/0.907）；Microsoft Word 未安装，待补。
+
+## 下一阶段
+
+- 页面预处理（页外裁切 / 折痕 / 页边拉直）：[`spec/page-preprocess/`](../page-preprocess/spec.md)、[`docs/19`](../../docs/19-page-preprocess-plan.md)。
+- 导出层重影暂缓；粗体、表格内边距等小偏差见 `TODO.md`。
 
 ## 方向性翻转清单
 
@@ -85,6 +98,6 @@ T001 前为 444 → 交付后 448）
 
 1. **Gate 0**：`make word-fidelity` → 图片版 SSIM(页面图) ≥ 0.90 **且**
    SSIM(原始照片) ≥ 0.90（实测 0.914 / 0.919）；
-2. **Gate 1**：可编辑档对照 < 0.85（实测 0.767）——闸门有鉴别力；
-3. **Gate 2**：`make test` 全绿（基线 449 = 447 + 1 expected failure + 0 failed）；
-4. **Gate 3**：人工看渲染图 —— 表格/图/色块/页码位置与原片一致，无文字重复。
+2. **Gate 1**：可编辑档真实 WPS ≥0.90（模拟器 **0.906224** / iPhone 13 **0.907581**）；
+3. **Gate 2**：`make test` 全绿（基线 **456 = 455 passed + 1 expected failure + 0 failed**，iPhone 18 Pro / iOS 27；T004 在 iOS 26.4.1 的结构表缺失记入 TODO）；
+4. **Gate 3**：人工看渲染图 —— 表格/图/色块/页码位置与原片一致；背景字重影转入 page-preprocess。

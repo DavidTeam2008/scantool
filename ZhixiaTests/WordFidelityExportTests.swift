@@ -105,6 +105,37 @@ struct WordFidelityExportTests {
         )
     }
 
+
+    /// 真 OCR 文档（**不是** `FixedLineRecognizer` 的单行夹具）：走 App 的
+    /// `VisionTextRecognizer` + iOS 26 `VisionDocumentStructureRecognizer`，
+    /// 与真机「相册导入 → 版面还原」同一识别链路。用于钉住真实字号/表格/遮罩，
+    /// 防止自动门限被单行假夹具的 0.96 误判为通过。
+    static func makeRealDocument(fixture: Fixture) async throws -> ReconstructDocument {
+        let parser = OnDeviceDocumentParser(
+            recognizer: VisionTextRecognizer(),
+            structureRecognizer: VisionDocumentStructureRecognizer()
+        )
+        let page = try await parser.parse(
+            imageURL: fixture.pageImageURL,
+            pageID: UUID(),
+            scene: .auto
+        )
+        return ReconstructDocument(
+            documentID: UUID(),
+            title: "word-fidelity-real",
+            pages: [
+                ReconstructPage(
+                    pageID: page.pageID,
+                    size: fixture.pixelSize,
+                    scene: page.scene,
+                    usedCloud: false,
+                    blocks: page.blocks,
+                    baseImageRelativePath: fixture.pageImageURL.path
+                )
+            ]
+        )
+    }
+
     @Test("T001 静帧检测不裁到页面里的子框（给页面框或整图，绝不给表格/底边条）")
     func stillDetectionNeverCropsToSubRegion() async throws {
         let fixture = try await Self.makeFixture()
@@ -196,6 +227,115 @@ struct WordFidelityExportTests {
         )
         renderer.scale = 1
         return renderer.uiImage ?? UIImage()
+    }
+
+
+    @Test("T004 真 OCR 回归：真实样张导出可编辑档（供宿主 WPS/QuickLook 比对）")
+    func realOCRExportArtifact() async throws {
+        let fixture = try await Self.makeFixture()
+        let document = try await Self.makeRealDocument(fixture: fixture)
+        let page = try #require(document.pages.first)
+        let kinds = page.blocks.map { "\($0.kind)" }.joined(separator: ",")
+        let structure = await VisionDocumentStructureRecognizer().recognize(
+            imageURL: fixture.pageImageURL,
+            pageID: UUID()
+        )
+        #expect(
+            page.blocks.contains { $0.kind == .table },
+            "真 OCR 应识别出表格；blocks=[\(kinds)] structureTables=\(structure?.tables.count ?? -1) structureLines=\(structure?.lines.count ?? -1)"
+        )
+        let table = try #require(page.blocks.first { $0.kind == .table }?.table)
+        #expect(table.rows.count >= 2, "真 OCR 表格应有至少两行")
+        #expect(
+            page.blocks.contains { !$0.text.isEmpty && $0.kind != .table },
+            "真 OCR 应识别出正文块"
+        )
+        let url = try await DocxExportService().makeDocx(
+            document,
+            fileName: "word-fidelity-restored-real.docx",
+            tier: .restored
+        )
+        let destination = Self.outputDirectory.appending(path: "out-restored-real.docx")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: url, to: destination)
+        let xml = try DocxProbe.documentXML(from: destination)
+        #expect(xml.contains("TableBox"), "正文页表格应进 TableBox（WPS 单页约束）")
+        #expect(xml.contains("textAlignment w:val=\"center\""), "底图承载段应带 textAlignment=center")
+    }
+
+
+    @Test("T005 真实 UI 底图回归：用验收产物 original-base.jpg 重跑结构识别")
+    func realUIBaseExportArtifact() async throws {
+        let base = Self.repoRoot.appending(path: "build/word-fidelity/experiments/acceptance-media/original-base.jpg")
+        guard FileManager.default.fileExists(atPath: base.path),
+              let image = UIImage(contentsOfFile: base.path) else {
+            Issue.record("缺少真实 UI 底图：\(base.path)")
+            return
+        }
+        let parser = OnDeviceDocumentParser(
+            recognizer: VisionTextRecognizer(),
+            structureRecognizer: VisionDocumentStructureRecognizer()
+        )
+        let page = try await parser.parse(imageURL: base, pageID: UUID(), scene: .auto)
+        let kinds = page.blocks.map { "\($0.kind)" }.joined(separator: ",")
+        let debugURL = Self.outputDirectory.appending(path: "realbase-page.json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(page) {
+            try? data.write(to: debugURL)
+        }
+        if let cg = image.cgImage {
+            let mask = LayoutMaskBuilder.build(
+                blocks: page.restoredBlocks ?? page.blocks,
+                baseImage: cg,
+                granularity: .line
+            )
+            struct FillDump: Encodable {
+                let x: Double
+                let y: Double
+                let width: Double
+                let height: Double
+                let red: UInt8
+                let green: UInt8
+                let blue: UInt8
+            }
+            let fills = mask.fills.map {
+                FillDump(
+                    x: $0.rect.minX, y: $0.rect.minY,
+                    width: $0.rect.width, height: $0.rect.height,
+                    red: $0.red, green: $0.green, blue: $0.blue
+                )
+            }
+            if let data = try? encoder.encode(fills) {
+                try? data.write(to: Self.outputDirectory.appending(path: "realbase-mask-line.json"))
+            }
+        }
+        let table = page.blocks.first { $0.kind == .table && $0.table?.rows.isEmpty == false }
+        #expect(table != nil, "真实 UI 底图应识别出表格；blocks=[\(kinds)]")
+        let document = ReconstructDocument(
+            documentID: UUID(),
+            title: "word-fidelity-realbase",
+            pages: [
+                ReconstructPage(
+                    pageID: page.pageID,
+                    size: image.size,
+                    scene: page.scene,
+                    usedCloud: false,
+                    blocks: page.blocks,
+                    layout: page.layout,
+                    baseImageRelativePath: base.path,
+                    restoredBlocks: page.restoredBlocks
+                )
+            ]
+        )
+        let url = try await DocxExportService().makeDocx(
+            document,
+            fileName: "word-fidelity-restored-realbase.docx",
+            tier: .restored
+        )
+        let destination = Self.outputDirectory.appending(path: "out-restored-realbase.docx")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: url, to: destination)
     }
 
     @Test("T003 端到端产物落盘（供 make word-fidelity 渲染比对）")

@@ -421,7 +421,10 @@ enum RegionLayoutEngine {
     // MARK: 管线 3：溢出阶梯（plan D6 / FR-006）
 
     /// 阶梯拟合容差（pt）：估算与区域的浮点尘埃不触发下一级阶梯。
-    private static let overflowFitEpsilon: Double = 1e-6
+    /// OCR 行框/块框在归一化坐标里各自由不同观测取整，Σ(行高+行距) 与块高
+    /// 常有 0.01~0.5pt 的合法差；1e-6 会让「本来装得下」的真实页整块缩字
+    /// （真实 UI 底图 Read/Articles/Exercise 4 三块被压 6%~17% 的根因）。
+    private static let overflowFitEpsilon: Double = 1.0
     /// 比例缩放迭代上限：估算含换行分段（分段数随缩放单调不增），逐次逼近必收敛。
     private static let overflowShrinkMaxIterations = 8
 
