@@ -44,6 +44,21 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var foldTrimSource: String?
     /// 折页裁切会丢弃的左侧文字面积比例（相对全部文字包围盒）。
     var foldTrimTextLossRatio: Double?
+    /// P0.1 裁切候选来源（`content_envelope` / `paper_envelope` / `fold_trim` /
+    /// `content_bounds` / `page_left_inset` / `detected` / `proposed`）。
+    var cropSource: String? = nil
+    /// P0.1 纸张边界（归一化，左上原点）；nil 表示没有可靠候选。
+    var paperEnvelope: QuadPayload? = nil
+    /// P0.1 纸内强内容包络；nil 表示没有可靠内容。
+    var contentEnvelope: QuadPayload? = nil
+    /// P0.1 候选外侧仍像纸面的像素比例；用于判断是否需要 refine。
+    var envelopeBackgroundResidual: Double? = nil
+    /// P0.1 候选内的文字包围盒覆盖率；<1 表示候选可能切到文字。
+    var envelopeTextCoverage: Double? = nil
+    /// P0.1 是否执行了第二次几何 refine。
+    var envelopeRefineApplied: Bool? = nil
+    /// P0.1 候选未采用的原因（`too_large` / `too_small` / `degenerate` / `no_envelope`）。
+    var envelopeSkipReason: String? = nil
     /// 矫正图上检测到的纸面右缘（归一化 u）；用于解释右缘收边。
     var paperRightEdge: Double?
     /// 页内最左文字行框的 x（全图归一化）；用于解释左缘内收。
@@ -57,6 +72,8 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     /// 表格安全门读取的参照页/裁切页表格形状（[rows, columns]）。
     var tableSafetyOriginalShapes: [[Int]]? = nil
     var tableSafetyCroppedShapes: [[Int]]? = nil
+    /// 表格安全门参照页的表格 bbox（左上原点），用于解释 refine。
+    var tableSafetyOriginalRects: [QuadPayload]? = nil
     /// P1 纸面光照压平是否真正应用；nil/`false` 时底座写回原图。
     var illuminationApplied: Bool? = nil
     /// P1 回退原因（`no_paper` / `low_gain` / `low_variance_reduction` / `original_filter` 等）。

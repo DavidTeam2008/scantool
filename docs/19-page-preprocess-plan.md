@@ -2,6 +2,7 @@
 
 > 状态：**当前周期**。执行清单见 [`TODO.md`](../TODO.md) 与
 > [`spec/page-preprocess/tasks.md`](../spec/page-preprocess/tasks.md)。
+> 2026-10-27 P0.1 边框/背景单次收敛已落基础版，见 [`docs/20`](20-border-crop-convergence.md)。
 > 上游：`docs/17`（Word 可编辑档迭代）、`docs/18`（h2oc 运行复盘）。
 
 ## 一、当前结论

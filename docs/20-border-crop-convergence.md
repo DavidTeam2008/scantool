@@ -1,7 +1,8 @@
 # 20 · 边框/背景单次收敛评估（2026-10-27）
 
-> 状态：**评估，未实现**。当前执行优先级见 [`TODO.md`](../TODO.md) 的
-> **P0.1**；原 P0/P1/P2 结论仍以 [`docs/19`](19-page-preprocess-plan.md) 为准。
+> 状态：**P0.1 基础版已实现，真机全流程/多条件样张待补**。当前执行优先级见
+> [`TODO.md`](../TODO.md) 的 **P0.1**；原 P0/P1/P2 结论仍以
+> [`docs/19`](19-page-preprocess-plan.md) 为准。
 >
 > 触发样本：`docs/media/IMG_7544.jpg`，以及用户在 iPhone 13 上连续三次
 > “扫 → 相册 → 保存 → 分享回手机 → 再扫”得到的三张图：
@@ -190,3 +191,60 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 **一句话**：多步收敛证明了“目标边界是稳定的”，但不能证明“循环是正确实现”。
 最高收益是把“纸张边界 + 内容包络”一次算准，再用一次 refine 兜底；不要
 把三次完整导出固化进产品。
+
+## 七、实现结果（2026-10-27）
+
+### 7.1 已接代码
+
+- `Zhixia/Services/Image/PageContentEnvelopeDetector.swift`
+  - 360px 缩略栅格估计纸面中心亮度；
+  - 逐行/列纸面占比找上/左/右/下页边；
+  - 纸内暗像素/高饱和像素取内容包络；
+  - 返回 `paperRect/contentRect/rect/backgroundResidual`。
+- `ImagePipeline.pageBoundary`
+  - 整图/近整图 proposed 也计算包络候选；
+  - 文字 bbox 作为上/左锚点，保留约 0.8% 纸内边；
+  - 表格安全门通过后裁切，失败回退整图；
+  - table mismatch 时用表格 bbox 扩框，最多 retry 一次。
+- `PagePreprocessReport`
+  - 新增 `cropSource/paperEnvelope/contentEnvelope/envelopeBackgroundResidual/
+    envelopeTextCoverage/envelopeRefineApplied/envelopeSkipReason/
+    tableSafetyOriginalRects`。
+- `PagePreprocessRecipe.scanCanvasBorderRatio = 0.006`
+  - 裁切成功后加白底画布；只影响 `renderPage`。
+
+### 7.2 样张结果
+
+| 指标 | 结果 |
+|---|---|
+| 原图整图 draft | `cropSource=content_envelope`、`cropApplied=true` |
+| 裁切框 | 左 0.0162、上 0.0352、右/下 1.0 |
+| 文字覆盖 | `textCoverage=1`、`envelopeTextCoverage=1` |
+| 输出 | 1672×2200（含 0.6% 白底画布） |
+| 标题/页码/表格/照片 | 目测保留；OCR 回读标题/页码仍在 |
+| 三张中间图 | 1/2 因表格结构签名不一致回退整图；3 可裁 |
+| 幂等性 | 对第一轮输出再跑整图 draft：1672×2200 → 1672×2200 |
+| WPS realbase | **0.906224**，PNG SHA-256 与已接受基线 byte-identical |
+| 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 2/2、`ImagePipelineTests` 2/2 |
+| 全量 | 489 total / 479 passed / 1 expected / 9 known full-suite failures |
+
+证据：
+
+- `build/page-preprocess/crop-convergence/T050-IMG_7544-rendered.jpg`
+- `build/page-preprocess/crop-convergence/T050-IMG_7544.preprocess.json`
+- `build/page-preprocess/crop-convergence/T050-intermediate-summary.json`
+- `build/word-fidelity/p01-wps/`（WPS 独立复跑）
+
+### 7.3 未闭环
+
+1. **中间图 1/2 表格签名不一致**：当前安全门选择回退而不是接受结构变化；
+   这是正确的内容优先策略，但意味着用户如果反复扫中间图，仍可能看到
+   “第二/第三次才裁干净”。最终产品应从原图一次收敛，不依赖中间图。
+2. **refine 未真正触发**：原图 `envelopeRefineApplied=false`；table-aware
+   retry 已接线但本样张不触发，背景残留 refine 还需合成/真机样本验证。
+3. **幂等性**：已对第一轮输出再跑一次实际 `renderPage`，输出尺寸
+   1672×2200 → 1672×2200；白底画布通过四边白框检测避免重复裁切/加边。
+4. **标题/字形安全边**：当前 0.8% 文字边来自 bbox，仍建议真机多字体复核；
+   OCR 输出中标题曾出现 `An rticle` 的识别错误，目测字形未被裁，但不能
+   只靠 OCR 证明。
+5. **10–20 张多条件样张**：尚未跑；不能只凭 `IMG_7544` 宣称通用。

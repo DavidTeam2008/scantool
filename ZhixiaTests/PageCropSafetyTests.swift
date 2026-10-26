@@ -47,4 +47,24 @@ struct PageCropSafetyTests {
         #expect(!PageCropSafety.tablesClear(ofLeftFraction: 0.01, in: Self.page(nil)))
         #expect(!PageCropSafety.tablesClear(ofLeftFraction: 0, in: page))
     }
+
+    @Test("整体裁切：表格 bbox 在裁切框内才几何安全（含 y 翻轴）")
+    func geometryClearOfCropRect() {
+        let page = Self.page([["a", "b"], ["c", "d"]])
+        // 页面夹具 table bbox = (0.1,0.1,0.8,0.5)，Vision 左下原点，
+        // 转成左上后为 y=0.4...0.9。
+        #expect(
+            PageCropSafety.tablesClear(
+                of: CGRect(x: 0.05, y: 0.35, width: 0.9, height: 0.6),
+                in: page
+            )
+        )
+        #expect(
+            !PageCropSafety.tablesClear(
+                of: CGRect(x: 0.05, y: 0.35, width: 0.9, height: 0.5),
+                in: page
+            )
+        )
+        #expect(!PageCropSafety.tablesClear(of: .init(x: 0, y: 0, width: 1, height: 1), in: Self.page(nil)))
+    }
 }

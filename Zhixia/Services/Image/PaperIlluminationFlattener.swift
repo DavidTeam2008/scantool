@@ -16,21 +16,27 @@ struct PagePreprocessRecipe: Sendable, Equatable {
     /// P2 前置测量：检测文字行倾角/水平带，只写报告，不改像素。
     var analyzesTextLines: Bool
     var illuminationOptions: PaperIlluminationFlattener.Options
+    /// P0.1 扫描观感：裁切成功后给页面外补白底画布（占长边比例）。
+    /// 0 表示关闭；只影响 renderPage，不影响 apply / Word 夹具路径。
+    var scanCanvasBorderRatio: Double
 
     init(
         flattensPaperIllumination: Bool = true,
         analyzesTextLines: Bool = true,
-        illuminationOptions: PaperIlluminationFlattener.Options = .init()
+        illuminationOptions: PaperIlluminationFlattener.Options = .init(),
+        scanCanvasBorderRatio: Double = 0.006
     ) {
         self.flattensPaperIllumination = flattensPaperIllumination
         self.analyzesTextLines = analyzesTextLines
         self.illuminationOptions = illuminationOptions
+        self.scanCanvasBorderRatio = scanCanvasBorderRatio
     }
 
     static let paper = PagePreprocessRecipe()
     static let disabled = PagePreprocessRecipe(
         flattensPaperIllumination: false,
-        analyzesTextLines: false
+        analyzesTextLines: false,
+        scanCanvasBorderRatio: 0
     )
 }
 

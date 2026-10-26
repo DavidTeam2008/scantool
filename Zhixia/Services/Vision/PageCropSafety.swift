@@ -46,6 +46,30 @@ enum PageCropSafety {
         }
     }
 
+    /// 裁切矩形是否完整包含参照页所有表 bbox。
+    ///
+    /// 用于 P0.1 的整体纸张/内容包络：`RecognizeDocumentsRequest` 对同一页
+    /// 的轻微裁切常偶发返回 0 表；若所有表 bbox 都在裁切框内，几何上证明
+    /// 表没有被裁掉，可以继续采用裁切，而不是因为识别抖动永远保留页外背景。
+    static func tablesClear(
+        of cropRect: CGRect,
+        in page: StructuredDocumentPage,
+        margin: Double = 0.004
+    ) -> Bool {
+        guard !page.tables.isEmpty else { return false }
+        let expanded = cropRect.insetBy(dx: -margin, dy: -margin)
+        return page.tables.allSatisfy { table in
+            // table.bbox 是 Vision 归一化左下原点；cropRect 是左上原点。
+            let bbox = CGRect(
+                x: table.bbox.minX,
+                y: 1 - table.bbox.maxY,
+                width: table.bbox.width,
+                height: table.bbox.height
+            )
+            return expanded.contains(bbox)
+        }
+    }
+
     /// 原页无表 → 裁切安全（没有表可丢）；原页有表 → 行列/单元格必须一致。
     static func isSafe(original: StructuredDocumentPage, cropped: StructuredDocumentPage) -> Bool {
         let originalSig = signature(original)
