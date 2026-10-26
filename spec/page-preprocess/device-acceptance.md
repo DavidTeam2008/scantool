@@ -86,3 +86,13 @@ P1 配方：p90 目标 0.8612、maxGain 1.5、覆盖率 0.8599；P0 表格安全
   `build/word-fidelity/realbase-wps-p1-20261026b/out-restored-realbase-standalone-wps.png`
 - SHA-256 与 P0 验收 PNG 完全一致；SSIM **0.906224**，不低于基线。
 - P1 只在 `renderPage`，`apply()` / `original-base.jpg` 夹具路径未变；全类顺序跑仍受已知 Vision 表格抖动影响，不得作为基线。
+
+## 7. P2 文字行测量（2026-10-26）
+
+- `PageTextLineAnalyzer` 用 `VNDetectTextRectanglesRequest` 四角估算行角，并写入 `preprocess.json` 的 `textLine*` 字段；不改变像素。
+- iPhone 13 `IMG_7542` rendered：70 行、24 个水平带；行角中位 **0.49°**、p90 **1.11°**、max 2.01°。
+- 模拟器 `IMG_7544`：71 行、24 带；中位 **0°**、p90 **1.09°**、max 3.83°。
+- 模拟器 `IMG_7542`：70 行、24 带；中位 **0.62°**、p90 **1.12°**、max 3.23°。
+- 报告集成开销约 **41ms/页**。
+- Gate P2 要求中位 ≤0.3°、p90 ≤0.8°；当前未达标，T021 局部水平带矫正尚未接入，不能直接整页旋转（会破坏页边约束）。
+- 证据：`build/page-preprocess/p2-summary.json`、`p2-analysis.json`、`p2-integration-summary.json`。

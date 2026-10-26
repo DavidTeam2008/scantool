@@ -80,6 +80,13 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var illuminationTableGuardElapsedMilliseconds: Int? = nil
     /// P1 禁用的表格区域数量（表格结构由 P0 表格安全门提供）。
     var illuminationProtectedTableCount: Int? = nil
+    /// P2 前置测量：文字行数量、水平带数量与倾角分布（P2 T020/T022）。
+    var textLineCount: Int? = nil
+    var textLineBandCount: Int? = nil
+    var textLineMedianAngleDegrees: Double? = nil
+    var textLineP90AngleDegrees: Double? = nil
+    var textLineMaxAngleDegrees: Double? = nil
+    var textLineAnalysisElapsedMilliseconds: Int? = nil
     /// 裁切是否真正应用到底座；P0 表格 A/B 未过时为 false（只诊断）。
     var cropApplied: Bool = false
     var elapsedMilliseconds: Int

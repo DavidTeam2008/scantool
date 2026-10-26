@@ -13,18 +13,25 @@ import Foundation
 /// `table_guard_unavailable`，避免表格结构识别回归。
 struct PagePreprocessRecipe: Sendable, Equatable {
     var flattensPaperIllumination: Bool
+    /// P2 前置测量：检测文字行倾角/水平带，只写报告，不改像素。
+    var analyzesTextLines: Bool
     var illuminationOptions: PaperIlluminationFlattener.Options
 
     init(
         flattensPaperIllumination: Bool = true,
+        analyzesTextLines: Bool = true,
         illuminationOptions: PaperIlluminationFlattener.Options = .init()
     ) {
         self.flattensPaperIllumination = flattensPaperIllumination
+        self.analyzesTextLines = analyzesTextLines
         self.illuminationOptions = illuminationOptions
     }
 
     static let paper = PagePreprocessRecipe()
-    static let disabled = PagePreprocessRecipe(flattensPaperIllumination: false)
+    static let disabled = PagePreprocessRecipe(
+        flattensPaperIllumination: false,
+        analyzesTextLines: false
+    )
 }
 
 /// P1：估计纸面的大半径亮度背景场，把折痕/光照压平。

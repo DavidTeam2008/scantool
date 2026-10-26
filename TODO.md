@@ -20,9 +20,9 @@
 
 ## P2 · 页边拉直与文字行矫正
 
-- [ ] PP-T020 表格/文字行 bbox → 局部倾斜/水平带。
+- [~] PP-T020 文字行 bbox → 局部倾斜/水平带：`PageTextLineAnalyzer`（`VNDetectTextRectanglesRequest` 四角，不跑 OCR）已接 `renderPage` 报告；表格 bbox 融合仍待做。
 - [ ] PP-T021 水平带平移 + 页边垂直约束；失败回退。
-- [ ] PP-T022 页边直线度/平行度/行角达标。
+- [~] PP-T022 页边直线度/平行度/行角达标：已量测；iPhone 13 文字行中位 **0.49°**、p90 **1.11°**，模拟器 `IMG_7544` 中位 0°、p90 1.09°，尚未达 0.3°/0.8° 门限。
 - [ ] PP-T023 接入 OCR 前 rendered 图，表格 2/3 列稳定性回归。
 
 ## P2.5 · 端侧视觉模型预研（不阻塞 P0/P1/P2）
@@ -52,7 +52,7 @@
 
 ## 验证与交付债
 
-- [x] 更新 `Makefile` 测试基线为全量实际值：**482 total / 472 passed / 1 expected failure**（全量旧基线 479 + 新增 `TableGridGuardTests` 3 个；2026-10-26 P1 证据）。已知 9 个失败见下。
+- [x] 更新 `Makefile` 测试基线为全量实际值：**484 total / 474 passed / 1 expected failure**（全量旧基线 479 + `TableGridGuardTests` 3 + `PageTextLineAnalyzerTests` 2；2026-10-26 P1/P2 测量证据）。已知 9 个失败见下。
 - [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**仍不绿**，稳定 9 failed = Golden 4 + `WordFidelityExportTests/realOCRExportArtifact()` 顺序抖动 + 4 个 Review/ReviewSplit preview 超时。已用「全量跳过 P1 测试」复跑，同样 9 个失败，确认不是 P1 引入；P1 测试串行化后单独/组合均 31/31、19/19 通过。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] P1 guard 残余假阴性：无表头、无边框的表格仍可能漏检；需要更强的版面/线条模型。

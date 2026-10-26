@@ -165,6 +165,18 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             report.illuminationFallbackReason = "unavailable"
         }
         let filtered = applyRecipe(workingImage, enhancement: draft.enhancement)
+        if preprocessRecipe.analyzesTextLines, draft.enhancement != .original {
+            let analysisStarted = Date()
+            if let cgImage = context.createCGImage(filtered, from: filtered.extent.integral) {
+                let analysis = PageTextLineAnalyzer.analyze(in: cgImage)
+                report.textLineCount = analysis.lines.count
+                report.textLineBandCount = analysis.bands.count
+                report.textLineMedianAngleDegrees = analysis.medianAbsAngleDegrees
+                report.textLineP90AngleDegrees = analysis.p90AbsAngleDegrees
+                report.textLineMaxAngleDegrees = analysis.maxAbsAngleDegrees
+                report.textLineAnalysisElapsedMilliseconds = elapsedMilliseconds(since: analysisStarted)
+            }
+        }
         let enhanced = try jpegData(from: filtered, quality: 0.82)
         writePreprocessReport(report, original: original)
         let thumb = try await makeThumbnail(imageData: enhanced, maxWidth: 360)
