@@ -123,7 +123,7 @@ P2 先做**可量化、不可逆操作前的测量**，不直接上 warp：
 
 - 曲面网格（仅 P2 不足时）、10~20 张多条件样张、真机 WPS/Word（PP-T032 暂缓）。
 
-**暂缓**：导出层重影 G1（2026-10-26 mask 实验未过 WPS 0.906224；ghost 主要是 show-through，不是 mask 边界）；粗体推断 G3；表格内边距/题头裁切 G4；iOS 27 Golden 窄条 figure 夹具债务 G2b。详见 `TODO.md` 与 `build/word-fidelity/g1-experiments/NOTE.md`。
+**暂缓**：导出层重影 G1（2026-10-26 mask 与全局 tone/contrast 实验均未过 WPS 门限；ghost 主要是 show-through；下一步需局部背景/透印复原并重定视觉保真指标）；粗体推断 G3；表格内边距/题头裁切 G4；iOS 27 Golden 窄条 figure 夹具债务 G2b。详见 `TODO.md` 与 `build/word-fidelity/g1-experiments/NOTE.md`。
 
 ## 四、h2oc（`.harness2`）在本任务中的作用
 
