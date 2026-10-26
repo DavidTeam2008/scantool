@@ -8,9 +8,15 @@ import Vision
 actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRendering {
     private let context: CIContext
     private let maxLongestEdge: CGFloat
+    private let preprocessRecipe: PagePreprocessRecipe
+    private let illuminationFlattener = PaperIlluminationFlattener()
 
-    init(maxLongestEdge: CGFloat = 2200) {
+    init(
+        maxLongestEdge: CGFloat = 2200,
+        preprocessRecipe: PagePreprocessRecipe = .paper
+    ) {
         self.maxLongestEdge = maxLongestEdge
+        self.preprocessRecipe = preprocessRecipe
         let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         context = CIContext(options: [
             .workingColorSpace: space,
@@ -55,6 +61,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let wantsCrop = maxVertexDistance > 0.005
             && boundary.quad.area < draft.quad.area - 0.0001
         let corrected: Data
+        var protectedTableRects: [CGRect] = []
+        var tableGuardAvailable = false
         if wantsCrop {
             let croppedData = try await correct(
                 original: original,
@@ -68,10 +76,14 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 leftInsetRatio: report.pageLeftInset,
                 croppedData: croppedData
             )
+            tableGuardAvailable = safety.tableRects.count > 0
+                || (safety.originalShapes.isEmpty && safety.croppedShapes.isEmpty)
+            report.illuminationTableGuardAvailable = tableGuardAvailable
             report.tableSafetyReference = safety.reference
             report.tableSafetyDecision = safety.decision
             report.tableSafetyOriginalShapes = safety.originalShapes
             report.tableSafetyCroppedShapes = safety.croppedShapes
+            protectedTableRects = safety.tableRects
             if safety.isSafe {
                 report.cropApplied = true
                 corrected = croppedData
@@ -92,8 +104,50 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 rotationTurns: draft.rotationTurns
             )
         }
+        var workingImage: CIImage
+        guard let correctedImage = CIImage(data: corrected) else {
+            throw ZhixiaError.perspectiveFailed
+        }
+        workingImage = correctedImage
+        // P1 与 EnhancementRecipe 完全隔离：只在 renderPage 的预处理阶段做。
+        // 用户明确选「原图」时不改像素；其余滤镜都在压平后的页面上再增强。
+        // 表格保护区来自 P0 表格安全门；未裁切页没有可靠表框时跳过 P1，
+        // 宁可少做压平，也不让 RecognizeDocumentsRequest 丢表。
+        if draft.enhancement == .original {
+            report.illuminationApplied = false
+            report.illuminationFallbackReason = "original_filter"
+        } else if !preprocessRecipe.flattensPaperIllumination {
+            report.illuminationApplied = false
+            report.illuminationFallbackReason = "recipe_disabled"
+        } else if !tableGuardAvailable {
+            report.illuminationApplied = false
+            report.illuminationFallbackReason = "table_guard_unavailable"
+            report.illuminationTableGuardAvailable = false
+        } else if let output = illuminationFlattener.flatten(
+            correctedImage,
+            context: context,
+            options: preprocessRecipe.illuminationOptions,
+            protectedRects: protectedTableRects
+        ) {
+            workingImage = output.image
+            let metrics = output.metrics
+            report.illuminationApplied = metrics.applied
+            report.illuminationFallbackReason = metrics.fallbackReason
+            report.illuminationPaperCoverage = metrics.paperCoverage
+            report.illuminationTargetLuminance = metrics.targetLuminance
+            report.illuminationGainP50 = metrics.gainP50
+            report.illuminationGainMax = metrics.gainMax
+            report.illuminationVarianceBefore = metrics.varianceBefore
+            report.illuminationVarianceAfter = metrics.varianceAfter
+            report.illuminationElapsedMilliseconds = metrics.elapsedMilliseconds
+            report.illuminationProtectedTableCount = protectedTableRects.count
+        } else {
+            report.illuminationApplied = false
+            report.illuminationFallbackReason = "unavailable"
+        }
+        let filtered = applyRecipe(workingImage, enhancement: draft.enhancement)
+        let enhanced = try jpegData(from: filtered, quality: 0.82)
         writePreprocessReport(report, original: original)
-        let enhanced = try await apply(imageData: corrected, enhancement: draft.enhancement)
         let thumb = try await makeThumbnail(imageData: enhanced, maxWidth: 360)
         let size: CGSize
         if let image = CIImage(data: enhanced) {
@@ -176,7 +230,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                     reference: referenceLabel,
                     decision: "mismatch",
                     originalShapes: [],
-                    croppedShapes: []
+                    croppedShapes: [],
+                    tableRects: []
                 )
             }
             referenceURL = tempRef
@@ -189,7 +244,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 reference: referenceLabel,
                 decision: "mismatch",
                 originalShapes: [],
-                croppedShapes: []
+                croppedShapes: [],
+                tableRects: []
             )
         }
 
@@ -206,7 +262,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 reference: referenceLabel,
                 decision: "mismatch",
                 originalShapes: [],
-                croppedShapes: []
+                croppedShapes: [],
+                tableRects: []
             )
         }
         let originalSignature = PageCropSafety.signature(originalPage)
@@ -229,12 +286,22 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         } else {
             decision = "mismatch"
         }
+        let tableRects: [CGRect]
+        if !croppedPage.tables.isEmpty {
+            tableRects = croppedPage.tables.map(\.bbox)
+        } else if usePageReference {
+            // 页级左缘内收只裁掉页边空白；参照页表框稍后由 P1 外扩覆盖。
+            tableRects = originalPage.tables.map(\.bbox)
+        } else {
+            tableRects = []
+        }
         return TableSafetyOutcome(
             isSafe: isSafe,
             reference: referenceLabel,
             decision: decision,
             originalShapes: originalSignature.shapes,
-            croppedShapes: croppedSignature.shapes
+            croppedShapes: croppedSignature.shapes,
+            tableRects: tableRects
         )
     }
 
@@ -244,6 +311,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         var decision: String
         var originalShapes: [[Int]]
         var croppedShapes: [[Int]]
+        var tableRects: [CGRect]
     }
 
     /// 仅在提议四角退化/近整图时补跑文档分割，避免改变正常取景框。

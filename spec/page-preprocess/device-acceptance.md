@@ -52,3 +52,33 @@
 - WPS（`original-base.jpg`）**0.906224**，与基线一致（2026-10-26 独立跑 realbase 测试 + 新 WPS 渲染）
 - 证据：`build/word-fidelity/realbase-wps-p0c-20261026b/out-restored-realbase-wps.png`
 - 注意：`WordFidelityExportTests` 整类顺序跑会触发已知 Vision 表格抖动（`realOCRExportArtifact` 0 表），该类产物不作为 WPS 基线。
+
+## 6. P1 折痕/光照结果（2026-10-26）
+
+设备：iPhone 13（iOS 27.0.1）；输入 `IMG_7542-input.JPG`；P0 输出 1554×2200。
+P1 配方：p90 目标 0.8612、maxGain 1.5、覆盖率 0.8599；P0 表格安全门给出 1 个表框并强制保护区 `gain=1`。
+
+### A/B
+
+- off：`cropApplied=true`、`page_left_inset`、`geometry_clear`；结构表 `5×2`，OCR 1797，渲染 1552ms。
+- on：`illuminationApplied=true`、`illuminationTableGuardAvailable=true`、`illuminationProtectedTableCount=1`；结构表 `5×2`，OCR 1782，P1 236ms，渲染 1395ms。
+- 背景场方差：0.002832 → 0.0000293（**−98.97%**）。
+- OCR 归一化字符召回 **99.93%**；唯一 off-only 行是 `21m`/`2lm` 数字字母混淆；on 新增 2 条 ghost 垃圾行（`TSK00B`、`Saomt`），属已知 G1，非真实文本丢失。
+- 表结构重复：off/on 各 6 次，**6/6** 均为 1 表 `5×2`（`final-p1-device-repeat.json`）。
+- 性能：直接 P1 首跑 280ms / 暖跑 223–226ms；整页首跑 1764ms / 暖跑 1388ms。冷启动整页仍超过 1.5s，归 PP-T032。
+- 证据：`build/page-preprocess/p1-device/final-summary.json`、
+  `final-p1-device-{off,on}.jpg`、`final-p1-device-{off,on}.preprocess.json`、
+  `final-p1-device-repeat.json`、`final-p1-device-bench.json`、
+  `build/device-p1-final-{ab,repeat,bench}.xcresult`。
+
+### 未裁切页策略
+
+- 模拟器 `IMG_7544` 未裁切，P0 未跑表格安全门；P1 以 `table_guard_unavailable` 跳过，off/on 输出 byte-identical，OCR 1807/1807。
+- 这是有意的保守策略：没有可靠表框时不让 P1 改变页面，避免 `RecognizeDocumentsRequest` 表结构回归。后续需要通用表格/网格 guard 才能放开覆盖。
+
+### WPS
+
+- 独立 `realUIBaseExportArtifact()` + 新 WPS 渲染：
+  `build/word-fidelity/realbase-wps-p1-20261026b/out-restored-realbase-standalone-wps.png`
+- SHA-256 与 P0 验收 PNG 完全一致；SSIM **0.906224**，不低于基线。
+- P1 只在 `renderPage`，`apply()` / `original-base.jpg` 夹具路径未变；全类顺序跑仍受已知 Vision 表格抖动影响，不得作为基线。

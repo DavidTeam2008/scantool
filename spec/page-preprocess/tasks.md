@@ -1,8 +1,8 @@
 # Tasks: 页面预处理（page-preprocess）
 
 **Input**: `spec.md` / `plan.md`
-**当前优先级**: P0（边界 + 页外裁切 + 指标）→ P1（折痕/光照）→ P2（页边拉直/行矫正）→ P3（网格/真机）
-**测试基线**: 待全量测试稳定后同步 `Makefile`
+**当前优先级**: P0（已闭环）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
+**测试基线**: `Makefile` 479 total / 469 passed / 1 expected（2026-10-26 全量；已知 9 个 full-suite 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
 
@@ -14,9 +14,9 @@
 
 ## P1 · 折痕/光照
 
-- [ ] **PP-T010** 背景场估计 + 压平（保留区排除）；合成折痕/渐变单测。
-- [ ] **PP-T011** 与现有 `EnhancementRecipe` 隔离，新增预处理档；旧增强路径零行为变化。
-- [ ] **PP-T012** 真实页 A/B：折痕阴影区亮度方差、OCR 字符召回、WPS SSIM。
+- [x] **PP-T010** 背景场估计 + 压平：`PaperIlluminationFlattener`（320 分析图 / 4% tile p85 / p90 目标 0.86–0.95 / maxGain 1.5 / sRGB kernel）；合成折痕、渐变、彩色插图、平面白纸、深色图 **5/5**；真实页纸面覆盖 0.86–0.89。
+- [x] **PP-T011** 与现有 `EnhancementRecipe` 隔离：只接 `ImagePipeline.renderPage`；`apply()` / Word 夹具路径零变化；`.original` 跳过；P0 表格安全门表框内 `gain=1`（外扩 1.5%），无可靠表框的未裁切页跳过（`table_guard_unavailable`）。
+- [~] **PP-T012** 真实页 A/B：iPhone 13 `IMG_7542` 背景场方差 0.002832→0.0000293（−98.97%），表结构 off/on 各 6/6 次 `5×2`，OCR 归一化字符召回 99.93%（新增 2 条 ghost 噪声，G1 暂缓），P1 236ms、暖机整页 1388–1395ms；模拟器 `IMG_7542` OCR 1812→1816，`IMG_7544` 无 guard 跳过且 byte-identical；WPS 独立 realbase PNG 与 P0 证据 byte-identical，仍 0.906224。证据 `build/page-preprocess/p1-device/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。**未闭环**：未裁切页 guard 覆盖、冷启动 1764ms、ghost 可见性。
 
 ## P2 · 页边拉直 / 文字行矫正
 
@@ -42,7 +42,7 @@
 ## 验收门
 
 1. **Gate P0**：裁切后页外背景 <2%、墨迹召回 ≥99%、无页面内子框裁切；当前 WPS 分数不回退。
-2. **Gate P1**：折痕区亮度方差下降 ≥30%，照片/插图不变形不变色；OCR 召回不降。
+2. **Gate P1**：折痕区亮度方差下降 ≥30%，照片/插图不变形不变色；OCR 召回不降；表格结构不变。当前 iPhone 13 裁切路径：方差 −98.97%、表结构 6/6 `5×2`、字符召回 99.93%；未裁切页 P1 跳过。
 3. **Gate P2**：页边直线度/平行度 ≤0.5% 短边、文字行中位倾角 ≤0.3°；表格判定稳定。
 4. **Gate P3**：真机 WPS SSIM ≥0.90，且多条件样张无内容丢失。
 

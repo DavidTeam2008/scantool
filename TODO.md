@@ -3,7 +3,7 @@
 > 更新时间：2026-10-26。当前周期：**page-preprocess**（`spec/page-preprocess/`）。
 > 历史交接 `SESSION-HANDOFF.md` 已退役：仍有价值的条目已并入本文件；其余文档见 `docs/17`、`docs/18`、`docs/19`。
 
-## P0 · 页面预处理（当前执行）
+## P0/P1 · 页面预处理（当前执行）
 
 - [x] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [x] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已接 `ImagePipeline` / `preprocess.json`，单测通过。
@@ -13,9 +13,9 @@
 
 ## P1 · 折痕与光照
 
-- [ ] PP-T010 背景场估计 + 折痕阴影压平（排除 figure/artwork）。
-- [ ] PP-T011 预处理档与 `EnhancementRecipe` 隔离，旧增强零行为变化。
-- [ ] PP-T012 折痕区方差 / OCR 召回 / WPS A/B。
+- [x] PP-T010 背景场估计 + 折痕阴影压平：`PaperIlluminationFlattener` 已接 `renderPage`；320 分析图、4% tile p85 背景场、p90 目标（0.86–0.95）、maxGain 1.5、sRGB `CIColorKernel`；合成折痕/渐变/插图/平面/暗图 5/5 通过，真实页覆盖 0.86–0.89。
+- [x] PP-T011 与 `EnhancementRecipe` 隔离：只改 `renderPage`，`apply()` / Word 夹具路径不变；`.original` 跳过；P0 表格安全门给出的表框内增益强制为 1（外扩 1.5%），无可靠表框的未裁切页跳过 P1（`table_guard_unavailable`）。
+- [~] PP-T012 真机/模拟器 A/B：iPhone 13 `IMG_7542` P1 后背景场方差 0.002832→0.0000293（-98.97%），表结构 5×2 在 off/on 各 6/6 次稳定，OCR 归一化字符召回 99.93%（仅 `21m/2lm` 数字字母混淆；新增 2 条 ghost 垃圾行，G1 暂缓）；P1 236ms、暖机整页 1388–1395ms，首跑 1764ms（PP-T032 冷启动预算仍开）。模拟器 `IMG_7542` P1 applied、OCR 1812→1816；`IMG_7544` 未裁切，P1 按 guard 跳过且输出 byte-identical。WPS 独立 realbase PNG 与 P0 证据 **byte-identical**，仍 **0.906224**。证据：`build/page-preprocess/p1-device/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。
 
 ## P2 · 页边拉直与文字行矫正
 
@@ -51,9 +51,10 @@
 
 ## 验证与交付债
 
-- [ ] 更新 `Makefile` 测试基线为全量实际值（当前新增 TableStructureRepair / HeaderLineOrder 回归）。
-- [ ] 重跑 `make test`（iPhone 18 Pro / iOS 27）全绿。
+- [x] 更新 `Makefile` 测试基线为全量实际值：**479 total / 469 passed / 1 expected failure**（2026-10-26 全量两次一致；含 P1 +5 测试）。已知 9 个失败见下。
+- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**仍不绿**，稳定 9 failed = Golden 4 + `WordFidelityExportTests/realOCRExportArtifact()` 顺序抖动 + 4 个 Review/ReviewSplit preview 超时。已用「全量跳过 P1 测试」复跑，同样 9 个失败，确认不是 P1 引入；P1 测试串行化后单独/组合均 31/31、19/19 通过。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
+- [ ] P1 表格 guard 覆盖扩展：当前只有 P0 裁切路径能提供表框；未裁切页/无表框页跳过 P1。后续加通用表格/网格检测或复用 OCR 结构识别，再放开覆盖。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。
 - [ ] Word 桌面版（Microsoft Word）渲染抽样；当前只有 WPS。
 - [ ] 真机 App UI 全流程（相册→收藏→版面还原→Word）复测；当前真机测试是 parser/export 级。
