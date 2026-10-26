@@ -43,7 +43,7 @@
 
 ## 暂缓 · 导出层重影（不在本周期）
 
-- [ ] **G1** 可编辑字与背景字未完全重合：**直接原因**是擦除 mask 未覆盖全部原字/边缘残留；拍摄几何是上游放大因素。等 page-preprocess 拉直后，仍需单独做「残留墨迹率」验收与 mask 扩边/实心擦除；不能假设预处理自动解决。当前 WPS 0.906/0.907 已过门限。
+- [ ] **G1** 可编辑字与背景字未完全重合：2026-10-26 做了 mask 扩边/实心擦除实验：solid 浅底行 0.904239（Exam 丢失）、lineExpansion 0.008 0.903989、inkThreshold 35 0.905826，均低于 **0.906224**，未采用。WPS 可见 ghost 主要来自纸面 show-through/页面透印，位于 OCR 行框之外，扩 mask 无法消除；下一步应做背景/透印复原（或模型复原），不是继续调 mask 边界。证据：`build/word-fidelity/g1-experiments/NOTE.md`。
 - [ ] **G2** iOS 26.4.1 模拟器 `RecognizeDocumentsRequest` 对练习册表返回 0 表（iOS 27 正常）：补结构化回退或环境限制说明；当前按用户决定暂缓 iOS 26，只保证 iOS 27。
 - [ ] **G2b** iOS 27 `GoldenWorksheet` 4 项失败：OCR 113 行、`LayoutAnalyzer` anchors=0、`InkFigureDetector` 只给右侧整栏大图；金标准“漫画条”落在书脊/空白窄带，疑似 iOS 26 figure 检测器的伪 figure 被写进夹具。**先记为已知测试债务**；产品级“右侧大图存在”仍通过。后续单独校准夹具或窄条 figure 检测，不阻塞 page-preprocess。
 - [ ] **G3** 粗体行（Articles wanted / FUN ACTIVITIES）目前仍为常规字重；像素墨量推断误判率高，暂缓。
