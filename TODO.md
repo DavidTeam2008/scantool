@@ -9,13 +9,13 @@
 - [x] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已接 `ImagePipeline` / `preprocess.json`，单测通过。
 - [x] PP-T003 页外裁切：亮折页条检测 + 内容框 + 斜右边界 + 页级左缘内收已接。模拟器全图路径 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条与木桌已去除，标题/页码保留。真机 iPhone 13：页级 quad（area 0.808）左缘内收 1% 页宽，`pageTextLeft=0.1056`、标题保留 0.68% 安全边、textCoverage=1、输出 1554×2200；页级表格参照按正立页识别为 `[[5,3]]`，裁切 JPEG 偶发 0 表时以「表格 bbox 在裁切线右侧」几何兜底（`geometry_clear`），最终增强页结构表 `[[5,2]]`、解析表格块 1、标题保留。证据：`build/page-preprocess/final-p0/`。
 - [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 pageTextLeft/pageLeftInset/tableSafetyReference/tableSafetyDecision/tableSafety{Original,Cropped}Shapes，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
-- [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（2026-10-26 独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）与基线一致，未回退；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 渲染仍留待 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
+- [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（2026-10-26 独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）与基线一致，未回退；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 全流程验收归入暂缓的 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
 
 ## P1 · 折痕与光照
 
 - [x] PP-T010 背景场估计 + 折痕阴影压平：`PaperIlluminationFlattener` 已接 `renderPage`；320 分析图、4% tile p85 背景场、p90 目标（0.86–0.95）、maxGain 1.5、sRGB `CIColorKernel`；合成折痕/渐变/插图/平面/暗图 5/5 通过，真实页覆盖 0.86–0.89。
 - [x] PP-T011 与 `EnhancementRecipe` 隔离：只改 `renderPage`，`apply()` / Word 夹具路径不变；`.original` 跳过；P0 表格安全门给出的表框内增益强制为 1（外扩 1.5%），无可靠表框的未裁切页跳过 P1（`table_guard_unavailable`）。
-- [~] PP-T012 真机/模拟器 A/B：iPhone 13 `IMG_7542` P1 后背景场方差 0.002832→0.0000293（-98.97%），表结构 5×2 在 off/on 各 6/6 次稳定，OCR 归一化字符召回 99.93%（仅 `21m/2lm` 数字字母混淆；新增 2 条 ghost 垃圾行，G1 暂缓）；P1 236ms、暖机整页 1388–1395ms，首跑 1764ms（PP-T032 冷启动预算仍开）。模拟器 `IMG_7542` P1 applied、OCR 1812→1816；`IMG_7544` 未裁切，P1 按 guard 跳过且输出 byte-identical。WPS 独立 realbase PNG 与 P0 证据 **byte-identical**，仍 **0.906224**。证据：`build/page-preprocess/p1-device/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。
+- [~] PP-T012 真机/模拟器 A/B：iPhone 13 `IMG_7542` P1 后背景场方差 0.002832→0.0000293（-98.97%），表结构 5×2 在 off/on 各 6/6 次稳定，OCR 归一化字符召回 99.93%（仅 `21m/2lm` 数字字母混淆；新增 2 条 ghost 垃圾行，G1 暂缓）；P1 236ms、暖机整页 1388–1395ms，首跑 1764ms（PP-T032 冷启动优化已暂缓）。模拟器 `IMG_7542` P1 applied、OCR 1812→1816；`IMG_7544` 未裁切，P1 按 guard 跳过且输出 byte-identical。WPS 独立 realbase PNG 与 P0 证据 **byte-identical**，仍 **0.906224**。证据：`build/page-preprocess/p1-device/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。
 
 ## P2 · 页边拉直与文字行矫正
 
@@ -38,7 +38,6 @@
 
 - [ ] PP-T030 曲面网格（仅在 P2 不足时）。
 - [ ] PP-T031 10~20 张多条件样张回归。
-- [ ] PP-T032 iPhone 13 全流程 + WPS/Word 验收；≤1.5s/页。
 - [ ] PP-T033 文档/AGENTS/基线最终同步。
 
 ## 暂缓 · 导出层重影（不在本周期）
@@ -48,6 +47,7 @@
 - [ ] **G2b** iOS 27 `GoldenWorksheet` 4 项失败：OCR 113 行、`LayoutAnalyzer` anchors=0、`InkFigureDetector` 只给右侧整栏大图；金标准“漫画条”落在书脊/空白窄带，疑似 iOS 26 figure 检测器的伪 figure 被写进夹具。**先记为已知测试债务**；产品级“右侧大图存在”仍通过。后续单独校准夹具或窄条 figure 检测，不阻塞 page-preprocess。
 - [ ] **G3** 粗体行（Articles wanted / FUN ACTIVITIES）目前仍为常规字重；像素墨量推断误判率高，暂缓。
 - [ ] **G4** 表格单元格左/上内边距、右上题头顶部裁切、`Exam advice` 位置仍有小偏差；等预处理/重影阶段一起看。
+- [ ] **PP-T032（暂缓）** iPhone 13 真机全流程 + WPS/Word 验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。真机全流程复测仍见“验证与交付债”。
 
 ## 验证与交付债
 
