@@ -74,7 +74,7 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var illuminationElapsedMilliseconds: Int? = nil
     /// P1 是否拿到可靠的表格保护信息；false 时不启用 P1（避免表结构回归）。
     var illuminationTableGuardAvailable: Bool? = nil
-    /// 表格 guard 来源：`p0_crop_safety` / `vision_structure` / `unavailable`。
+    /// 表格 guard 来源：`p0_crop_safety` / `vision_structure` / `content_fallback` / `grid_fallback` / `unavailable`。
     var illuminationTableGuardSource: String? = nil
     /// 通用表格 guard 自身的结构识别耗时（仅未裁切页）。
     var illuminationTableGuardElapsedMilliseconds: Int? = nil

@@ -37,7 +37,7 @@
 - 对灰度图做大半径（页宽 8%~12%）背景场估计（盒式/高斯），目标纸白取背景场 p90 并夹到 0.86–0.95；maxGain 1.5，只提亮不压暗。
 - 对 figure/artwork 区域用 mask 跳过；彩色/照片区不做强增益；表格区由 P0 表格安全门表框（外扩 1.5%）强制 `gain=1`。
 - 与 `EnhancementRecipe` 分开：新增 `.paper` 预处理 recipe，只在 `ImagePipeline.renderPage` 执行，不改变现有增强档/`apply()` 行为。
-- 未裁切页先用 `.enhance` 预览 + `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）；识别 nil/空页才跳过 P1（`table_guard_unavailable`）。后续可加横竖线/网格假阴性兜底。
+- 未裁切页先用 `.enhance` 预览 + `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）；漏表时用深色表头块（`content_fallback`）/长横竖线网格（`grid_fallback`）兜底；全空才跳过 P1。无表头、无边框表格仍需后续模型。
 
 ### D4 边框拉直：文本行引导的分段矫正
 

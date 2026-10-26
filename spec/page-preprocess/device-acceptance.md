@@ -73,10 +73,11 @@ P1 配方：p90 目标 0.8612、maxGain 1.5、覆盖率 0.8599；P0 表格安全
 
 ### 通用表格 guard（未裁切页）
 
-- 未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer`，表框来源记为 `vision_structure`；识别 nil/空页才跳过 P1（`table_guard_unavailable`）。
+- 未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer`，表框来源记为 `vision_structure`；漏表时用深色表头块（`content_fallback`）或长横/竖线网格（`grid_fallback`）兜底；全部为空才跳过 P1（`table_guard_unavailable`）。
 - 真机未裁切 `IMG_7542`（chosen quad）：guard 1 个表框、guard 696ms、P1 288ms、整页 1276ms；表 `5×2` off/on 各 **6/6**，OCR 1805→1777，归一化字符召回 **99.73%**。
 - 裁切路径仍走 `p0_crop_safety`：表 `5×2` 3/3 复测（此前 6/6），P1 269ms。
-- 模拟器 `IMG_7544`：guard source `vision_structure`、P1 从跳过变为 applied；OCR 1807→1821，结构表 0→1。代价是 guard 1413ms、P1 1317ms（冷启动）。
+- 模拟器 `IMG_7544`：结构漏表时 guard source `content_fallback`、保护 3 块、P1 applied；OCR 1794，结构表 0（与 off 持平）。guard 约 2.1s、P1 1.3s（冷启动，PP-T032 暂缓）。
+- 真机未裁切表格页的“结构漏检”模拟：content fallback 保护 4 块，P1 后表 `5×2` 6/6，OCR 1792。
 - 证据：`build/page-preprocess/p1-guard/final-summary.json`、`build/device-p1-guard4.xcresult`。
 
 ### WPS

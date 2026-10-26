@@ -122,7 +122,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             let guardOutcome = await detectTableGuard(correctedImage: correctedImage)
             tableGuardAvailable = guardOutcome.isAvailable
             protectedTableRects = guardOutcome.tableRects
-            tableGuardSource = guardOutcome.isAvailable ? "vision_structure" : "unavailable"
+            tableGuardSource = guardOutcome.source
             report.illuminationTableGuardElapsedMilliseconds = guardOutcome.elapsedMilliseconds
         }
         report.illuminationTableGuardAvailable = tableGuardAvailable
@@ -213,6 +213,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     private struct TableGuardOutcome {
         var isAvailable: Bool
         var tableRects: [CGRect]
+        var source: String
         var elapsedMilliseconds: Int
     }
 
@@ -226,6 +227,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             return TableGuardOutcome(
                 isAvailable: false,
                 tableRects: [],
+                source: "unavailable",
                 elapsedMilliseconds: elapsedMilliseconds(since: started)
             )
         }
@@ -236,22 +238,56 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             return TableGuardOutcome(
                 isAvailable: false,
                 tableRects: [],
+                source: "unavailable",
                 elapsedMilliseconds: elapsedMilliseconds(since: started)
             )
         }
-        guard let page = await VisionDocumentStructureRecognizer().recognize(
+        let page = await VisionDocumentStructureRecognizer().recognize(
             imageURL: temp,
             pageID: UUID()
-        ), page.hasContent else {
+        )
+        let tableRects = page?.tables.map(\.bbox) ?? []
+        if !tableRects.isEmpty {
+            return TableGuardOutcome(
+                isAvailable: true,
+                tableRects: tableRects,
+                source: "vision_structure",
+                elapsedMilliseconds: elapsedMilliseconds(since: started)
+            )
+        }
+        // Vision 漏表时，先用深色内容块（常见表头）兜底，再用长横线/竖线
+        // 网格兜底；宁可多保护一块区域，也不让 P1 无 mask 改到表格。
+        if let cgImage = context.createCGImage(preview, from: preview.extent) {
+            let contentRects = TableContentGuard().detect(in: cgImage)
+            if !contentRects.isEmpty {
+                return TableGuardOutcome(
+                    isAvailable: true,
+                    tableRects: contentRects,
+                    source: "content_fallback",
+                    elapsedMilliseconds: elapsedMilliseconds(since: started)
+                )
+            }
+            if let grid = TableGridGuard().detect(in: cgImage) {
+                return TableGuardOutcome(
+                    isAvailable: true,
+                    tableRects: grid.normalizedRects,
+                    source: "grid_fallback",
+                    elapsedMilliseconds: elapsedMilliseconds(since: started)
+                )
+            }
+        }
+        guard let page, page.hasContent else {
             return TableGuardOutcome(
                 isAvailable: false,
                 tableRects: [],
+                source: "unavailable",
                 elapsedMilliseconds: elapsedMilliseconds(since: started)
             )
         }
         return TableGuardOutcome(
             isAvailable: true,
-            tableRects: page.tables.map(\.bbox),
+            tableRects: [],
+            source: "vision_structure",
             elapsedMilliseconds: elapsedMilliseconds(since: started)
         )
     }

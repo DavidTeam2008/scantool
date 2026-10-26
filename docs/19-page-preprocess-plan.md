@@ -50,7 +50,7 @@ P1 已实现并与用户增强档隔离：
 
 - `PaperIlluminationFlattener`：320px 分析图、4% tile 的 p85 背景场、p90 目标纸白（夹 0.86–0.95）、maxGain 1.5、sRGB `CIColorKernel`；只对浅色低饱和纸面做增益，彩色插图/深色墨迹保护。
 - 只接在 `ImagePipeline.renderPage`：P0 裁切后、`EnhancementRecipe` 前；`ImagePipeline.apply()` 与 `WordFidelityExportTests` 的 `original-base.jpg` 路径零变化；`.original` 明确跳过。
-- 表格保护：P0 裁切页复用表格安全门表框（`p0_crop_safety`）；未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）。gain map 对表框（外扩 1.5% 页宽/页高）强制 `gain=1`；识别 nil/空页才跳过（`table_guard_unavailable`）。
+- 表格保护：P0 裁切页复用表格安全门表框（`p0_crop_safety`）；未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）。若结构识别漏表，依次用 `TableContentGuard` 的深色表头块（向下扩 18% 页高）和 `TableGridGuard` 的长横/竖线网格兜底（`content_fallback` / `grid_fallback`）。gain map 对保护框（外扩 1.5%）强制 `gain=1`；仍无结果才跳过（`table_guard_unavailable`）。
 
 **Gate 证据**
 
@@ -73,8 +73,8 @@ P1 已实现并与用户增强档隔离：
 
 **已知限制**
 
-- 通用 guard 仍依赖 Vision 结构识别；漏表（假阴性）时 P1 会无 mask 执行，后续需横竖线/网格启发式二次兜底。
-- 未裁切页 guard 需要额外 `.enhance` 预览 + 结构识别：真机 696ms、模拟器冷启动 1413ms；P1 冷启动仍可能超 1.5s，PP-T032 已暂缓。
+- 通用 guard 已有深色内容块/网格二级兜底，但仍不能覆盖“无表头、无边框”的表格；识别/兜底全空时 P1 仍可能无 mask 执行。
+- 未裁切页 guard 需要额外 `.enhance` 预览 + 结构识别；内容/网格兜底会增加耗时。真机 vision 路径 696ms；模拟器 content fallback 冷启动约 2.1s，整页 4.4s；PP-T032 已暂缓。
 - P1 可能让纸面 show-through/ghost 更明显；G1 仍暂缓。
 - 冷启动 `CIColorKernel` 编译在模拟器首跑可达 1438ms；真机最终 P1 236ms，整页首跑 1764ms；PP-T032 冷启动优化已暂缓。
 
