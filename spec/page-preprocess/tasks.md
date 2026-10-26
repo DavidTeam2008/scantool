@@ -15,8 +15,9 @@
 ## P1 · 折痕/光照
 
 - [x] **PP-T010** 背景场估计 + 压平：`PaperIlluminationFlattener`（320 分析图 / 4% tile p85 / p90 目标 0.86–0.95 / maxGain 1.5 / sRGB kernel）；合成折痕、渐变、彩色插图、平面白纸、深色图 **5/5**；真实页纸面覆盖 0.86–0.89。
-- [x] **PP-T011** 与现有 `EnhancementRecipe` 隔离：只接 `ImagePipeline.renderPage`；`apply()` / Word 夹具路径零变化；`.original` 跳过；P0 表格安全门表框内 `gain=1`（外扩 1.5%），无可靠表框的未裁切页跳过（`table_guard_unavailable`）。
-- [~] **PP-T012** 真实页 A/B：iPhone 13 `IMG_7542` 背景场方差 0.002832→0.0000293（−98.97%），表结构 off/on 各 6/6 次 `5×2`，OCR 归一化字符召回 99.93%（新增 2 条 ghost 噪声，G1 暂缓），P1 236ms、暖机整页 1388–1395ms；模拟器 `IMG_7542` OCR 1812→1816，`IMG_7544` 无 guard 跳过且 byte-identical；WPS 独立 realbase PNG 与 P0 证据 byte-identical，仍 0.906224。证据 `build/page-preprocess/p1-device/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。**未闭环**：未裁切页 guard 覆盖、ghost 可见性；冷启动 1764ms 已归入暂缓的 PP-T032。
+- [x] **PP-T011** 与现有 `EnhancementRecipe` 隔离：只接 `ImagePipeline.renderPage`；`apply()` / Word 夹具路径零变化；`.original` 跳过；表格安全门表框内 `gain=1`（外扩 1.5%）。
+- [x] **PP-T013** 扩展 P1 表格 guard 覆盖：未裁切页先用 `.enhance` 预览 + `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）；P0 裁切路径继续用 `p0_crop_safety`。真机未裁切 `IMG_7542` 表 `5×2` off/on 各 6/6、guard 696ms、P1 288ms、整页 1276ms；模拟器 `IMG_7544` P1 从跳过变为 applied（OCR 1807→1821，结构表 0→1）。识别 nil/空页才跳过（`table_guard_unavailable`）。证据 `build/page-preprocess/p1-guard/final-summary.json`。
+- [~] **PP-T012** 真实页 A/B：iPhone 13 裁切路径背景场方差 0.002832→0.0000293（−98.97%），表结构 off/on 各 6/6 次 `5×2`，OCR 归一化字符召回 99.93%；未裁切路径表结构 6/6、字符召回 99.73%。P1 236–288ms、暖机整页 1276–1395ms，首跑 1764ms（PP-T032 冷启动已暂缓）。WPS 独立 realbase PNG 与 P0 证据 byte-identical，仍 0.906224。**未闭环**：通用 guard 的 Vision 假阴性、ghost 可见性（G1）。证据 `build/page-preprocess/p1-device/final-summary.json`、`build/page-preprocess/p1-guard/final-summary.json`、`build/word-fidelity/realbase-wps-p1-20261026b/`。
 
 ## P2 · 页边拉直 / 文字行矫正
 
@@ -41,7 +42,7 @@
 ## 验收门
 
 1. **Gate P0**：裁切后页外背景 <2%、墨迹召回 ≥99%、无页面内子框裁切；当前 WPS 分数不回退。
-2. **Gate P1**：折痕区亮度方差下降 ≥30%，照片/插图不变形不变色；OCR 召回不降；表格结构不变。当前 iPhone 13 裁切路径：方差 −98.97%、表结构 6/6 `5×2`、字符召回 99.93%；未裁切页 P1 跳过。
+2. **Gate P1**：折痕区亮度方差下降 ≥30%，照片/插图不变形不变色；OCR 召回不降；表格结构不变。当前 iPhone 13 裁切路径：方差 −98.97%、表结构 6/6 `5×2`、字符召回 99.93%；未裁切路径表结构 6/6、字符召回 99.73%。
 3. **Gate P2**：页边直线度/平行度 ≤0.5% 短边、文字行中位倾角 ≤0.3°；表格判定稳定。
 4. **Gate P3**：真机 WPS SSIM ≥0.90，且多条件样张无内容丢失。
 
@@ -49,6 +50,7 @@
 
 - **PP-T032（暂缓）** iPhone 13 真机全流程 + WPS/Word 渲染验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。真机全流程复测仍见 `TODO.md` 验证债。
 - **G1** 可编辑字与背景字未完全重合造成的重影：等预处理把几何拉直后再优化；当前先记录，不在本周期解决。
+- **P1 guard 假阴性**：通用 guard 依赖 Vision 结构识别；漏表时 P1 会无 mask 执行。后续加横竖线/网格启发式二次兜底。
 - **G2** iOS 26.4.1 模拟器 `RecognizeDocumentsRequest` 对练习册表格返回 0 表（iOS 27 正常）：单独修结构化回退或标注环境限制，见 `TODO.md`。
 - **G2c** `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 结构表为 0（单独运行通过）；按 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - **G3** `preScaledFontSize` 的溢出估算仅对无 lines 旧块生效，需在 P2 回归中观察，不阻塞预处理。

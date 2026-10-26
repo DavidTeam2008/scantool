@@ -50,7 +50,7 @@ P1 已实现并与用户增强档隔离：
 
 - `PaperIlluminationFlattener`：320px 分析图、4% tile 的 p85 背景场、p90 目标纸白（夹 0.86–0.95）、maxGain 1.5、sRGB `CIColorKernel`；只对浅色低饱和纸面做增益，彩色插图/深色墨迹保护。
 - 只接在 `ImagePipeline.renderPage`：P0 裁切后、`EnhancementRecipe` 前；`ImagePipeline.apply()` 与 `WordFidelityExportTests` 的 `original-base.jpg` 路径零变化；`.original` 明确跳过。
-- 表格保护：复用 P0 表格安全门拿到的表框，在 gain map 中对表框（外扩 1.5% 页宽/页高）强制 `gain=1`；没有可靠表框的未裁切页跳过 P1（`table_guard_unavailable`），宁可少做压平，也不让 `RecognizeDocumentsRequest` 丢表。
+- 表格保护：P0 裁切页复用表格安全门表框（`p0_crop_safety`）；未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer` 拿表框（`vision_structure`）。gain map 对表框（外扩 1.5% 页宽/页高）强制 `gain=1`；识别 nil/空页才跳过（`table_guard_unavailable`）。
 
 **Gate 证据**
 
@@ -58,9 +58,10 @@ P1 已实现并与用户增强档隔离：
 |---|---|
 | 合成单测 | 折痕/渐变/插图/平面/暗图 **5/5** |
 | 模拟器 `IMG_7542` | P1 applied；背景场方差 0.002558→0.0000481；OCR 1812→1816；输出 1752×2200 |
-| 模拟器 `IMG_7544` | 未裁切、无 guard → P1 跳过；off/on 输出 byte-identical，OCR 1807/1807 |
 | iPhone 13 `IMG_7542` | P1 applied、1 个表框保护；方差 0.002832→0.0000293（**−98.97%**）；输出 1554×2200 |
-| 表结构 | off/on 各 **6/6** 次 `5×2`，不再复现 P1 直接丢表 |
+| 表结构（裁切） | off/on 各 **6/6** 次 `5×2`，不再复现 P1 直接丢表 |
+| 表结构（未裁切） | iPhone 13 通用 guard 表 `5×2` off/on 各 **6/6**；guard 696ms、P1 288ms、整页 1276ms |
+| 模拟器 `IMG_7544` | 通用 guard source `vision_structure`；P1 从跳过变为 applied，OCR 1807→1821，结构表 0→1 |
 | OCR | 1797→1782；归一化字符召回 **99.93%**，仅 `21m/2lm` 数字/字母混淆；新增 2 条 ghost 垃圾行（G1 暂缓） |
 | 性能 | P1 236ms；暖机整页 1388–1395ms；首跑 1764ms（PP-T032 冷启动优化暂缓） |
 | WPS | 独立 realbase PNG 与 P0 证据 **byte-identical**，仍 **0.906224** |
@@ -72,8 +73,8 @@ P1 已实现并与用户增强档隔离：
 
 **已知限制**
 
-- 表格 guard 目前依赖 P0 裁切路径；未裁切页（如模拟器 `IMG_7544`）跳过 P1。后续需通用表格/网格检测或复用 OCR 结构识别，才能扩大 P1 覆盖。
-- 表框来自 P0 的 `RecognizeDocumentsRequest` 结果，仍受已知 Vision 表检测波动影响；本样张用 `geometry_clear` 的参照表框兜底。
+- 通用 guard 仍依赖 Vision 结构识别；漏表（假阴性）时 P1 会无 mask 执行，后续需横竖线/网格启发式二次兜底。
+- 未裁切页 guard 需要额外 `.enhance` 预览 + 结构识别：真机 696ms、模拟器冷启动 1413ms；P1 冷启动仍可能超 1.5s，PP-T032 已暂缓。
 - P1 可能让纸面 show-through/ghost 更明显；G1 仍暂缓。
 - 冷启动 `CIColorKernel` 编译在模拟器首跑可达 1438ms；真机最终 P1 236ms，整页首跑 1764ms；PP-T032 冷启动优化已暂缓。
 
@@ -89,7 +90,7 @@ P1 已实现并与用户增强档隔离：
 
 ### P1
 
-- 折痕/光照压平：背景场估计 + 除法，排除 figure/artwork/表格；不改旧增强档；无表格 guard 的页面跳过。
+- 折痕/光照压平：背景场估计 + 除法，排除 figure/artwork/表格；不改旧增强档；未裁切页走通用表格 guard，识别失败才跳过。
 - 详细结果与限制见“二点六”。
 
 ### P2

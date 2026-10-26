@@ -61,7 +61,7 @@ P1 配方：p90 目标 0.8612、maxGain 1.5、覆盖率 0.8599；P0 表格安全
 ### A/B
 
 - off：`cropApplied=true`、`page_left_inset`、`geometry_clear`；结构表 `5×2`，OCR 1797，渲染 1552ms。
-- on：`illuminationApplied=true`、`illuminationTableGuardAvailable=true`、`illuminationProtectedTableCount=1`；结构表 `5×2`，OCR 1782，P1 236ms，渲染 1395ms。
+- on：`illuminationApplied=true`、`illuminationTableGuardAvailable=true`、`illuminationTableGuardSource=p0_crop_safety`、`illuminationProtectedTableCount=1`；结构表 `5×2`，OCR 1782，P1 236ms，渲染 1395ms。
 - 背景场方差：0.002832 → 0.0000293（**−98.97%**）。
 - OCR 归一化字符召回 **99.93%**；唯一 off-only 行是 `21m`/`2lm` 数字字母混淆；on 新增 2 条 ghost 垃圾行（`TSK00B`、`Saomt`），属已知 G1，非真实文本丢失。
 - 表结构重复：off/on 各 6 次，**6/6** 均为 1 表 `5×2`（`final-p1-device-repeat.json`）。
@@ -71,10 +71,13 @@ P1 配方：p90 目标 0.8612、maxGain 1.5、覆盖率 0.8599；P0 表格安全
   `final-p1-device-repeat.json`、`final-p1-device-bench.json`、
   `build/device-p1-final-{ab,repeat,bench}.xcresult`。
 
-### 未裁切页策略
+### 通用表格 guard（未裁切页）
 
-- 模拟器 `IMG_7544` 未裁切，P0 未跑表格安全门；P1 以 `table_guard_unavailable` 跳过，off/on 输出 byte-identical，OCR 1807/1807。
-- 这是有意的保守策略：没有可靠表框时不让 P1 改变页面，避免 `RecognizeDocumentsRequest` 表结构回归。后续需要通用表格/网格 guard 才能放开覆盖。
+- 未裁切页先用 `.enhance` 预览跑一次 `VisionDocumentStructureRecognizer`，表框来源记为 `vision_structure`；识别 nil/空页才跳过 P1（`table_guard_unavailable`）。
+- 真机未裁切 `IMG_7542`（chosen quad）：guard 1 个表框、guard 696ms、P1 288ms、整页 1276ms；表 `5×2` off/on 各 **6/6**，OCR 1805→1777，归一化字符召回 **99.73%**。
+- 裁切路径仍走 `p0_crop_safety`：表 `5×2` 3/3 复测（此前 6/6），P1 269ms。
+- 模拟器 `IMG_7544`：guard source `vision_structure`、P1 从跳过变为 applied；OCR 1807→1821，结构表 0→1。代价是 guard 1413ms、P1 1317ms（冷启动）。
+- 证据：`build/page-preprocess/p1-guard/final-summary.json`、`build/device-p1-guard4.xcresult`。
 
 ### WPS
 

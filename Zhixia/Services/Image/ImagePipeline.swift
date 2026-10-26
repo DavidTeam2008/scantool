@@ -63,7 +63,10 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let corrected: Data
         var protectedTableRects: [CGRect] = []
         var tableGuardAvailable = false
+        var tableGuardAttempted = false
+        var tableGuardSource: String?
         if wantsCrop {
+            tableGuardAttempted = true
             let croppedData = try await correct(
                 original: original,
                 quad: boundary.quad,
@@ -78,6 +81,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             )
             tableGuardAvailable = safety.tableRects.count > 0
                 || (safety.originalShapes.isEmpty && safety.croppedShapes.isEmpty)
+            if tableGuardAvailable { tableGuardSource = "p0_crop_safety" }
             report.illuminationTableGuardAvailable = tableGuardAvailable
             report.tableSafetyReference = safety.reference
             report.tableSafetyDecision = safety.decision
@@ -109,10 +113,25 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             throw ZhixiaError.perspectiveFailed
         }
         workingImage = correctedImage
+        // 未裁切页没有 P0 表格安全门；P1 前单独跑一次结构识别拿表框。
+        // 只做一次，识别失败/空页则继续跳过 P1，保持安全回退。
+        if draft.enhancement != .original,
+           preprocessRecipe.flattensPaperIllumination,
+           !tableGuardAvailable,
+           !tableGuardAttempted {
+            let guardOutcome = await detectTableGuard(correctedImage: correctedImage)
+            tableGuardAvailable = guardOutcome.isAvailable
+            protectedTableRects = guardOutcome.tableRects
+            tableGuardSource = guardOutcome.isAvailable ? "vision_structure" : "unavailable"
+            report.illuminationTableGuardElapsedMilliseconds = guardOutcome.elapsedMilliseconds
+        }
+        report.illuminationTableGuardAvailable = tableGuardAvailable
+        report.illuminationTableGuardSource = tableGuardSource
         // P1 与 EnhancementRecipe 完全隔离：只在 renderPage 的预处理阶段做。
         // 用户明确选「原图」时不改像素；其余滤镜都在压平后的页面上再增强。
-        // 表格保护区来自 P0 表格安全门；未裁切页没有可靠表框时跳过 P1，
-        // 宁可少做压平，也不让 RecognizeDocumentsRequest 丢表。
+        // 表格保护区来自 P0 表格安全门；未裁切页先用 `.enhance` 预览跑一次
+        // 结构识别拿表框（vision_structure）。失败/空页才跳过 P1，宁可少做
+        // 压平，也不让 RecognizeDocumentsRequest 丢表。
         if draft.enhancement == .original {
             report.illuminationApplied = false
             report.illuminationFallbackReason = "original_filter"
@@ -187,6 +206,54 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         guard let source = try? loadUpright(url: original) else { return nil }
         guard let corrected = try? perspectiveCorrect(source, quad: quad) else { return nil }
         return context.createCGImage(corrected, from: corrected.extent)
+    }
+
+    /// P1 的通用表格 guard：对未裁切页做一次结构识别，拿表框供增益 mask。
+    /// 只复用 `RecognizeDocumentsRequest` 的表格 bbox，不参与 P0 裁切决策。
+    private struct TableGuardOutcome {
+        var isAvailable: Bool
+        var tableRects: [CGRect]
+        var elapsedMilliseconds: Int
+    }
+
+    private func detectTableGuard(correctedImage: CIImage) async -> TableGuardOutcome {
+        let started = Date()
+        // 直接在未增强校正页上识别，真机表格容易漏检；先用通用 `.enhance`
+        // 生成一张“P1 前最终观感”预览，再识别。表框坐标是归一化的，可直接
+        // 映射回校正页；预览仅用于 guard，不会作为最终输出。
+        let preview = applyRecipe(correctedImage, enhancement: .enhance)
+        guard let previewData = try? jpegData(from: preview, quality: 0.82) else {
+            return TableGuardOutcome(
+                isAvailable: false,
+                tableRects: [],
+                elapsedMilliseconds: elapsedMilliseconds(since: started)
+            )
+        }
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zhixia-p1-guard-\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        guard (try? previewData.write(to: temp)) != nil else {
+            return TableGuardOutcome(
+                isAvailable: false,
+                tableRects: [],
+                elapsedMilliseconds: elapsedMilliseconds(since: started)
+            )
+        }
+        guard let page = await VisionDocumentStructureRecognizer().recognize(
+            imageURL: temp,
+            pageID: UUID()
+        ), page.hasContent else {
+            return TableGuardOutcome(
+                isAvailable: false,
+                tableRects: [],
+                elapsedMilliseconds: elapsedMilliseconds(since: started)
+            )
+        }
+        return TableGuardOutcome(
+            isAvailable: true,
+            tableRects: page.tables.map(\.bbox),
+            elapsedMilliseconds: elapsedMilliseconds(since: started)
+        )
     }
 
     /// 裁切前表格安全门：原页有表时，裁切页必须保留同样的表数量/行列/文本。

@@ -7,8 +7,9 @@ import Foundation
 /// 压平。`ImagePipeline.apply(imageData:enhancement:)` 不经过这里，旧增强
 /// 档和 Word 验收夹具的行为保持不变。
 ///
-/// P1 默认开启，但只在 `renderPage` 拿到可靠表格保护信息（P0 表格安全门
-/// 返回表框，或确认页内无表）时才执行；否则跳过并写
+/// P1 默认开启；`renderPage` 必须拿到可靠表格保护信息才执行：
+/// P0 表格安全门表框，或未裁切页的通用结构识别 guard（`.enhance` 预览 +
+/// `VisionDocumentStructureRecognizer`）。guard 识别失败/空页时跳过并写
 /// `table_guard_unavailable`，避免表格结构识别回归。
 struct PagePreprocessRecipe: Sendable, Equatable {
     var flattensPaperIllumination: Bool
