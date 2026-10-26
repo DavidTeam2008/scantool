@@ -73,12 +73,12 @@ enum PageBoundaryDetector {
         )
     }
 
-    /// 轻量文字包围盒（`VNDetectTextRectanglesRequest`，不跑识别）。
-    /// 用于裁切前的墨迹召回否决；无文字时返回 nil。
-    static func textBounds(
+    /// 轻量文字行框（`VNDetectTextRectanglesRequest`，不跑识别）。
+    /// 坐标系已翻转为左上原点，与 `Quad` 一致。
+    static func textBoxes(
         in image: CGImage,
         orientation: CGImagePropertyOrientation = .up
-    ) -> CGRect? {
+    ) -> [CGRect] {
         let request = VNDetectTextRectanglesRequest()
         request.reportCharacterBoxes = false
         let handler = VNImageRequestHandler(
@@ -89,14 +89,89 @@ enum PageBoundaryDetector {
         do {
             try handler.perform([request])
         } catch {
-            return nil
+            return []
         }
-        let boxes = (request.results ?? []).map { observation -> CGRect in
+        return (request.results ?? []).map { observation -> CGRect in
             let box = observation.boundingBox
             return CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
         }
-        guard !boxes.isEmpty else { return nil }
-        return boxes.reduce(boxes[0]) { $0.union($1) }
+    }
+
+    /// 多个文字行框的并集；无文字时返回 nil。
+    static func textBounds(boxes: [CGRect]) -> CGRect? {
+        guard let first = boxes.first else { return nil }
+        return boxes.reduce(first) { $0.union($1) }
+    }
+
+    /// 轻量文字包围盒；无文字时返回 nil。
+    static func textBounds(
+        in image: CGImage,
+        orientation: CGImagePropertyOrientation = .up
+    ) -> CGRect? {
+        textBounds(boxes: textBoxes(in: image, orientation: orientation))
+    }
+
+    /// 落在页面内的文字行框。用**框中心**过滤，避免把页面左缘外的折条
+    /// 文字/左页文字算进页内墨迹召回；这是页级左缘内收的标题守卫基础。
+    static func textBoxes(in page: Quad, from boxes: [CGRect]) -> [CGRect] {
+        let rect = page.boundingRect
+        return boxes.filter { box in
+            rect.contains(CGPoint(x: box.midX, y: box.midY))
+        }
+    }
+
+    /// 页级左缘内收结果。
+    struct LeftInset: Equatable, Sendable {
+        var quad: Quad
+        var targetX: CGFloat
+        /// 实际内收量占页宽的比例（例如 0.01 = 1% 页宽）。
+        var ratio: Double
+        /// 页面内最左文字行框的 x；用于证据/回归。
+        var textLeft: CGFloat
+    }
+
+    /// 真机页级边缘框的最后 1% 左页边内收。
+    ///
+    /// 只处理已经是页面级（area 0.25..<0.95）的框；内收量默认最多 1% 页宽，
+    /// 且必须给页内最左文字保留 `textMargin`（0.3% 图宽）安全边。找不到
+    /// 页内文字时不做内收——宁可留页边，不裁字。
+    static func pageLeftInset(
+        in page: Quad,
+        allTextBoxes: [CGRect],
+        maxRatio: CGFloat = 0.01,
+        textMargin: CGFloat = 0.003
+    ) -> LeftInset? {
+        guard !page.isDegenerate, page.area >= 0.25, page.area < 0.95 else {
+            return nil
+        }
+        let inside = textBoxes(in: page, from: allTextBoxes)
+        guard let textLeft = inside.map(\.minX).min() else { return nil }
+
+        let left = min(page.topLeft.x, page.bottomLeft.x)
+        let width = max(
+            page.topRight.x - page.topLeft.x,
+            page.bottomRight.x - page.bottomLeft.x
+        )
+        guard width > 0.1 else { return nil }
+        let desired = left + width * maxRatio
+        let target = min(desired, textLeft - textMargin)
+        guard target > left + 0.002 else { return nil }
+
+        var inset = page
+        inset.topLeft.x = max(inset.topLeft.x, target)
+        inset.bottomLeft.x = max(inset.bottomLeft.x, target)
+        guard !inset.isDegenerate,
+              inset.area < page.area - 0.0001,
+              inset.topLeft.x < inset.topRight.x - 0.1,
+              inset.bottomLeft.x < inset.bottomRight.x - 0.1
+        else { return nil }
+
+        return LeftInset(
+            quad: inset,
+            targetX: target,
+            ratio: Double((target - left) / width),
+            textLeft: textLeft
+        )
     }
 
     /// 选择最终页面四边形：检测到的页面必须**包含**已知墨迹包围盒，

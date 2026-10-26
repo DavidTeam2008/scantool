@@ -71,4 +71,71 @@ struct PageBoundaryDetectorTests {
         #expect(full.topLeft == CGPoint(x: 0, y: 0))
         #expect(full.bottomRight == CGPoint(x: 1, y: 1))
     }
+
+    @Test("页内文字框过滤：页左外的折条文字不算页内墨迹")
+    func filtersTextBoxesInsidePage() {
+        let page = Quad(
+            topLeft: CGPoint(x: 0.09, y: 0.04),
+            topRight: CGPoint(x: 0.95, y: 0.03),
+            bottomRight: CGPoint(x: 0.99, y: 0.96),
+            bottomLeft: CGPoint(x: 0.097, y: 0.957)
+        )
+        let strip = CGRect(x: 0.0436, y: 0.4, width: 0.03, height: 0.006)
+        let title = CGRect(x: 0.1056, y: 0.125, width: 0.21, height: 0.02)
+        let body = CGRect(x: 0.14, y: 0.3, width: 0.3, height: 0.012)
+        let inside = PageBoundaryDetector.textBoxes(
+            in: page,
+            from: [strip, title, body]
+        )
+        #expect(inside == [title, body])
+        #expect(PageBoundaryDetector.textBounds(boxes: inside)?.minX == title.minX)
+    }
+
+    @Test("页级左缘内收 1%，给标题保留 0.3% 安全边")
+    func insetsPageLeftAndKeepsTitleMargin() throws {
+        let page = Quad(
+            topLeft: CGPoint(x: 0.0899, y: 0.0412),
+            topRight: CGPoint(x: 0.9510, y: 0.0334),
+            bottomRight: CGPoint(x: 0.9861, y: 0.9648),
+            bottomLeft: CGPoint(x: 0.0972, y: 0.9570)
+        )
+        let strip = CGRect(x: 0.0436, y: 0.4, width: 0.03, height: 0.006)
+        let title = CGRect(x: 0.1056, y: 0.125, width: 0.21, height: 0.02)
+        let result = try #require(
+            PageBoundaryDetector.pageLeftInset(
+                in: page,
+                allTextBoxes: [strip, title]
+            )
+        )
+        #expect(result.quad.topLeft.x > page.topLeft.x)
+        #expect(result.quad.topLeft.x + 0.003 <= title.minX + 0.0001)
+        #expect(result.quad.topRight == page.topRight)
+        #expect(result.quad.bottomRight == page.bottomRight)
+        #expect(result.quad.area < page.area)
+        #expect(result.ratio > 0.009)
+        #expect(result.ratio <= 0.0101)
+    }
+
+    @Test("页内无文字/文字太靠左/非页级框不内收")
+    func rejectsUnsafeLeftInset() {
+        let page = Quad(
+            topLeft: CGPoint(x: 0.09, y: 0.04),
+            topRight: CGPoint(x: 0.95, y: 0.04),
+            bottomRight: CGPoint(x: 0.95, y: 0.96),
+            bottomLeft: CGPoint(x: 0.09, y: 0.96)
+        )
+        #expect(PageBoundaryDetector.pageLeftInset(in: page, allTextBoxes: []) == nil)
+        #expect(
+            PageBoundaryDetector.pageLeftInset(
+                in: page,
+                allTextBoxes: [CGRect(x: 0.091, y: 0.2, width: 0.2, height: 0.02)]
+            ) == nil
+        )
+        #expect(
+            PageBoundaryDetector.pageLeftInset(
+                in: .fullImage,
+                allTextBoxes: [CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.02)]
+            ) == nil
+        )
+    }
 }

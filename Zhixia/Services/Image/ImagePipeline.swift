@@ -61,7 +61,18 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 quad: boundary.quad,
                 rotationTurns: draft.rotationTurns
             )
-            if await cropIsTableSafe(original: original, croppedData: croppedData) {
+            let safety = await cropIsTableSafe(
+                original: original,
+                referenceQuad: draft.quad,
+                rotationTurns: draft.rotationTurns,
+                leftInsetRatio: report.pageLeftInset,
+                croppedData: croppedData
+            )
+            report.tableSafetyReference = safety.reference
+            report.tableSafetyDecision = safety.decision
+            report.tableSafetyOriginalShapes = safety.originalShapes
+            report.tableSafetyCroppedShapes = safety.croppedShapes
+            if safety.isSafe {
                 report.cropApplied = true
                 corrected = croppedData
             } else {
@@ -126,20 +137,113 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
 
     /// 裁切前表格安全门：原页有表时，裁切页必须保留同样的表数量/行列/文本。
     /// 任一结构识别失败 → 不裁（宁可保留页外背景，不丢表）。
-    private func cropIsTableSafe(original: URL, croppedData: Data) async -> Bool {
-        let temp = FileManager.default.temporaryDirectory
+    ///
+    /// 真机页级 quad 的参照图必须先按同一 quad 做正向矫正再识别：原图是
+    /// EXIF 旋转后的宽幅/整页照片，`RecognizeDocumentsRequest` 直接吃原 URL
+    /// 会得到 0 表，无法与裁切页做同签名 A/B。页级框用 `page_quad` 参照；
+    /// 近整图只保留原有整图参照，避免改变模拟器全图裁切路径。
+    private func cropIsTableSafe(
+        original: URL,
+        referenceQuad: Quad,
+        rotationTurns: Int,
+        leftInsetRatio: Double?,
+        croppedData: Data
+    ) async -> TableSafetyOutcome {
+        let usePageReference = !referenceQuad.isDegenerate
+            && referenceQuad.area >= 0.25
+            && referenceQuad.area < 0.95
+        let referenceLabel = usePageReference ? "page_quad" : "full_original"
+        let tempRef: URL? = usePageReference
+            ? FileManager.default.temporaryDirectory
+                .appendingPathComponent("zhixia-preprocess-ref-\(UUID().uuidString).jpg")
+            : nil
+        let tempCrop = FileManager.default.temporaryDirectory
             .appendingPathComponent("zhixia-preprocess-\(UUID().uuidString).jpg")
-        defer { try? FileManager.default.removeItem(at: temp) }
-        guard (try? croppedData.write(to: temp)) != nil else { return false }
+        defer {
+            if let tempRef { try? FileManager.default.removeItem(at: tempRef) }
+            try? FileManager.default.removeItem(at: tempCrop)
+        }
+
+        let referenceURL: URL
+        if let tempRef {
+            guard let data = try? await correct(
+                original: original,
+                quad: referenceQuad,
+                rotationTurns: rotationTurns
+            ), (try? data.write(to: tempRef)) != nil else {
+                return TableSafetyOutcome(
+                    isSafe: false,
+                    reference: referenceLabel,
+                    decision: "mismatch",
+                    originalShapes: [],
+                    croppedShapes: []
+                )
+            }
+            referenceURL = tempRef
+        } else {
+            referenceURL = original
+        }
+        guard (try? croppedData.write(to: tempCrop)) != nil else {
+            return TableSafetyOutcome(
+                isSafe: false,
+                reference: referenceLabel,
+                decision: "mismatch",
+                originalShapes: [],
+                croppedShapes: []
+            )
+        }
+
         let recognizer = VisionDocumentStructureRecognizer()
         guard let originalPage = await recognizer.recognize(
-            imageURL: original,
+            imageURL: referenceURL,
             pageID: UUID()
         ), let croppedPage = await recognizer.recognize(
-            imageURL: temp,
+            imageURL: tempCrop,
             pageID: UUID()
-        ) else { return false }
-        return PageCropSafety.isSafe(original: originalPage, cropped: croppedPage)
+        ) else {
+            return TableSafetyOutcome(
+                isSafe: false,
+                reference: referenceLabel,
+                decision: "mismatch",
+                originalShapes: [],
+                croppedShapes: []
+            )
+        }
+        let originalSignature = PageCropSafety.signature(originalPage)
+        let croppedSignature = PageCropSafety.signature(croppedPage)
+        let signatureSafe = PageCropSafety.isSafe(
+            original: originalPage,
+            cropped: croppedPage
+        )
+        let geometryClear = leftInsetRatio.map {
+            PageCropSafety.tablesClear(ofLeftFraction: $0, in: originalPage)
+        } ?? false
+        // 页级左缘内收只移除页边空白；若参照页所有表都在裁切线右侧，即使
+        // 裁切页的结构识别偶发返回 0 表，几何上也证明表未被裁掉。
+        let isSafe = signatureSafe || (croppedSignature.tableCount == 0 && geometryClear)
+        let decision: String
+        if signatureSafe {
+            decision = originalSignature.tableCount == 0 ? "no_tables" : "signature_match"
+        } else if isSafe {
+            decision = "geometry_clear"
+        } else {
+            decision = "mismatch"
+        }
+        return TableSafetyOutcome(
+            isSafe: isSafe,
+            reference: referenceLabel,
+            decision: decision,
+            originalShapes: originalSignature.shapes,
+            croppedShapes: croppedSignature.shapes
+        )
+    }
+
+    private struct TableSafetyOutcome {
+        var isSafe: Bool
+        var reference: String
+        var decision: String
+        var originalShapes: [[Int]]
+        var croppedShapes: [[Int]]
     }
 
     /// 仅在提议四角退化/近整图时补跑文档分割，避免改变正常取景框。
@@ -197,7 +301,18 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             return value
         }()
         let detection = PageBoundaryDetector.detect(in: image, orientation: orientation)
-        let textBounds = PageBoundaryDetector.textBounds(in: image, orientation: orientation)
+        let textBoxes = PageBoundaryDetector.textBoxes(in: image, orientation: orientation)
+        let textBounds = PageBoundaryDetector.textBounds(boxes: textBoxes)
+        let pageLike = !proposed.isDegenerate
+            && proposed.area >= 0.25
+            && proposed.area < 0.95
+        let insidePageTextBounds = pageLike
+            ? PageBoundaryDetector.textBounds(
+                boxes: PageBoundaryDetector.textBoxes(in: proposed, from: textBoxes)
+            )
+            : nil
+        var pageTextLeft: Double? = insidePageTextBounds.map { Double($0.minX) }
+        var pageLeftInsetRatio: Double?
         var chosen = PageBoundaryDetector.choose(
             proposed: proposed,
             detected: detection,
@@ -217,7 +332,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         // 折页裁切必须能解释被丢掉的文字：只允许丢左侧折条，正文列不能被裁。
         // 上限 15% 是折条文字面积的经验值；超过则视为误检，回到内容框裁切。
         var foldTrimTextLossRatio: Double?
-        var pageTextBounds = textBounds
+        var pageTextBounds = insidePageTextBounds ?? textBounds
         if let textBounds, let fold = foldTrim {
             let rightPage = SpreadSplitter.split(foldQuad, at: fold.u).right
             let retained = textBounds.intersection(rightPage.boundingRect)
@@ -292,7 +407,27 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             usedContentCrop = true
         }
         // 内容裁切框已包含极小的文字安全边；不再向外扩 1%，否则会把左侧折页带回来。
-        let expanded = usedContentCrop ? chosen : chosen.expanded(by: margin)
+        // 页级边缘框同样不向外扩：边缘检测已经贴住纸页，再扩只会把左页边/
+        // 桌面带回来。页级框若还能找到页内最左文字，则内收最多 1% 页宽。
+        let leftInset: PageBoundaryDetector.LeftInset? = {
+            guard !usedContentCrop, pageLike else { return nil }
+            return PageBoundaryDetector.pageLeftInset(
+                in: chosen,
+                allTextBoxes: textBoxes
+            )
+        }()
+        if let leftInset {
+            pageLeftInsetRatio = leftInset.ratio
+            pageTextLeft = Double(leftInset.textLeft)
+        }
+        let expanded: Quad
+        if usedContentCrop {
+            expanded = chosen
+        } else if pageLike {
+            expanded = leftInset?.quad ?? chosen
+        } else {
+            expanded = chosen.expanded(by: margin)
+        }
         let coverage: Double? = {
             guard let pageTextBounds, !pageTextBounds.isEmpty else { return nil }
             let intersection = expanded.boundingRect.intersection(pageTextBounds)
@@ -306,6 +441,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             reason = "fold_trim"
         } else if usedContentCrop {
             reason = "content_bounds"
+        } else if pageLeftInsetRatio != nil {
+            reason = "page_left_inset"
         } else if detection == nil {
             reason = "no_detection"
         } else if chosen.meanVertexDistance(to: proposed) < 0.01 {
@@ -330,6 +467,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             foldTrimSource: foldTrimSource,
             foldTrimTextLossRatio: foldTrimTextLossRatio,
             paperRightEdge: paperRightEdge,
+            pageTextLeft: pageTextLeft,
+            pageLeftInset: pageLeftInsetRatio,
             cropApplied: false,
             elapsedMilliseconds: elapsedMilliseconds(since: started),
             fallbackReason: reason,

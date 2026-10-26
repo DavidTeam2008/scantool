@@ -1,4 +1,4 @@
-# 19 · 页面预处理与下一阶段优先级（2026-10-25）
+# 19 · 页面预处理与下一阶段优先级（2026-10-26）
 
 > 状态：**当前周期**。执行清单见 [`TODO.md`](../TODO.md) 与
 > [`spec/page-preprocess/tasks.md`](../spec/page-preprocess/tasks.md)。
@@ -35,12 +35,14 @@
 
 这些问题同时影响**识别准确率**和**Word 重影**。先做预处理，后续再解决重影，收益更大。
 
-## 二点五、P0 执行进展（2026-10-25）
+## 二点五、P0 执行进展（2026-10-26）
 
 - 模拟器全图路径已闭环：`IMG_7542.JPG` 亮折页条裁切 `foldTrimU=0.090`、文字损失 5.06%、`textCoverage=1.0`、输出 1752×2200；左侧漫画折条与木桌去除，标题/页码保留。
 - 证据与汇总：`build/page-preprocess/final-p0/`。
 - WPS（`original-base.jpg`）**0.906224**，与既有基线一致，未回退。
-- 真机 iPhone 13 的边缘框已是页级 quad（area 0.808），当前不触发二次裁切，仍残留约 1% 左页边；且原图结构表为 0、裁切后为 1 表，表格同签名 A/B 不可用。下一项是真机页级 quad 左缘内收与 EXIF 感知表格门。
+- 真机 iPhone 13 的边缘框已是页级 quad（area 0.808）。2026-10-26 完成页级左缘内收：去掉 1% 页宽左页边，`pageTextLeft=0.1056`，标题保留 0.68% 安全边，`textCoverage=1.0`，输出 **1554×2200**；标题、页码、表格全部保留。
+- 真机表格安全门改为 EXIF/正立感知：页级 quad 先按同一 quad 正立矫正再识别，参照页表格 `[[5,3]]`；裁切 JPEG 偶发 0 表时，用「所有表 bbox 都在裁切线右侧」做几何兜底（`tableSafetyDecision=geometry_clear`）。最终增强页结构表 `[[5,2]]`、解析表格块 1、标题保留；输出 `build/page-preprocess/final-p0/device-after-inset.jpg`，报告 `device-report.json`、`device-page-inset.json`。
+- 模拟器全图回归仍为 `fold_trim` / 1752×2200，`IMG_7544` 仍不回裁 1633×2200；WPS 基线独立重跑 **0.906224**（`build/word-fidelity/realbase-wps-p0c-20261026b/`）。P0 边界/裁切在本样张闭环；PP-T004 的像素级页外残留可视化仍待补，下一阶段转 P1 折痕/光照。
 
 ## 三、优先级
 

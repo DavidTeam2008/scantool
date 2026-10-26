@@ -46,6 +46,17 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var foldTrimTextLossRatio: Double?
     /// 矫正图上检测到的纸面右缘（归一化 u）；用于解释右缘收边。
     var paperRightEdge: Double?
+    /// 页内最左文字行框的 x（全图归一化）；用于解释左缘内收。
+    var pageTextLeft: Double? = nil
+    /// 页级左缘实际内收量（占页宽比例）；nil 表示未内收。
+    var pageLeftInset: Double? = nil
+    /// 表格安全门的参照图来源（`page_quad` / `full_original`）。
+    var tableSafetyReference: String? = nil
+    /// 表格安全门判定（`signature_match` / `geometry_clear` / `mismatch` / `no_tables`）。
+    var tableSafetyDecision: String? = nil
+    /// 表格安全门读取的参照页/裁切页表格形状（[rows, columns]）。
+    var tableSafetyOriginalShapes: [[Int]]? = nil
+    var tableSafetyCroppedShapes: [[Int]]? = nil
     /// 裁切是否真正应用到底座；P0 表格 A/B 未过时为 false（只诊断）。
     var cropApplied: Bool = false
     var elapsedMilliseconds: Int

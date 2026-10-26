@@ -1,15 +1,15 @@
 # TODO · Zhixia
 
-> 更新时间：2026-10-25。当前周期：**page-preprocess**（`spec/page-preprocess/`）。
+> 更新时间：2026-10-26。当前周期：**page-preprocess**（`spec/page-preprocess/`）。
 > 历史交接 `SESSION-HANDOFF.md` 已退役：仍有价值的条目已并入本文件；其余文档见 `docs/17`、`docs/18`、`docs/19`。
 
 ## P0 · 页面预处理（当前执行）
 
 - [x] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [x] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已接 `ImagePipeline` / `preprocess.json`，单测通过。
-- [~] PP-T003 页外裁切：亮折页条检测 + 内容框 + 斜右边界已接。模拟器全图路径 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条与木桌已去除，表格安全门通过。真机 iPhone 13：边缘框已是页级（area 0.808），cropApplied=false，仍残留约 1% 左页边；原图 RecognizeDocumentsRequest tables=[]、裁切后 tables=[5]，表格同签名 A/B 无法成立。下一步：真机页级 quad 的左缘内收/EXIF 感知表格门。证据：`build/page-preprocess/final-p0/`。
-- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 foldTrimU/foldTrimSource/foldTrimTextLossRatio/paperRightEdge，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
-- [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（`build/word-fidelity/realbase-wps-p0c/`）与基线一致，未回退；真机折页裁切 A/B 仍未闭环。
+- [x] PP-T003 页外裁切：亮折页条检测 + 内容框 + 斜右边界 + 页级左缘内收已接。模拟器全图路径 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条与木桌已去除，标题/页码保留。真机 iPhone 13：页级 quad（area 0.808）左缘内收 1% 页宽，`pageTextLeft=0.1056`、标题保留 0.68% 安全边、textCoverage=1、输出 1554×2200；页级表格参照按正立页识别为 `[[5,3]]`，裁切 JPEG 偶发 0 表时以「表格 bbox 在裁切线右侧」几何兜底（`geometry_clear`），最终增强页结构表 `[[5,2]]`、解析表格块 1、标题保留。证据：`build/page-preprocess/final-p0/`。
+- [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 pageTextLeft/pageLeftInset/tableSafetyReference/tableSafetyDecision/tableSafety{Original,Cropped}Shapes，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
+- [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（2026-10-26 独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）与基线一致，未回退；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 渲染仍留待 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
 
 ## P1 · 折痕与光照
 

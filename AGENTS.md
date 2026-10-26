@@ -88,7 +88,7 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
 `spec/frame-truth` · `spec/scan-enhance` · `spec/guided-capture` · **`spec/page-preprocess`（当前周期）**。
 真机验收清单都在各周期 `device-acceptance.md`。
 
-## 6. 当前状态指针（2026-10-25）
+## 6. 当前状态指针（2026-10-26）
 
 - **当前状态**：Case A（折页书）与 Case B（摊开书）的既有修复已交付
   （case-b-sticky-v2 + folded-page-capture + frame-truth 三周期；全量
@@ -115,10 +115,13 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
   排期 R2~R5）。档位命名：**高保真 = 图片版**（默认），旧「高保真」= 可编辑版面还原
   （rawValue 迁移到 `layoutEditable`，老用户行为不变）。**真机收尾**：WPS 真实渲染
   0.906/0.907（docs/17 §八），真机表格 3×4→2×5 已修；背景字重影暂缓。
-- **page-preprocess 周期（2026-10-25，当前周期）**：先做页面边界/页外裁切，
+- **page-preprocess 周期（2026-10-25 起，当前周期）**：先做页面边界/页外裁切，
   再做折痕/光照与页边拉直；计划见 [`docs/19`](docs/19-page-preprocess-plan.md)，
   任务见 [`spec/page-preprocess/tasks.md`](spec/page-preprocess/tasks.md)、
-  执行清单 [`TODO.md`](TODO.md)。
+  执行清单 [`TODO.md`](TODO.md)。**P0 本样张已闭环（2026-10-26）**：模拟器
+  `IMG_7542` 亮折页条裁切 1752×2200；真机 iPhone 13 页级左缘内收 1% 后
+  1554×2200，标题/页码/表格保留，最终结构表 5×2；WPS 基线仍 0.906224。
+  下一步 P1 折痕/光照；像素级页外残留可视化仍待补。
 - **WPS 参考录屏已评估（2026-10-21）**：49s 录屏显示手动快门 + 单实线自动跟随框 +
   拍后自动重裁/滤镜；框在右页/整页间切换，快门时也不紧。结论：我们的固定引导框
   是替代范式而非 WPS 同款；不照搬静默换框，WPS 式自动裁边/滤镜列为 `T040`/`T041`

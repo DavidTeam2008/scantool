@@ -37,4 +37,14 @@ struct PageCropSafetyTests {
         #expect(PageCropSafety.isSafe(original: original, cropped: same))
         #expect(!PageCropSafety.isSafe(original: original, cropped: changed))
     }
+
+    @Test("页级左缘内收：表格在裁切线右侧时几何安全")
+    func geometryClearOfLeftInset() {
+        let page = Self.page([["a", "b"], ["c", "d"]])
+        #expect(PageCropSafety.tablesClear(ofLeftFraction: 0.01, in: page))
+        #expect(PageCropSafety.tablesClear(ofLeftFraction: 0.09, in: page))
+        #expect(!PageCropSafety.tablesClear(ofLeftFraction: 0.1, in: page))
+        #expect(!PageCropSafety.tablesClear(ofLeftFraction: 0.01, in: Self.page(nil)))
+        #expect(!PageCropSafety.tablesClear(ofLeftFraction: 0, in: page))
+    }
 }
