@@ -88,7 +88,8 @@ P2 先做**可量化、不可逆操作前的测量**，不直接上 warp：
 - 模拟器 `IMG_7542` rendered：70 行、24 带，中位 **0.62°**、p90 **1.12°**。
 - 报告集成开销：约 **41ms/页**（模拟器），不改变像素。
 - 结论：未达 Gate P2（中位 ≤0.3°、p90 ≤0.8°）；下一步是 T021 的局部水平带矫正，不能直接整页旋转（会破坏页边水平/垂直约束）。
-- 证据：`build/page-preprocess/p2-analysis.json`、`build/page-preprocess/p2-integration-summary.json`。
+- T021 原型（局部垂直 shear）结果：设备表格页中位 0.49°→0、p90 1.11°→1.00，但表结构 1→0（6/6）；无表 `IMG_7544` p90 1.09°→0.44°，但 OCR 1807→1775。两项都不可接受，原型**未启用**；需要 table-aware 校验和 OCR 调参后再接。
+- 证据：`build/page-preprocess/p2-analysis.json`、`build/page-preprocess/p2-integration-summary.json`、`build/page-preprocess/p2-summary.json`。
 
 ## 三、优先级
 
