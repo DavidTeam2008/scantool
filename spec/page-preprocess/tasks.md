@@ -1,7 +1,7 @@
 # Tasks: 页面预处理（page-preprocess）
 
 **Input**: `spec.md` / `plan.md`
-**当前优先级**: P0（已闭环）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
+**当前优先级**: P0.1（边框/背景单次收敛，2026-10-27 起）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
 **测试基线**: `Makefile` 479 total / 469 passed / 1 expected（2026-10-26 全量；已知 9 个 full-suite 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
@@ -11,6 +11,16 @@
 - [x] **PP-T003** `ImagePipeline` 接入 D1/D2：新增 `leftBrightFoldTrim`（亮折页条）、窄折条分支、文字损失门、斜右边界和纸张右缘；新增页级 quad 左缘内收（最多 1% 页宽，给页内最左文字留 0.3% 安全边）。模拟器全图 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条/木桌去除，标题与页码保留。真机 iPhone 13：pageLeftInset=1%、pageTextLeft=0.1056、textCoverage=1、输出 1554×2200；`geometry_clear` 表格兜底后最终结构表 [[5,2]]、解析表格块 1、标题保留。证据 `build/page-preprocess/final-p0/`。
 - [~] **PP-T004** 指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors/foldTrim*/paperRightEdge/pageTextLeft/pageLeftInset/tableSafety*；iPhone 13 实测 textCoverage 1.0、`outsideAreaRatio=0.1967`（原图内页面 quad 外面积，不是输出背景残留）、报告内耗时 179ms。汇总 `build/page-preprocess/final-p0/summary.json`。**待做**：背景像素级残留汇总与可视化。
 - [~] **PP-T005** 真机/模拟器 A/B：WPS 0.906224 与基线一致（独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 全流程验收归入暂缓的 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
+
+## P0.1 · 边框/背景单次收敛（2026-10-27 起）
+
+背景：`IMG_7544` 连续三次保存/重扫可逐步去掉右/下、上、左折页，最终 1575×2051；但这是 3 次重编码/降采样后的 coarse-to-fine，不是单次算法保证。评估见 `docs/20-border-crop-convergence.md`。
+
+- [ ] **PP-T050** 固定 `IMG_7544` + `myself-1/2/3` 证据：走实际 `renderPage` 链路，记录每轮裁切框、尺寸、OCR、表结构、页外背景；落 `build/page-preprocess/crop-convergence/`。
+- [ ] **PP-T051** 单次纸张/内容包络：始终计算 `paperQuad` + `contentEnvelope`（文字 ∪ 表格 ∪ 图片/插图 ∪ 页码/页脚 ∪ 装饰块 + 0.3–0.8% 安全边），整图 proposed 也参与；不再只在 fold/detection 变化时裁。
+- [ ] **PP-T052** 可选 refine：最多 1 次（总候选 ≤3），原图全分辨率内存内做，不重复 P1/增强/JPEG；变化 <0.3% 即停；P0 增量 ≤600ms，超预算只用 T051。
+- [ ] **PP-T053** 内容安全门：标题/首字、页码、页脚、表格、插图 bbox 包含；OCR 归一化召回 ≥99.5%；表签名一致；折页文字损失门；失败回退上一轮/整图；幂等性变化 <0.5%。
+- [ ] **PP-T054** 扫描观感：裁切后白底/纸色画布 + 0.5–1% 纸边；与 P1/P2/G1 分开验收。
 
 ## P1 · 折痕/光照
 
@@ -42,6 +52,7 @@
 ## 验收门
 
 1. **Gate P0**：裁切后页外背景 <2%、墨迹召回 ≥99%、无页面内子框裁切；当前 WPS 分数不回退。
+1b. **Gate P0.1**：单次/最多一次 refine 后页外背景 <2%；标题/页码/页脚/表格/插图 bbox 包含率 100%；OCR 归一化召回 ≥99.5%；表签名一致；幂等性裁切变化 <0.5%；P0 增量 ≤600ms；WPS 0.906224 不回退。
 2. **Gate P1**：折痕区亮度方差下降 ≥30%，照片/插图不变形不变色；OCR 召回不降；表格结构不变。当前 iPhone 13 裁切路径：方差 −98.97%、表结构 6/6 `5×2`、字符召回 99.93%；未裁切路径表结构 6/6、字符召回 99.73%。
 3. **Gate P2（当前）**：文字行中位 ≤0.3°、p90 ≤0.8°、页边直线/平行 ≤0.5% 短边；当前仅完成测量，iPhone 13 中位 0.49°/p90 1.11°，矫正未接。
 4. **Gate P3**：真机 WPS SSIM ≥0.90，且多条件样张无内容丢失。

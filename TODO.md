@@ -1,6 +1,6 @@
 # TODO · Zhixia
 
-> 更新时间：2026-10-26。当前周期：**page-preprocess**（`spec/page-preprocess/`）。
+> 更新时间：2026-10-27。当前周期：**page-preprocess**（`spec/page-preprocess/`），下一阶段重点：**P0.1 边框/背景单次收敛**。
 > 历史交接 `SESSION-HANDOFF.md` 已退役：仍有价值的条目已并入本文件；其余文档见 `docs/17`、`docs/18`、`docs/19`。
 
 ## P0/P1 · 页面预处理（当前执行）
@@ -10,6 +10,16 @@
 - [x] PP-T003 页外裁切：亮折页条检测 + 内容框 + 斜右边界 + 页级左缘内收已接。模拟器全图路径 `IMG_7542`：cropApplied=true、foldTrimU=0.090、foldTrimSource=bright_fold、文字损失 5.06%、textCoverage=1、输出 1752×2200；左侧折页条与木桌已去除，标题/页码保留。真机 iPhone 13：页级 quad（area 0.808）左缘内收 1% 页宽，`pageTextLeft=0.1056`、标题保留 0.68% 安全边、textCoverage=1、输出 1554×2200；页级表格参照按正立页识别为 `[[5,3]]`，裁切 JPEG 偶发 0 表时以「表格 bbox 在裁切线右侧」几何兜底（`geometry_clear`），最终增强页结构表 `[[5,2]]`、解析表格块 1、标题保留。证据：`build/page-preprocess/final-p0/`。
 - [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 pageTextLeft/pageLeftInset/tableSafetyReference/tableSafetyDecision/tableSafety{Original,Cropped}Shapes，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
 - [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（2026-10-26 独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）与基线一致，未回退；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 全流程验收归入暂缓的 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
+
+## P0.1 · 边框/背景单次收敛（2026-10-27 起，下一阶段重点）
+
+**背景**：真机对 `docs/media/IMG_7544.jpg` 连续做三次“扫→保存→再扫”，依次去掉右/下、上、左折页，最终到 1575×2051；目测标题、页码、页脚、两个表、照片仍在，macOS Vision OCR 字符数 1752→1777（仅作粗筛）。这说明目标裁切区域存在且稳定，当前问题主要是**单次检测欠裁**，不是无法识别页面。多步方案以多次重编码/降采样（最终面积仅原图 27.8%）换取 coarse-to-fine，不能作为正式链路。评估见 `docs/20-border-crop-convergence.md`。
+
+- [ ] **PP-T050 复现与取证**：固定 `IMG_7544.jpg` 与 `myself-1/2/3` 三张中间图，记录每轮实际裁切框、输出尺寸、OCR 行/字符、表格结构、页边外背景；必须跑实际 `renderPage`/相册导入链路，不能只用 `VisionEdgeDetector` 单测替代。证据落 `build/page-preprocess/crop-convergence/`。
+- [ ] **PP-T051 单次纸张/内容包络**：在 P0 始终计算 `paperQuad` + `contentEnvelope`（文字框 ∪ 表格/图片/页码/页脚/装饰块 + 0.3–0.8% 纸张安全边），即使 `proposed` 是整图、或检测框接近整图也参与候选；不再只在 fold/detection 变化时才启用内容裁切。优先直接收敛，不先做“重复跑三次”。
+- [ ] **PP-T052 可选 refine**：T051 后仍有明显页外背景时，最多再 refine 1 次（总候选 ≤2）；只在原图全分辨率内存中做裁切/透视，不重复 P1/增强/JPEG；裁切变化 <0.3% 页宽/高即停。预算 P0 增加 ≤600ms；超预算只保留 T051。
+- [ ] **PP-T053 内容安全门**：标题/首字、页码、页脚、表格 bbox、图片/插图 bbox 必须被最终框包含；OCR 归一化字符召回 ≥99.5%、表格结构签名一致、折页文字损失不得超门；任一不满足回退上一轮或整图。验收包含**幂等性**：对输出再跑一次，裁切变化 <0.5%。
+- [ ] **PP-T054 扫描观感**：裁切后页外统一白底/纸色画布（保留 0.5–1% 纸边），避免硬裁成“内容贴边”；与 P1 光照、P2 拉直分开验收。G1 透印不在本任务内混合处理。
 
 ## P1 · 折痕与光照
 
@@ -41,9 +51,15 @@
 - [ ] PP-T031 10~20 张多条件样张回归。
 - [ ] PP-T033 文档/AGENTS/基线最终同步。
 
+## G1 · 验收与透印复原（建议顺序，暂缓执行，不抢 P0.1）
+
+- [ ] **G1-A GhostMetrics**：新增 `residualInkRate`（OCR 行框内擦除后残留）、`showThroughContrast`（文本/表格/插图外背景透印局部对比度）、`ghostInkOutsideText`；输出 JSON + 前后 crop，现有 WPS 0.906224 仅作兼容门限，不作为唯一目标。
+- [ ] **G1-B 干净参考**：至少一个 fixture 做人工/半自动清理，或用“干净页 + 合成背面透印”建立可计算真值；否则无法证明透印下降不是把纸面/表格一起洗白。
+- [ ] **G1-C 局部复原**：只输出低频背景场或 mask，保护表格/照片/深色装饰，失败回退原图；验收要求 ghost 指标显著下降、WPS 不低于 0.906224、OCR/表格不回退。经典方法失败后再评估 P2.5 端侧模型。
+
 ## 暂缓 · 导出层重影（不在本周期）
 
-- [ ] **G1** 可编辑字与背景字未完全重合：2026-10-26 的 mask 扩边/实心擦除实验（solid 0.904239、lineExpansion 0.008 0.903989、inkThreshold 35 0.905826）均低于 **0.906224**；对 baked base 做低饱和透印压制也只得 0.8987/0.8908，低于 0.90。结论：WPS 可见 ghost 主要是纸面 show-through/透印，位于 OCR 行框之外；全局 tone/contrast 会伤表格/照片，不能作为 G1 解。下一步需要**局部背景/透印复原模型**（输出 mask/低频场，不生成页面），并先定义不奖励透印的视觉保真指标；证据：`build/word-fidelity/g1-experiments/NOTE.md`。
+- [ ] **G1** 可编辑字与背景字未完全重合：2026-10-26 的 mask 扩边/实心擦除实验（solid 0.904239、lineExpansion 0.008 0.903989、inkThreshold 35 0.905826）均低于 **0.906224**；对 baked base 做低饱和透印压制也只得 0.8987/0.8908，低于 0.90。结论：WPS 可见 ghost 主要是纸面 show-through/透印，位于 OCR 行框之外；全局 tone/contrast 会伤表格/照片，不能作为 G1 解。下一步按上面的 G1-A/B/C 顺序执行；证据：`build/word-fidelity/g1-experiments/NOTE.md`。
 - [ ] **G2** iOS 26.4.1 模拟器 `RecognizeDocumentsRequest` 对练习册表返回 0 表（iOS 27 正常）：补结构化回退或环境限制说明；当前按用户决定暂缓 iOS 26，只保证 iOS 27。
 - [ ] **G2b** iOS 27 `GoldenWorksheet` 4 项失败：OCR 113 行、`LayoutAnalyzer` anchors=0、`InkFigureDetector` 只给右侧整栏大图；金标准“漫画条”落在书脊/空白窄带，疑似 iOS 26 figure 检测器的伪 figure 被写进夹具。**先记为已知测试债务**；产品级“右侧大图存在”仍通过。后续单独校准夹具或窄条 figure 检测，不阻塞 page-preprocess。
 - [ ] **G3** 粗体行（Articles wanted / FUN ACTIVITIES）目前仍为常规字重；像素墨量推断误判率高，暂缓。
