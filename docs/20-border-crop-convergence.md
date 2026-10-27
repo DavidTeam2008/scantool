@@ -218,15 +218,15 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 | 指标 | 结果 |
 |---|---|
 | 原图整图 draft | `cropSource=content_envelope`、`cropApplied=true` |
-| 裁切框 | 左 0.0162、上 0.0352、右/下 1.0 |
+| 裁切框 | 左 0.0162、上 0.0352、下 0.9870、右 1.0 |
 | 文字覆盖 | `textCoverage=1`、`envelopeTextCoverage=1` |
-| 输出 | 1672×2200（含 0.6% 白底画布） |
+| 输出 | 1694×2200（含 0.6% 白底画布） |
 | 标题/页码/表格/照片 | 目测保留；OCR 回读标题/页码仍在 |
-| 三张中间图 | 1/2 因表格结构签名不一致回退整图；3 可裁 |
-| 幂等性 | 对第一轮输出再跑整图 draft：1672×2200 → 1672×2200 |
+| 三张中间图 | 1 表格签名不一致时框外刷白；2/3 可裁 |
+| 幂等性 | 对第一轮输出再跑整图 draft：1694×2200 → 1694×2200 |
 | WPS realbase | **0.906224**，PNG SHA-256 与已接受基线 byte-identical |
-| 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 2/2、`ImagePipelineTests` 2/2 |
-| 全量 | 489 total / 479 passed / 1 expected / 9 known full-suite failures |
+| 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 3/3、`ImagePipelineTests` 2/2 |
+| 全量 | 490 total / 481 passed / 1 expected / 8 known full-suite failures（flaky 集合 7–9） |
 
 证据：
 
@@ -234,6 +234,28 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 - `build/page-preprocess/crop-convergence/T050-IMG_7544.preprocess.json`
 - `build/page-preprocess/crop-convergence/T050-intermediate-summary.json`
 - `build/word-fidelity/p01-wps/`（WPS 独立复跑）
+
+### 7.4 真机 round1 回归（2026-10-27）
+
+用户在 iPhone 13 上用“扫 → 相册 → 原始图 → 保存 → 分享”得到：
+
+`docs/media/optimize/round1-1-4AE6D8D-9473-47B4-8C7D-2F6258549514-rendered.jpg`（1561×2200）
+
+现象：顶部仍有明显背景，底部也有一点背景。根因是**页面级 draft**
+（自动边缘检测已给出页级 quad）此前不进入包络分支，只走旧的页级左缘
+内缩；包络只在整图/近整图 proposed 时运行。
+
+修复：
+
+- `pageBoundary(allowEnvelope:)`：自动 page-level draft 也计算纸张/内容
+  包络；只有用户手动拖角（`userAdjustedQuad=true`）才跳过。
+- 包络增加上/下/左/右文字锚点；下缘按文字 +0.8% 收边，去掉底部背景。
+- 表格安全门拒绝裁切时不再直接留原背景：保留原页几何，把候选框外刷白
+  （`backgroundWhitened=true`），避免为了去背景破坏表格结构。
+- 新增 `PageCropConvergenceTests/pageLevelDraftStillRefines` 回归。
+
+真机复测待用户重新安装当前构建后确认；目前样张级验证已覆盖整图 draft
+与页面级 draft 两条路径。
 
 ### 7.3 未闭环
 
@@ -243,7 +265,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 2. **refine 未真正触发**：原图 `envelopeRefineApplied=false`；table-aware
    retry 已接线但本样张不触发，背景残留 refine 还需合成/真机样本验证。
 3. **幂等性**：已对第一轮输出再跑一次实际 `renderPage`，输出尺寸
-   1672×2200 → 1672×2200；白底画布通过四边白框检测避免重复裁切/加边。
+   1694×2200 → 1694×2200；白底画布通过四边白框检测避免重复裁切/加边。
 4. **标题/字形安全边**：当前 0.8% 文字边来自 bbox，仍建议真机多字体复核；
    OCR 输出中标题曾出现 `An rticle` 的识别错误，目测字形未被裁，但不能
    只靠 OCR 证明。

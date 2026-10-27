@@ -55,6 +55,8 @@ struct PagePreprocessReport: Codable, Equatable, Sendable {
     var envelopeBackgroundResidual: Double? = nil
     /// P0.1 候选内的文字包围盒覆盖率；<1 表示候选可能切到文字。
     var envelopeTextCoverage: Double? = nil
+    /// 表格安全门拒绝裁切时，是否把候选框外背景刷成白色（保留原图缩放/表格）。
+    var backgroundWhitened: Bool? = nil
     /// P0.1 是否执行了第二次几何 refine。
     var envelopeRefineApplied: Bool? = nil
     /// P0.1 候选未采用的原因（`too_large` / `too_small` / `degenerate` / `no_envelope`）。

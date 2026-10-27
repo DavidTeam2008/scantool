@@ -89,6 +89,35 @@ struct PageCropConvergenceTests {
         #expect(second.pixelSize.width > 0)
     }
 
+    @Test("页面级 draft：仍允许包络修正顶部/底部背景")
+    func pageLevelDraftStillRefines() async throws {
+        let input = try copyInput("docs/media/IMG_7544.jpg", as: "T050-page-level.jpg")
+        // 模拟真机页面级边缘框：左右已收，但顶部仍带页外背景。
+        let pageQuad = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.0),
+            topRight: CGPoint(x: 0.98, y: 0.0),
+            bottomRight: CGPoint(x: 0.98, y: 1.0),
+            bottomLeft: CGPoint(x: 0.02, y: 1.0)
+        )
+        let rendered = try await ImagePipeline().renderPage(
+            original: input,
+            draft: PageDraft(
+                sessionID: UUID(),
+                quad: pageQuad,
+                enhancement: .enhance
+            )
+        )
+        let report = try loadReport(for: input)
+        // 页面级 draft 下表格结构可能偶发变化：允许裁切成功，或保留原
+        // 页码/表格几何但把候选框外背景刷白；二者都必须去掉顶部背景。
+        #expect(report.cropApplied || report.backgroundWhitened == true)
+        #expect(report.cropSource == "content_envelope")
+        #expect(report.chosen.topLeft[1] > 0.01)
+        #expect(rendered.pixelSize.width > 0)
+        let output = Self.evidenceDirectory.appending(path: "T050-page-level-rendered.jpg")
+        try rendered.jpeg.write(to: output)
+    }
+
     @Test("三张中间图：实际 renderPage 只做诊断，不要求强制裁切")
     func intermediateImagesAreDiagnosticOnly() async throws {
         let inputs = [
@@ -126,6 +155,8 @@ struct PageCropConvergenceTests {
             ])
             #expect(rendered.pixelSize.width > 0)
             #expect(rendered.pixelSize.height > 0)
+            // 不能裁切的页必须至少把候选框外页外背景刷白；不能悄悄留下原背景。
+            #expect(report.cropApplied || report.backgroundWhitened == true)
         }
         let data = try JSONSerialization.data(
             withJSONObject: summary,

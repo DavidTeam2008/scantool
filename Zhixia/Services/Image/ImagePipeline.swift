@@ -53,7 +53,11 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     func renderPage(original: URL, draft: PageDraft) async throws -> RenderedPageData {
         // P0 页面预处理：拍后/相册路径若四角检测退化或接近整图，用文档分割
         // 再试一次页面边界；只有检测框通过“提议框回退”才采用（不裁字优先）。
-        let boundary = pageBoundary(original: original, proposed: draft.quad)
+        let boundary = pageBoundary(
+            original: original,
+            proposed: draft.quad,
+            allowEnvelope: !draft.userAdjustedQuad
+        )
         var report = boundary.report
         let maxVertexDistance = zip(boundary.quad.points, draft.quad.points)
             .map { hypot($0.x - $1.x, $0.y - $1.y) }
@@ -73,6 +77,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         var tableGuardAvailable = false
         var tableGuardAttempted = false
         var tableGuardSource: String?
+        var backgroundWhiteningRect: CGRect?
         if wantsCrop {
             tableGuardAttempted = true
             var cropQuad = boundary.quad
@@ -81,14 +86,22 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 quad: cropQuad,
                 rotationTurns: draft.rotationTurns
             )
+            let draftRect = draft.quad.boundingRect
+            func referenceCropRect(_ quad: Quad) -> CGRect {
+                let rect = quad.boundingRect
+                return CGRect(
+                    x: (rect.minX - draftRect.minX) / max(draftRect.width, 0.0001),
+                    y: (rect.minY - draftRect.minY) / max(draftRect.height, 0.0001),
+                    width: rect.width / max(draftRect.width, 0.0001),
+                    height: rect.height / max(draftRect.height, 0.0001)
+                ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
             var safety = await cropIsTableSafe(
                 original: original,
                 referenceQuad: draft.quad,
                 rotationTurns: draft.rotationTurns,
                 leftInsetRatio: report.pageLeftInset,
-                cropRect: draft.quad.area >= 0.95
-                    ? cropQuad.boundingRect
-                    : nil,
+                cropRect: referenceCropRect(cropQuad),
                 croppedData: croppedData
             )
             // P0.1 refine：内容包络可能为了去掉折页而切到表格边缘，结构
@@ -122,7 +135,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                         referenceQuad: draft.quad,
                         rotationTurns: draft.rotationTurns,
                         leftInsetRatio: report.pageLeftInset,
-                        cropRect: retryQuad.boundingRect,
+                        cropRect: referenceCropRect(retryQuad),
                         croppedData: retryData
                     )
                     if retrySafety.isSafe {
@@ -153,8 +166,13 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 report.cropApplied = true
                 corrected = croppedData
             } else {
+                // 表格结构/识别抖动时不允许裁切，但页外背景仍然可见。
+                // 保留原页尺寸/缩放（表格保护），只把候选框外的背景刷白；
+                // 这既解决“顶部/底部背景没去掉”，又不把表格交给裁切后的
+                // 结构识别重新解释。
                 report.cropApplied = false
-                report.fallbackReason = "table_mismatch"
+                report.fallbackReason = "table_mismatch_whitened"
+                backgroundWhiteningRect = referenceCropRect(cropQuad)
                 corrected = try await correct(
                     original: original,
                     quad: draft.quad,
@@ -174,6 +192,13 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             throw ZhixiaError.perspectiveFailed
         }
         workingImage = correctedImage
+        if let backgroundWhiteningRect {
+            workingImage = whiteOutside(
+                correctedImage,
+                rect: backgroundWhiteningRect
+            )
+            report.backgroundWhitened = true
+        }
         // 未裁切页没有 P0 表格安全门；P1 前单独跑一次结构识别拿表框。
         // 只做一次，识别失败/空页则继续跳过 P1，保持安全回退。
         if draft.enhancement != .original,
@@ -523,14 +548,18 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
     /// 检测成功后外扩 1% 安全边（各边约 1% 页宽/页高），并写可观测报告。
     private func pageBoundary(
         original: URL,
-        proposed: Quad
+        proposed: Quad,
+        allowEnvelope: Bool = true
     ) -> (quad: Quad, report: PagePreprocessReport) {
         let started = Date()
         let margin = 0.01
         // 真机边缘检测常给出面积 0.8~0.9 的页面四边形，仍然可能带左侧
         // 亮折条/页外背景；因此放宽到 0.70 再跑折页与内容框候选。
         // 正常单页若没有折条，后续 chosenNearProposed 会拒绝内容框裁切。
-        guard proposed.isDegenerate || proposed.area >= 0.70 else {
+        guard proposed.isDegenerate
+            || proposed.area >= 0.70
+            || (allowEnvelope && proposed.area >= 0.25)
+        else {
             return (
                 proposed,
                 PagePreprocessReport(
@@ -598,7 +627,8 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         var envelopeCandidate: PageContentEnvelopeDetector.Candidate?
         var usedEnvelope = false
         var envelopeSkipReason: String?
-        if proposed.area >= 0.90 || proposed.isDegenerate,
+        if allowEnvelope,
+           (proposed.area >= 0.25 || proposed.isDegenerate),
            let upright = uprightCGImage(image, orientation: orientation),
            let envelope = PageContentEnvelopeDetector.detect(in: upright) {
             envelopeCandidate = envelope
@@ -621,9 +651,15 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 // 用页内文字作为上/左锚点；右/下仍保留图片/页码内容包络。
                 // 上/左各留 0.8% 纸内边；其余由文字覆盖率和表格安全门兜底。
                 rect.origin.y = max(rect.origin.y, textBounds.minY - 0.008)
-                rect.size.height = max(0, rect.maxY - rect.origin.y)
+                rect.size.height = max(
+                    0,
+                    min(rect.maxY, textBounds.maxY + 0.008) - rect.origin.y
+                )
                 rect.origin.x = max(rect.origin.x, textBounds.minX - 0.008)
-                rect.size.width = max(0, rect.maxX - rect.origin.x)
+                rect.size.width = max(
+                    0,
+                    min(rect.maxX, textBounds.maxX + 0.008) - rect.origin.x
+                )
             }
             if let textBounds,
                !rect.insetBy(dx: 0.001, dy: 0.001).contains(textBounds) {
@@ -656,8 +692,10 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 chosen = candidate
                 usedEnvelope = true
             }
-        } else if proposed.area < 0.90 && !proposed.isDegenerate {
-            envelopeSkipReason = "proposed_already_cropped"
+        } else if !allowEnvelope {
+            envelopeSkipReason = "user_adjusted_quad"
+        } else if proposed.area < 0.25 && !proposed.isDegenerate {
+            envelopeSkipReason = "proposed_too_small"
         } else {
             envelopeSkipReason = "no_envelope"
         }
@@ -857,6 +895,34 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
 
     private func elapsedMilliseconds(since start: Date) -> Int {
         max(0, Int(Date().timeIntervalSince(start) * 1000))
+    }
+
+    /// 表格安全门拒绝裁切时的保底：保留原页几何，只把候选框外背景刷白。
+    /// `rect` 是归一化左上原点；CIImage 使用左下原点，需翻 y。
+    private func whiteOutside(_ image: CIImage, rect: CGRect) -> CIImage {
+        let extent = image.extent
+        let clipped = rect.standardized.intersection(
+            CGRect(x: 0, y: 0, width: 1, height: 1)
+        )
+        guard clipped.width > 0.01, clipped.height > 0.01 else { return image }
+        let pixelRect = CGRect(
+            x: clipped.minX * extent.width,
+            y: (1 - clipped.maxY) * extent.height,
+            width: clipped.width * extent.width,
+            height: clipped.height * extent.height
+        )
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+            .cropped(to: extent)
+        let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0))
+            .cropped(to: extent)
+        let whiteMask = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+            .cropped(to: pixelRect)
+        let mask = whiteMask.composited(over: black).cropped(to: extent)
+        guard let filter = CIFilter(name: "CIBlendWithMask") else { return image }
+        filter.setValue(image, forKey: "inputImage")
+        filter.setValue(white, forKey: "inputBackgroundImage")
+        filter.setValue(mask, forKey: "inputMaskImage")
+        return filter.outputImage ?? image
     }
 
     /// P0.1 扫描观感：页面裁切成功后铺一层白底画布，给纸边/标题留下
