@@ -304,14 +304,15 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 回归：右侧红色背景和顶部楔形已清，右上 `2` 保留；输出
 `build/device-round1-3/edge-cleaned.jpg`。`PageContentEnvelopeDetectorTests`
 4/4、`PageCropConvergenceTests` 3/3 通过。WPS realbase 重新渲染
-`build/word-fidelity/p01-edge-wps/out-restored-realbase-wps.png` 与基线
+`build/word-fidelity/p01-edge-wps-final/edge-final-realbase-wps.png` 与基线
 `round2-realbase-wps.png` **SHA-256 完全一致**（`3faabfd0…`），仍
 **0.906224**。
 
 全量 `make test` 当前 **492 total / 481 passed / 1 expected / 10 failed**；
-失败均为已记录的 Golden/WordFidelity/Review/Reconstruct 顺序抖动，
+本轮 10 个失败为 Golden 4、WordFidelity 1、Review preview 4、ReviewSplit
+1；`ReconstructEndToEndTests` 本轮未失败（曾在其他顺序下抖动），单独跑
 ReviewViewModelTests、ReviewSplitProposalTests、ReconstructEndToEndTests
-单独跑均通过。
+均通过。
 
 真机重装后的实际复测（用户从相册选 `IMG_7542.JPG`，保存并分享）得到
 `docs/media/optimize/round1-4-324DA051-5DB2-4586-86AF-B33CDCF1B426-rendered.jpg`

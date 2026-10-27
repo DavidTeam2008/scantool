@@ -70,7 +70,7 @@
 ## 验证与交付债
 
 - [x] 更新 `Makefile` 测试基线为全量实际值：**492 total / 481 passed / 1 expected failure**（2026-10-27 P0.1 新增 `PageEdgeCleaner` 回归测试 1；`PageContentEnvelopeDetectorTests` 共 4、`PageCropSafetyTests` +1、`PageCropConvergenceTests` 3）。全量 flaky 失败 10 个，见下。
-- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**492 total / 481 passed / 1 expected / 10 failed**；失败为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 顺序抖动、Review/ReviewSplit preview 超时、`ReconstructEndToEndTests` 顺序抖动。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.1 测试均通过，全量不绿是既有债务，不是 P0.1 引入。
+- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**492 total / 481 passed / 1 expected / 10 failed**；本轮 10 个为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1（`ReconstructEndToEndTests` 本轮未失败，曾在其他顺序下抖动）。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.1 测试均通过，全量不绿是既有债务，不是 P0.1 引入。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] P1 guard 残余假阴性：无表头、无边框的表格仍可能漏检；需要更强的版面/线条模型。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。

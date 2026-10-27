@@ -60,7 +60,7 @@ count:
 	    total=d.get('totalTestCount'); p=d.get('passedTests'); f=d.get('failedTests'); \
 	    e=d.get('expectedFailures'); s=d.get('skippedTests'); \
 	    print('total=%s  passed=%s  failed=%s  expectedFailures=%s  skipped=%s' % (total,p,f,e,s)); \
-	    print('基线解读：$(BASELINE_TOTAL) total；本次 $(BASELINE_PASSED) passed + $(BASELINE_EXPECTED_FAILURES) expected failure + 10 known full-suite failures（Golden 4 / WordFidelity order / Review preview timeout / Reconstruct order；见 TODO）')"
+	    print('基线解读：$(BASELINE_TOTAL) total；本次 $(BASELINE_PASSED) passed + $(BASELINE_EXPECTED_FAILURES) expected failure + 10 known full-suite failures（Golden 4 / WordFidelity 1 / Review 4 / ReviewSplit 1；Reconstruct 本轮未失败；见 TODO）')"
 
 # 全量守卫：总数低于基线 = 既有测试被删 → 失败（局部测试用 count，不套此守卫）
 count-full: count
