@@ -317,8 +317,11 @@ ReviewViewModelTests、ReviewSplitProposalTests、ReconstructEndToEndTests
 `docs/media/optimize/round1-4-324DA051-5DB2-4586-86AF-B33CDCF1B426-rendered.jpg`
 （**1704×2200**），与 `build/device-round1-4/rendered.jpg` 一致：
 
-- 右侧红色/灰色页外背景已清，页面右缘之外为白底；
-- 顶部楔形背景已清，右上角页码 `2` 保留；
+- 右侧红色/灰色页外背景已清，页面右缘之外为白底；右侧白边中位
+  **12px**、最小 **11px**（`build/device-round1-4/summary.json`）；
+- 顶部楔形背景已清，右上角页码 `2` 保留；macOS Vision OCR 读取到
+  **82 行**文本，独立 `2` 位于右上（bbox x≈0.927、top≈0.032），说明
+  清理没有把页码当背景；
 - 左侧折页/桌面背景不可见，表格和照片完整，输出尺寸未变；
 - 这次是用户一次“选原图 → 保存 → 分享”，不是多次重扫。
 
