@@ -226,7 +226,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 | 幂等性 | 对第一轮输出再跑整图 draft：1694×2200 → 1694×2200 |
 | WPS realbase | **0.906224**，PNG SHA-256 与已接受基线 byte-identical |
 | 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 3/3、`ImagePipelineTests` 2/2 |
-| 全量 | 490 total / 482 passed / 1 expected / 7 known full-suite failures（flaky 集合 7–9） |
+| 全量（P0.1 后） | 492 total / 481 passed / 1 expected / 10 failed（已知顺序/预览抖动，见 TODO） |
 
 证据：
 
@@ -287,7 +287,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 当前代码的本地复现（同一设备原图 + DB 中的 proposed quad）已把右侧/顶部
 多余条刷白；待用户重新安装这一版复测确认。
 
-### 7.4 出口边缘清理（2026-10-27 落地）
+### 7.4.1 出口边缘清理（2026-10-27 落地）
 
 真机 round1-3 的残留不是简单的竖直条，而是白底画布内侧的**楔形**：
 越靠上页外背景越宽（顶部约 12–25px），靠下页面纸面已经贴到白边。
@@ -311,7 +311,22 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 全量 `make test` 当前 **492 total / 481 passed / 1 expected / 10 failed**；
 失败均为已记录的 Golden/WordFidelity/Review/Reconstruct 顺序抖动，
 ReviewViewModelTests、ReviewSplitProposalTests、ReconstructEndToEndTests
-单独跑均通过。真机重装复测仍待完成。
+单独跑均通过。
+
+真机重装后的实际复测（用户从相册选 `IMG_7542.JPG`，保存并分享）得到
+`docs/media/optimize/round1-4-324DA051-5DB2-4586-86AF-B33CDCF1B426-rendered.jpg`
+（**1704×2200**），与 `build/device-round1-4/rendered.jpg` 一致：
+
+- 右侧红色/灰色页外背景已清，页面右缘之外为白底；
+- 顶部楔形背景已清，右上角页码 `2` 保留；
+- 左侧折页/桌面背景不可见，表格和照片完整，输出尺寸未变；
+- 这次是用户一次“选原图 → 保存 → 分享”，不是多次重扫。
+
+设备的 `default.store` 仍保存该页 proposed quad：
+`topLeft=[0.0899,0.0412]`、`topRight=[0.9510,0.0334]`、
+`bottomRight=[0.9861,0.9648]`、`bottomLeft=[0.0903,0.9570]`
+（`build/device-round1-4/default.store`，page `324DA051-5DB2-4586-86AF-B33CDCF1B426`）。
+右边缘背景已由出口清理处理，不再依赖再裁一刀。
 
 ### 7.5 设备数据获取
 
@@ -323,8 +338,10 @@ default.store` 的 `ZPAGEENTITY.ZQUADDATA` 仍保存页面级 proposed quad。
 - `...-rendered.jpg`
 - `Library/Application Support/default.store`（含 quad）
 
-当前设备最新样本：`2C35B62C-D12F-4E13-A2A3-7AA9702F552F`，
-`ZQUADDATA` 的 proposed quad 与上一轮一致。
+当前设备最新样本：`324DA051-5DB2-4586-86AF-B33CDCF1B426`，
+`ZQUADDATA` 的 proposed quad 保存在 `build/device-round1-4/default.store`。
+上一轮样本 `2C35B62C-D12F-4E13-A2A3-7AA9702F552F` 仍是 round1-3
+回归测试夹具。
 
 ### 7.3 未闭环
 
@@ -339,4 +356,4 @@ default.store` 的 `ZPAGEENTITY.ZQUADDATA` 仍保存页面级 proposed quad。
    OCR 输出中标题曾出现 `An rticle` 的识别错误，目测字形未被裁，但不能
    只靠 OCR 证明。
 5. **10–20 张多条件样张**：尚未跑；不能只凭 `IMG_7544` 宣称通用。
-6. **真机 round1-2 仍未复测**：本地设备原图/真实 proposed 已复现修复，待重新安装后确认。
+6. **真机 round1-2 仍未复测**：本地设备原图/真实 proposed 已复现修复；round1-4（`IMG_7542`）已完成一次原图→保存→分享验收，多张样张仍需回归。

@@ -2,7 +2,7 @@
 
 **Input**: `spec.md` / `plan.md`
 **当前优先级**: P0.1（边框/背景单次收敛，2026-10-27 起）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
-**测试基线**: `Makefile` 490 total / 482 passed / 1 expected（2026-10-27 全量；已知 9 个 full-suite 失败见 `TODO.md`）
+**测试基线**: `Makefile` 492 total / 481 passed / 1 expected（2026-10-27 全量；已知 10 个顺序/预览 flaky 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
 
@@ -17,11 +17,11 @@
 背景：`IMG_7544` 连续三次保存/重扫可逐步去掉右/下、上、左折页，最终 1575×2051；但这是 3 次重编码/降采样后的 coarse-to-fine，不是单次算法保证。评估见 `docs/20-border-crop-convergence.md`。
 
 - [x] **PP-T050** 固定 `IMG_7544` + `myself-1/2/3` 证据：走实际 `renderPage` 链路，记录每轮裁切框、尺寸、OCR、表结构、页外背景；落 `build/page-preprocess/crop-convergence/T050-*`。原图整图 draft：`content_envelope`、cropApplied=true、textCoverage=1、输出 1694×2200（含白底画布）；再跑输出仍 1694×2200。
-- [~] **PP-T051** 单次纸张/内容包络：新增 `PageContentEnvelopeDetector`，始终计算纸面边界 + 强内容包络（文字锚点上/左），整图 proposed 也参与；不再只在 fold/detection 变化时裁。原图去掉顶部/左侧页外背景，标题/页码/表格/照片保留；真机 round1 页级 draft 顶部/底部背景问题已改为自动 draft 也走包络、表格不安全时框外刷白。round1-3 出口再经 `PageEdgeCleaner` 清理右侧/顶部楔形背景，右上 `2` 保留；真机重装复测待做。
+- [~] **PP-T051** 单次纸张/内容包络：新增 `PageContentEnvelopeDetector`，始终计算纸面边界 + 强内容包络（文字锚点上/左），整图 proposed 也参与；不再只在 fold/detection 变化时裁。原图去掉顶部/左侧页外背景，标题/页码/表格/照片保留；真机 round1 页级 draft 顶部/底部背景问题已改为自动 draft 也走包络、表格不安全时框外刷白。round1-3 出口再经 `PageEdgeCleaner` 清理右侧/顶部楔形背景，右上 `2` 保留；iPhone 13 round1-4（`IMG_7542`，1704×2200）一次保存/分享通过，右侧/顶部背景清、页码 `2` 保留。
 - [~] **PP-T052** 可选 refine：已接 table-aware refine（表格 bbox 扩框后重试一次，仍不安全回退）；本样张未触发第二次，背景残留 refine 待后续；原图全分辨率、不重复 P1/JPEG 的约束已落实。
 - [x] **PP-T053** 内容安全门：`textCoverage/envelopeTextCoverage`、表格安全门 + `tablesClear(of:)`（含 Vision y 翻轴）+ 表格 bbox retry；中间图/页面级 draft 表格结构不一致时 cropApplied=false 并改为候选框外背景刷白；页面级 draft 也走包络；输出再跑尺寸 1694×2200 不变，幂等性通过；真机全流程仍待 PP-T032。
 - [x] **PP-T054** 扫描观感：裁切后白底画布（`scanCanvasBorderRatio=0.006`）；只影响 `renderPage`，WPS realbase 仍 0.906224 且 byte-identical。
-- [x] **PP-T055** 出口边缘清理：`PageEdgeCleaner` 逐行/逐列纸面边界 + 受限红色背景清理；黑色页码中止顶部清理；单次全图遍历，不裁切/缩放。round1-3 回归图背景刷白、尺寸不变；WPS realbase PNG byte-identical（0.906224）。
+- [x] **PP-T055** 出口边缘清理：`PageEdgeCleaner` 逐行/逐列纸面边界 + 受限红色背景清理；黑色页码中止顶部清理；单次全图遍历，不裁切/缩放。round1-3 回归图背景刷白、尺寸不变；round1-4 真机一次保存/分享通过；WPS realbase PNG byte-identical（0.906224）。
 
 ## P1 · 折痕/光照
 
