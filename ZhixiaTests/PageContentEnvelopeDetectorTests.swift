@@ -7,6 +7,14 @@ import UIKit
 
 /// P0.1 纸张/内容包络的确定性单测（不依赖 Vision）。
 struct PageContentEnvelopeDetectorTests {
+    private func pixel(_ image: CGImage, x: Int, y: Int) -> (Int, Int, Int) {
+        guard let data = image.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data)
+        else { return (-1, -1, -1) }
+        let offset = y * image.bytesPerRow + x * (image.bitsPerPixel / 8)
+        return (Int(bytes[offset]), Int(bytes[offset + 1]), Int(bytes[offset + 2]))
+    }
+
     private func image(
         width: Int = 400,
         height: Int = 560,
@@ -58,6 +66,60 @@ struct PageContentEnvelopeDetectorTests {
         #expect(candidate.rect.maxY >= pageNumber.maxY / 560)
         #expect(candidate.contentRect != nil)
         #expect(candidate.backgroundResidual >= 0)
+    }
+
+    @Test("右侧白边内侧的页外条只刷白、不改变尺寸")
+    func cleansRightBackgroundStrip() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: 400, height: 560),
+            format: format
+        )
+        let image = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 560))
+            UIColor(red: 0.55, green: 0.18, blue: 0.20, alpha: 1).setFill()
+            context.fill(CGRect(x: 382, y: 0, width: 10, height: 560))
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 30, y: 40, width: 300, height: 20))
+        }
+        let cg = try #require(image.cgImage)
+        let cleaned = try #require(PageEdgeCleaner.cleanedBackground(in: cg))
+        #expect(cleaned.width == cg.width)
+        #expect(cleaned.height == cg.height)
+        let right = pixel(cleaned, x: 395, y: 100)
+        #expect(right.0 > 245 && right.1 > 245 && right.2 > 245)
+        let ink = pixel(cleaned, x: 100, y: 50)
+        #expect(ink.0 < 50 && ink.1 < 50 && ink.2 < 50)
+        let out = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "build/tmp-edge-synthetic.jpg")
+        try #require(UIImage(cgImage: cleaned).jpegData(compressionQuality: 0.95))
+            .write(to: out)
+    }
+
+    @Test("真机 round1-3 右侧页外条可被识别")
+    func detectsDeviceRound13RightStrip() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = root.appending(
+            path: "docs/media/optimize/round1-3-2C35B62C-D12F-4E13-A2A3-7AA9702F552F-rendered.jpg"
+        )
+        let image = try #require(UIImage(contentsOfFile: url.path)?.cgImage)
+        let cleaned = try #require(PageEdgeCleaner.cleanedBackground(in: image))
+        #expect(cleaned.width == image.width)
+        #expect(cleaned.height == image.height)
+        let rightTop = pixel(cleaned, x: cleaned.width - 2, y: 20)
+        #expect(rightTop.0 > 245 && rightTop.1 > 245 && rightTop.2 > 245)
+        let out = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "build/device-round1-3/edge-cleaned.jpg")
+        try #require(UIImage(cgImage: cleaned).jpegData(compressionQuality: 0.95))
+            .write(to: out)
     }
 
     @Test("没有可辨识页边时宁可不返回候选")

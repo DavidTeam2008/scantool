@@ -269,12 +269,13 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 report.textLineAnalysisElapsedMilliseconds = elapsedMilliseconds(since: analysisStarted)
             }
         }
+        let edgeCleaned = cleanRightEdge(filtered)
         let outputImage = report.cropApplied && preprocessRecipe.scanCanvasBorderRatio > 0
             ? scanCanvas(
-                filtered,
+                edgeCleaned,
                 borderRatio: CGFloat(preprocessRecipe.scanCanvasBorderRatio)
             )
-            : filtered
+            : edgeCleaned
         let enhanced = try jpegData(from: outputImage, quality: 0.82, trimEdge: true)
         writePreprocessReport(report, original: original)
         let thumb = try await makeThumbnail(imageData: enhanced, maxWidth: 360)
@@ -914,6 +915,17 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
 
     private func elapsedMilliseconds(since start: Date) -> Int {
         max(0, Int(Date().timeIntervalSince(start) * 1000))
+    }
+
+    /// 页面出口的右侧/顶部背景清理：逐行逐列识别白底画布内侧的
+    /// 楔形页外背景，只把纸面边界外侧刷白，不裁切、不改变页面/表格几何。
+    private func cleanRightEdge(_ image: CIImage) -> CIImage {
+        let extent = image.extent.integral
+        guard extent.width > 8, extent.height > 8,
+              let cgImage = context.createCGImage(image, from: extent),
+              let cleaned = PageEdgeCleaner.cleanedBackground(in: cgImage)
+        else { return image }
+        return CIImage(cgImage: cleaned).cropped(to: extent)
     }
 
     /// 表格安全门拒绝裁切时的保底：保留原页几何，只把候选框外背景刷白。

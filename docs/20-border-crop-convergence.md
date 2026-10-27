@@ -281,7 +281,50 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 
 用设备原图 + 真实 proposed 的本地复现：输出 **1562×2194**，
 `backgroundWhitened=true`（表格结构保护回退），OCR 回读右上 `2` 存在，
-目测无左侧折页/右侧背景。仍需重新安装构建后在 iPhone 13 上复测确认。
+目测无左侧折页/右侧背景。随后用户在 iPhone 13 上复测得到
+`round1-3-2C35B62C-D12F-4E13-A2A3-7AA9702F552F-rendered.jpg`（1704×2200）：
+整体已大幅改善，但**右上角仍有一条页外背景**（最右侧约 12px 非白条）。
+当前代码的本地复现（同一设备原图 + DB 中的 proposed quad）已把右侧/顶部
+多余条刷白；待用户重新安装这一版复测确认。
+
+### 7.4 出口边缘清理（2026-10-27 落地）
+
+真机 round1-3 的残留不是简单的竖直条，而是白底画布内侧的**楔形**：
+越靠上页外背景越宽（顶部约 12–25px），靠下页面纸面已经贴到白边。
+因此矩形裁切/固定右侧条会误伤下半页内容，改为 `PageEdgeCleaner`：
+
+- 逐行从右侧白边向内找连续纸面像素，只把纸面右边界外侧刷白；
+- 逐列从顶部白边向下找纸面顶边，只刷纸面以上；扫描遇到低饱和黑色
+  像素（页码/文字）立即中止，避免把右上 `2` 当背景清掉；
+- 右上角再对红色木纹、灰色页边做受限颜色清理；
+- 全部在**一次全图位图遍历**里完成，不裁切、不缩放；`renderPage` 输出
+  尺寸不变。
+
+用 `round1-3-2C35B62C-D12F-4E13-A2A3-7AA9702F552F-rendered.jpg`
+回归：右侧红色背景和顶部楔形已清，右上 `2` 保留；输出
+`build/device-round1-3/edge-cleaned.jpg`。`PageContentEnvelopeDetectorTests`
+4/4、`PageCropConvergenceTests` 3/3 通过。WPS realbase 重新渲染
+`build/word-fidelity/p01-edge-wps/out-restored-realbase-wps.png` 与基线
+`round2-realbase-wps.png` **SHA-256 完全一致**（`3faabfd0…`），仍
+**0.906224**。
+
+全量 `make test` 当前 **492 total / 481 passed / 1 expected / 10 failed**；
+失败均为已记录的 Golden/WordFidelity/Review/Reconstruct 顺序抖动，
+ReviewViewModelTests、ReviewSplitProposalTests、ReconstructEndToEndTests
+单独跑均通过。真机重装复测仍待完成。
+
+### 7.5 设备数据获取
+
+App 保存后会把临时的 `preprocess.json` 清掉，但 `Library/Application Support/
+default.store` 的 `ZPAGEENTITY.ZQUADDATA` 仍保存页面级 proposed quad。
+通过 `xcrun devicectl device info files` / `device copy from` 可取得：
+
+- `Library/Application Support/Zhixia/files/.../<id>-original.jpg`
+- `...-rendered.jpg`
+- `Library/Application Support/default.store`（含 quad）
+
+当前设备最新样本：`2C35B62C-D12F-4E13-A2A3-7AA9702F552F`，
+`ZQUADDATA` 的 proposed quad 与上一轮一致。
 
 ### 7.3 未闭环
 
