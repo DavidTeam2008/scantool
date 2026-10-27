@@ -9,6 +9,10 @@ T000 时为 397 → Phase 0 +20（诊断/回放）→ Phase 1 +19（引导/画�
 `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`；
 T000 后直接 `make test`。局部：`make test-only T=<Suite>`
 
+> **2026-10-27 状态**：guided-capture 实现已交付，但默认仍是 `auto`；用户四段真机
+> 录屏复核见 `docs/21-capture-ux-stability.md`。T030/T031/T032 仍未完成，且四段录屏
+> 不能替代 20 张/场景的设备验收；当前新工作拆到 `TODO.md` 的 P0.2（CU-T001~T008）。
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: 可并行（不同文件、无未完成依赖）

@@ -1,8 +1,10 @@
 # 20 · 边框/背景单次收敛评估（2026-10-27）
 
-> 状态：**P0.1 基础版已实现，真机全流程/多条件样张待补**。当前执行优先级见
-> [`TODO.md`](../TODO.md) 的 **P0.1**；原 P0/P1/P2 结论仍以
-> [`docs/19`](19-page-preprocess-plan.md) 为准。
+> 状态：**P0.1 基础版已收口（2026-10-27）**。round1-4 单页真机一次保存/分享
+> 通过；多条件样张、PP-T032 全流程和全量 flaky 清理按用户要求暂停，记录在
+> [`TODO.md`](../TODO.md) 的“暂停事项”。当前主线切换到
+> [`docs/21-capture-ux-stability.md`](21-capture-ux-stability.md) 的 P0.2 取景稳定性；
+> 原 P0/P1/P2 结论仍以 [`docs/19`](19-page-preprocess-plan.md) 为准。
 >
 > 触发样本：`docs/media/IMG_7544.jpg`，以及用户在 iPhone 13 上连续三次
 > “扫 → 相册 → 保存 → 分享回手机 → 再扫”得到的三张图：

@@ -1,7 +1,7 @@
 # Tasks: 页面预处理（page-preprocess）
 
 **Input**: `spec.md` / `plan.md`
-**当前优先级**: P0.1（边框/背景单次收敛，2026-10-27 起）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
+**当前优先级**: **P0.1 基础版已收口（2026-10-27）**；多条件样张/PP-T032/全量 flaky 清理暂停。当前主线切换到 `docs/21-capture-ux-stability.md` 的 P0.2 取景稳定性；本 spec 的 P1/P2/P3 保留为后续。
 **测试基线**: `Makefile` 492 total / 481 passed / 1 expected（2026-10-27 全量；已知 10 个顺序/预览 flaky 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
@@ -12,12 +12,12 @@
 - [~] **PP-T004** 指标工具：`PagePreprocessReport` 已含 textCoverage/outsideAreaRatio/edgeAngles/parallelErrors/foldTrim*/paperRightEdge/pageTextLeft/pageLeftInset/tableSafety*；iPhone 13 实测 textCoverage 1.0、`outsideAreaRatio=0.1967`（原图内页面 quad 外面积，不是输出背景残留）、报告内耗时 179ms。汇总 `build/page-preprocess/final-p0/summary.json`。**待做**：背景像素级残留汇总与可视化。
 - [~] **PP-T005** 真机/模拟器 A/B：WPS 0.906224 与基线一致（独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 全流程验收归入暂缓的 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
 
-## P0.1 · 边框/背景单次收敛（2026-10-27 起）
+## P0.1 · 边框/背景单次收敛（2026-10-27 起，基础版已收口）
 
 背景：`IMG_7544` 连续三次保存/重扫可逐步去掉右/下、上、左折页，最终 1575×2051；但这是 3 次重编码/降采样后的 coarse-to-fine，不是单次算法保证。评估见 `docs/20-border-crop-convergence.md`。
 
 - [x] **PP-T050** 固定 `IMG_7544` + `myself-1/2/3` 证据：走实际 `renderPage` 链路，记录每轮裁切框、尺寸、OCR、表结构、页外背景；落 `build/page-preprocess/crop-convergence/T050-*`。原图整图 draft：`content_envelope`、cropApplied=true、textCoverage=1、输出 1694×2200（含白底画布）；再跑输出仍 1694×2200。
-- [~] **PP-T051** 单次纸张/内容包络：新增 `PageContentEnvelopeDetector`，始终计算纸面边界 + 强内容包络（文字锚点上/左），整图 proposed 也参与；不再只在 fold/detection 变化时裁。原图去掉顶部/左侧页外背景，标题/页码/表格/照片保留；真机 round1 页级 draft 顶部/底部背景问题已改为自动 draft 也走包络、表格不安全时框外刷白。round1-3 出口再经 `PageEdgeCleaner` 清理右侧/顶部楔形背景，右上 `2` 保留；iPhone 13 round1-4（`IMG_7542`，1704×2200）一次保存/分享通过，右侧/顶部背景清、页码 `2` 保留。
+- [x] **PP-T051** 单次纸张/内容包络：新增 `PageContentEnvelopeDetector`，始终计算纸面边界 + 强内容包络（文字锚点上/左），整图 proposed 也参与；不再只在 fold/detection 变化时裁。原图去掉顶部/左侧页外背景，标题/页码/表格/照片保留；真机 round1 页级 draft 顶部/底部背景问题已改为自动 draft 也走包络、表格不安全时框外刷白。round1-3 出口再经 `PageEdgeCleaner` 清理右侧/顶部楔形背景，右上 `2` 保留；iPhone 13 round1-4（`IMG_7542`，1704×2200）一次保存/分享通过，右侧/顶部背景清、页码 `2` 保留。
 - [~] **PP-T052** 可选 refine：已接 table-aware refine（表格 bbox 扩框后重试一次，仍不安全回退）；本样张未触发第二次，背景残留 refine 待后续；原图全分辨率、不重复 P1/JPEG 的约束已落实。
 - [x] **PP-T053** 内容安全门：`textCoverage/envelopeTextCoverage`、表格安全门 + `tablesClear(of:)`（含 Vision y 翻轴）+ 表格 bbox retry；中间图/页面级 draft 表格结构不一致时 cropApplied=false 并改为候选框外背景刷白；页面级 draft 也走包络；输出再跑尺寸 1694×2200 不变，幂等性通过；真机全流程仍待 PP-T032。
 - [x] **PP-T054** 扫描观感：裁切后白底画布（`scanCanvasBorderRatio=0.006`）；只影响 `renderPage`，WPS realbase 仍 0.906224 且 byte-identical。
@@ -47,7 +47,7 @@
 ## P3 · 曲面网格 / 规模化
 
 - [ ] **PP-T030** 曲面薄板样条/网格重映射（仅在 P2 指标不足时启用）。
-- [ ] **PP-T031** 10~20 张多条件样张（平放/弯页/折痕/阴影/桌面）回归。
+- [ ] **PP-T031** 10~20 张多条件样张（平放/弯页/折痕/阴影/桌面）回归。**2026-10-27 暂停**：round1-4 单张已验收，待 P0.2 取景稳定后恢复。
 - [ ] **PP-T033** 更新 `docs/19`、`AGENTS.md` 当前周期指针、测试基线。
 
 ## 验收门
@@ -60,7 +60,7 @@
 
 ## 已知债务 / 暂缓
 
-- **PP-T032（暂缓）** iPhone 13 真机全流程 + WPS/Word 渲染验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。真机全流程复测仍见 `TODO.md` 验证债。
+- **PP-T032（2026-10-27 暂停）** iPhone 13 真机全流程 + WPS/Word 渲染验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。WPS realbase 仍 0.906224 且 PNG byte-identical；真机全流程复测待 P0.2 取景稳定后恢复。
 - **G1** 可编辑字与背景字未完全重合造成的重影：等预处理把几何拉直后再优化；当前先记录，不在本周期解决。
 - **P1 guard 残余假阴性**：无表头、无边框表格仍可能漏检；需要更强版面/线条模型。
 - **G2** iOS 26.4.1 模拟器 `RecognizeDocumentsRequest` 对练习册表格返回 0 表（iOS 27 正常）：单独修结构化回退或标注环境限制，见 `TODO.md`。

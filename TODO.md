@@ -1,9 +1,41 @@
 # TODO · Zhixia
 
-> 更新时间：2026-10-27。当前周期：**page-preprocess**（`spec/page-preprocess/`），下一阶段重点：**P0.1 边框/背景单次收敛**。
-> 历史交接 `SESSION-HANDOFF.md` 已退役：仍有价值的条目已并入本文件；其余文档见 `docs/17`、`docs/18`、`docs/19`。
+> 更新时间：2026-10-27。当前主线：**P0.2 取景稳定性与拍摄意图**（`docs/21-capture-ux-stability.md`）。
+> **page-preprocess P0.1 基础版已收口**：round1-4 单张真机成片验收通过；多条件样张、PP-T032 全流程和
+> flaky 清理按用户要求暂停，记录在下方“暂停事项”。历史交接 `SESSION-HANDOFF.md` 已退役：
+> 仍有价值的条目已并入本文件；其余文档见 `docs/17`、`docs/18`、`docs/19`。
 
-## P0/P1 · 页面预处理（当前执行）
+## P0.2 · 取景稳定性与拍摄意图（当前主线，2026-10-27 起）
+
+**证据**：`docs/21-capture-ux-stability.md`、`docs/media/capture-ux/`；录屏原文件在
+`docs/media/screenrecord/`（本地，132MB）。四个现象分别对应粉封面误洗白、取景候选
+跳动、快门取到跟踪框、自动模式没有左/右页意图；不是单一平滑阈值问题。
+
+- [x] **CU-T001 取证收口**：四段真机录屏、联系表和关键成片已落
+  `docs/media/capture-ux/`；设备侧粉封面 `1F59BD7A…`（1285×1775）、右页
+  `885149C2…`（1401×2058）、整摊 `F67F06C6…`（1832×1930）与录屏对应。
+- [ ] **CU-T002 粉色封面热修**：`PageEdgeCleaner` 红色木纹清理当前在顶部 7% 全宽生效，
+  粉色封面被误判为桌面而刷白。改为只在页面 mask 外/右边缘条生效，页面内高饱和像素
+  受保护；彩色封面裁切走边缘/文档分割或引导框，不再硬套白纸包络。加
+  `pink-cover` fixture，断言页面内粉带保留、WPS **0.906224** 与 PNG byte-identical。
+- [ ] **CU-T003 自动模式意图与左右页候选**：自动模式也显示“左页/右页/整页”；
+  检测到整书/书脊时用 `SpreadSplitter` 生成 live 左右页候选，意图优先于整书容器；
+  找不到目标页时提示，不拿整摊凑数。左页/右页各 10 张验收。
+- [ ] **CU-T004 候选切换与锁定稳定**：候选级滞回（连续存在/更优才切换，建议 0.4–0.5s，
+  不要每 5 帧 escape）；真实 `frame.timestamp` 计算 dt；窗口累计位移判定锁定/解锁；
+  清晰单页 4–6 帧快速锁，候选交替时不显示“已对准”；跟踪框加显示死区/低通。
+- [ ] **CU-T005 快门一致性**：手动按下第一帧冻结呈现框与候选；跟踪态要么提示等待
+  稳定/引导，要么按当前框明确拍摄，不能把按下后切换的候选写进成片；修复自动模式
+  `previewSize` 与全屏 overlay 尺寸口径（已知 T011 待办）。
+- [ ] **CU-T006 引导模式兜底与默认值**：书本/摊开书场景引导框静态、无候选抖动；先保证
+  左/右页意图与默认框可用，再按 20 张 A/B 决定 `captureMode` 是否翻转为 guided。
+- [ ] **CU-T007 拍后安全网**：Review 对整摊成片默认展示“左页/右页/整页”拆分提案，
+  用户确认才写 quad；不静默改。复用现有 `ReviewViewModel` 提案，不替代取景修复。
+- [ ] **CU-T008 录屏回归与验收**：粉封面 3 角度、右页 10、左页 10、A4 5；记录候选
+  切换次数/s、锁定延迟、单帧跳变 p95、禁止内容入片率、修正次数；重跑全量测试与
+  WPS 门限，文档回填 `docs/21`。
+
+## P0/P1 · 页面预处理（历史执行，已暂停新工作）
 
 - [x] PP-T001 取证基线：真机/模拟器页外背景、页边偏差、文字行角度（`build/page-preprocess/baseline/`）。
 - [x] PP-T002 `PageBoundaryDetector`：文档分割 + 墨迹否决 + 四角回退已接 `ImagePipeline` / `preprocess.json`，单测通过。
@@ -11,12 +43,15 @@
 - [~] PP-T004 预处理指标：`PagePreprocessReport` + `PageBoundaryMetrics` + iPhone 13 / IMG_7542 baseline 已落；新增 pageTextLeft/pageLeftInset/tableSafetyReference/tableSafetyDecision/tableSafety{Original,Cropped}Shapes，汇总见 `build/page-preprocess/final-p0/summary.json`。待补像素级页外背景残留与可视化。
 - [~] PP-T005 真机/模拟器 A/B：WPS 0.906224（2026-10-26 独立跑 `realUIBaseExportArtifact` + 新 WPS 渲染，`build/word-fidelity/realbase-wps-p0c-20261026b/`）与基线一致，未回退；真机页级左缘/表格结构 A/B 已闭环；真机 WPS 全流程验收归入暂缓的 PP-T032。整类顺序跑会触发已知 Vision 表格抖动，不得把该类产物当 WPS 基线。
 
-## P0.1 · 边框/背景单次收敛（2026-10-27 起，下一阶段重点）
+## P0.1 · 边框/背景单次收敛（2026-10-27 起，基础版已收口）
+
+> 单页 round1-4 真机一次保存/分享通过；多条件与全流程验收暂停，见文末“暂停事项”。
+> 详细证据见 [`docs/20-border-crop-convergence.md`](docs/20-border-crop-convergence.md)。
 
 **背景**：真机对 `docs/media/IMG_7544.jpg` 连续做三次“扫→保存→再扫”，依次去掉右/下、上、左折页，最终到 1575×2051；目测标题、页码、页脚、两个表、照片仍在，macOS Vision OCR 字符数 1752→1777（仅作粗筛）。这说明目标裁切区域存在且稳定，当前问题主要是**单次检测欠裁**，不是无法识别页面。多步方案以多次重编码/降采样（最终面积仅原图 27.8%）换取 coarse-to-fine，不能作为正式链路。评估见 `docs/20-border-crop-convergence.md`。
 
 - [x] **PP-T050 复现与取证**：固定 `IMG_7544.jpg` 与 `myself-1/2/3` 三张中间图，走实际 `renderPage`（整图 draft）记录裁切框、尺寸、OCR、表格安全门；证据落 `build/page-preprocess/crop-convergence/T050-*`、`T050-intermediate-summary.json`、`build/page-preprocess/crop-convergence/device-round1-2/`（真实设备原图/旧报告/修复后本地复现）。原图整图 draft：`cropSource=content_envelope`、`cropApplied=true`、`textCoverage=1`、输出 **1694×2200**（含白底画布）；三张中间图 1 表格签名不一致时改为框外刷白、2/3 可裁；页面级 draft 也能裁掉顶部/底部背景；对第一轮输出再跑一次，输出尺寸仍 1694×2200，幂等性通过。
-- [~] **PP-T051 单次纸张/内容包络**：新增 `PageContentEnvelopeDetector`，自动 page-level draft 也走包络；候选必须夹在现有页面框内部，不能再扩回折页/右侧背景；正文上/下/左/右留 0.8%，纸面上边距 >3% 时保留 1.5% 页眉安全带（真机 `2` 在 OCR 文本框外，旧版被裁）。设备真实报告：`proposed` 面积 0.776、旧 `chosen.top=0.1098`、`textBounds.top=0.1178`、`paperEnvelope.top=0.0972`、页码 `2` 顶部约 0.086；本地用设备原图+真实 proposed 复现，输出 1561×2193，右上 `2` 回读存在，目测无左折页/右侧背景。用户复测 round1-3（1704×2200）整体改善但右上仍残留约 12px 页外条；当前代码用 round1-3 回归样本可清掉右侧/顶部楔形背景，`2` 保留。**iPhone 13 重装后已实测**：从相册选 `IMG_7542.JPG`，一次保存/分享得到 round1-4（**1704×2200**），右侧/顶部背景已清、右上 `2` 保留、表格/照片完整，见 `docs/media/optimize/round1-4-324DA051-5DB2-4586-86AF-B33CDCF1B426-rendered.jpg` 与 `build/device-round1-4/`。设备保存后临时 `preprocess.json` 会清理，但 `default.store.ZPAGEENTITY.ZQUADDATA` 仍保存 proposed quad。
+- [x] **PP-T051 单次纸张/内容包络**：新增 `PageContentEnvelopeDetector`，自动 page-level draft 也走包络；候选必须夹在现有页面框内部，不能再扩回折页/右侧背景；正文上/下/左/右留 0.8%，纸面上边距 >3% 时保留 1.5% 页眉安全带（真机 `2` 在 OCR 文本框外，旧版被裁）。设备真实报告：`proposed` 面积 0.776、旧 `chosen.top=0.1098`、`textBounds.top=0.1178`、`paperEnvelope.top=0.0972`、页码 `2` 顶部约 0.086；本地用设备原图+真实 proposed 复现，输出 1561×2193，右上 `2` 回读存在，目测无左折页/右侧背景。用户复测 round1-3（1704×2200）整体改善但右上仍残留约 12px 页外条；当前代码用 round1-3 回归样本可清掉右侧/顶部楔形背景，`2` 保留。**iPhone 13 重装后已实测**：从相册选 `IMG_7542.JPG`，一次保存/分享得到 round1-4（**1704×2200**），右侧/顶部背景已清、右上 `2` 保留、表格/照片完整，见 `docs/media/optimize/round1-4-324DA051-5DB2-4586-86AF-B33CDCF1B426-rendered.jpg` 与 `build/device-round1-4/`。设备保存后临时 `preprocess.json` 会清理，但 `default.store.ZPAGEENTITY.ZQUADDATA` 仍保存 proposed quad。
 - [~] **PP-T052 可选 refine**：已接 **table-aware refine**（表格 bbox 扩框后重试一次，仍不安全回退）；本样张 `envelopeRefineApplied=false`，因为内容包络本身通过安全门，没有触发第二次。背景残留 refine 仍待后续；预算/不重复 P1/JPEG 的约束已落实。
 - [x] **PP-T053 内容安全门**：`textCoverage/envelopeTextCoverage`、表格安全门 + `tablesClear(of:)`（含 Vision y 翻轴）+ 表格 bbox retry；中间图/页面级 draft 表格结构不一致时 `cropApplied=false`，改为“保留原页几何并把候选框外背景刷白”（`backgroundWhitened=true`），不把表格交给裁切后的结构识别重新解释。真机 round1-2 本地复现：表格安全门 `mismatch` → 白底回退，右上 `2` 保留。对第一轮输出再跑尺寸稳定；真机全流程仍待 PP-T032。
 - [x] **PP-T054 扫描观感**：`PagePreprocessRecipe.scanCanvasBorderRatio=0.006`，裁切成功后加白底画布；单测/集成测试验证左上角近白；只影响 `renderPage`，`apply`/WPS 夹具不变。WPS realbase 仍 **0.906224** 且 PNG byte-identical。
@@ -49,7 +84,7 @@
 ## P3 · 规模化与真机
 
 - [ ] PP-T030 曲面网格（仅在 P2 不足时）。
-- [ ] PP-T031 10~20 张多条件样张回归。
+- [ ] PP-T031 10~20 张多条件样张回归。**2026-10-27 暂停**：round1-4 单张已验收，多光照/纸张/封面样本待恢复。
 - [ ] PP-T033 文档/AGENTS/基线最终同步。
 
 ## G1 · 验收与透印复原（建议顺序，暂缓执行，不抢 P0.1）
@@ -65,7 +100,7 @@
 - [ ] **G2b** iOS 27 `GoldenWorksheet` 4 项失败：OCR 113 行、`LayoutAnalyzer` anchors=0、`InkFigureDetector` 只给右侧整栏大图；金标准“漫画条”落在书脊/空白窄带，疑似 iOS 26 figure 检测器的伪 figure 被写进夹具。**先记为已知测试债务**；产品级“右侧大图存在”仍通过。后续单独校准夹具或窄条 figure 检测，不阻塞 page-preprocess。
 - [ ] **G3** 粗体行（Articles wanted / FUN ACTIVITIES）目前仍为常规字重；像素墨量推断误判率高，暂缓。
 - [ ] **G4** 表格单元格左/上内边距、右上题头顶部裁切、`Exam advice` 位置仍有小偏差；等预处理/重影阶段一起看。
-- [ ] **PP-T032（暂缓）** iPhone 13 真机全流程 + WPS/Word 验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。真机全流程复测仍见“验证与交付债”。
+- [ ] **PP-T032（2026-10-27 暂停）** iPhone 13 真机全流程 + WPS/Word 验收；冷启动 ≤1.5s/页暂不压（当前 P1 236ms、暖机整页 1388–1395ms、首跑 1764ms）。WPS realbase 当前 **0.906224** 且 PNG byte-identical；全流程复测仍见“验证与交付债”，待 P0.2 取景稳定后恢复。
 
 ## 验证与交付债
 
@@ -77,6 +112,18 @@
 - [ ] Word 桌面版（Microsoft Word）渲染抽样；当前只有 WPS。
 - [ ] 真机 App UI 全流程（相册→收藏→版面还原→Word）复测；当前真机测试是 parser/export 级。
 - [ ] 提交前确认 `build/word-fidelity/` 证据不清理、`docs/media/Zhixia-20261024-1958.docx` 去留。
+
+## 暂停事项（2026-10-27 阶段收口，不删除）
+
+- [ ] **PP-T031 多条件样张**：10–20 张不同光照/纸张/封面回归，暂停。当前已有
+  round1-4 单张通过；恢复时优先补粉色封面和打开书本左右页。
+- [ ] **PP-T032 真机全流程**：iPhone 13 相册→收藏→版面还原→Word/WPS 验收，暂停。
+  P0.1 图片链路已通过；WPS 仅验证到 **0.906224** realbase，不等于全流程通过。
+- [ ] **全量 flaky 清理**：暂停。当前全量 **492 total / 481 passed / 1 expected /
+  10 failed**；失败仍为 Golden/WordFidelity/Review/ReviewSplit 的既有顺序/预览抖动，
+  定向测试通过。恢复时先修测试治理，不改业务断言。
+- [ ] **真机 UI 全流程**：当前真机证据多为 parser/export 级，UI 全流程仍待补；
+  与 P0.2 取景稳定性验收一起排期。
 
 ## h2oc 经验（跨任务）
 

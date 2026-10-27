@@ -6,6 +6,12 @@
 >
 > 执行入口：`spec/guided-capture/`（spec / plan / tasks / device-acceptance）。
 > 基线：**449 = 448 passed + 1 expected failure + 0 failed**（2026-10-21 实测）。
+>
+> **2026-10-27 追加**：guided-capture 已交付，但默认仍是 `auto`。用户四段真机录屏
+> 再次暴露“候选整书/右页交替、无左页意图、手动快门取跟踪框、粉色封面被红色清理”
+> 四个问题；新的根因、方案和 P0.2 任务见
+> [`docs/21-capture-ux-stability.md`](21-capture-ux-stability.md) 与 `TODO.md`。
+> 本文件 §一~§十一的历史判断保留，不覆盖。
 
 ---
 
