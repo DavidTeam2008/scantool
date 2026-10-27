@@ -2,7 +2,7 @@
 
 **Input**: `spec.md` / `plan.md`
 **当前优先级**: **P0.1 基础版已收口（2026-10-27）**；多条件样张/PP-T032/全量 flaky 清理暂停。当前主线切换到 `docs/21-capture-ux-stability.md` 的 P0.2 取景稳定性；本 spec 的 P1/P2/P3 保留为后续。
-**测试基线**: `Makefile` 492 total / 481 passed / 1 expected（2026-10-27 全量；已知 10 个顺序/预览 flaky 失败见 `TODO.md`）
+**测试基线**: `Makefile` 501 total / 490 passed / 1 expected（2026-10-27 全量；已知 10 个顺序/预览 flaky 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
 

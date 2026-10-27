@@ -146,14 +146,16 @@ struct CaptureView: View {
                     }
                     Spacer()
                 }
-                if viewModel.captureMode == .guided {
-                    HStack(spacing: 6) {
-                        ForEach(CaptureIntent.allCases, id: \.self) { intent in
-                            guideChip(title: intent.title, isOn: viewModel.captureIntent == intent) {
-                                viewModel.setCaptureIntent(intent)
-                            }
+                // CU-T003：意图不只属于引导模式。自动模式也必须能一眼选
+                // 左页/右页/整页；否则自动候选只能猜整书，左页永远定不住。
+                HStack(spacing: 6) {
+                    ForEach(CaptureIntent.allCases, id: \.self) { intent in
+                        guideChip(title: intent.title, isOn: viewModel.captureIntent == intent) {
+                            viewModel.setCaptureIntent(intent)
                         }
-                        Spacer()
+                    }
+                    Spacer()
+                    if viewModel.captureMode == .guided {
                         Button("capture.guide.reset") {
                             viewModel.resetGuide()
                         }
@@ -166,9 +168,9 @@ struct CaptureView: View {
                             }
                         }
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.9))
                 }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.9))
             }
             .font(.system(size: 13, weight: .semibold))
             .padding(.top, 6)

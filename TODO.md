@@ -14,26 +14,36 @@
 - [x] **CU-T001 取证收口**：四段真机录屏、联系表和关键成片已落
   `docs/media/capture-ux/`；设备侧粉封面 `1F59BD7A…`（1285×1775）、右页
   `885149C2…`（1401×2058）、整摊 `F67F06C6…`（1832×1930）与录屏对应。
-- [ ] **CU-T002 粉色封面热修**：`PageEdgeCleaner` 红色木纹清理当前在顶部 7% 全宽生效，
+- [x] **CU-T002 粉色封面热修**：`PageEdgeCleaner` 红色木纹清理当前在顶部 7% 全宽生效，
   粉色封面被误判为桌面而刷白。改为只在页面 mask 外/右边缘条生效，页面内高饱和像素
   受保护；彩色封面裁切走边缘/文档分割或引导框，不再硬套白纸包络。加
   `pink-cover` fixture，断言页面内粉带保留、WPS **0.906224** 与 PNG byte-identical。
-- [ ] **CU-T003 自动模式意图与左右页候选**：自动模式也显示“左页/右页/整页”；
+  **已实现**：顶部全宽红色清理已移除；红色/灰色只在右缘且内侧必须是白纸时生效；
+  合成回归通过；设备原图 + DB quad 本地重渲染见 `docs/media/capture-ux/pink-cover-fixed.jpg`。
+- [x] **CU-T003 自动模式意图与左右页候选**：自动模式也显示“左页/右页/整页”；
   检测到整书/书脊时用 `SpreadSplitter` 生成 live 左右页候选，意图优先于整书容器；
   找不到目标页时提示，不拿整摊凑数。左页/右页各 10 张验收。
-- [ ] **CU-T004 候选切换与锁定稳定**：候选级滞回（连续存在/更优才切换，建议 0.4–0.5s，
+  **已实现**：`PageIntentResolver` + 自动模式意图条；`PageIntentResolverTests` 5 条通过。
+- [x] **CU-T004 候选切换与锁定稳定**：候选级滞回（连续存在/更优才切换，建议 0.4–0.5s，
   不要每 5 帧 escape）；真实 `frame.timestamp` 计算 dt；窗口累计位移判定锁定/解锁；
   清晰单页 4–6 帧快速锁，候选交替时不显示“已对准”；跟踪框加显示死区/低通。
-- [ ] **CU-T005 快门一致性**：手动按下第一帧冻结呈现框与候选；跟踪态要么提示等待
+  **已实现**：真实 timestamp、锁定起点累计位移、页面意图 hold 15 帧、显示死区；
+  `QuadSmootherTests` 2 条新增通过。
+- [x] **CU-T005 快门一致性**：手动按下第一帧冻结呈现框与候选；跟踪态要么提示等待
   稳定/引导，要么按当前框明确拍摄，不能把按下后切换的候选写进成片；修复自动模式
   `previewSize` 与全屏 overlay 尺寸口径（已知 T011 待办）。
-- [ ] **CU-T006 引导模式兜底与默认值**：书本/摊开书场景引导框静态、无候选抖动；先保证
+  **已实现**：快门读取 `presentedQuad`；页面意图无目标时 detector 返回 nil。
+- [~] **CU-T006 引导模式兜底与默认值**：书本/摊开书场景引导框静态、无候选抖动；先保证
   左/右页意图与默认框可用，再按 20 张 A/B 决定 `captureMode` 是否翻转为 guided。
-- [ ] **CU-T007 拍后安全网**：Review 对整摊成片默认展示“左页/右页/整页”拆分提案，
+- [x] **CU-T007 拍后安全网**：Review 对整摊成片默认展示“左页/右页/整页”拆分提案，
   用户确认才写 quad；不静默改。复用现有 `ReviewViewModel` 提案，不替代取景修复。
-- [ ] **CU-T008 录屏回归与验收**：粉封面 3 角度、右页 10、左页 10、A4 5；记录候选
+  **已实现**：`ReviewView.splitSuggestion` 第一屏确认条。
+- [~] **CU-T008 录屏回归与验收**：粉封面 3 角度、右页 10、左页 10、A4 5；记录候选
   切换次数/s、锁定延迟、单帧跳变 p95、禁止内容入片率、修正次数；重跑全量测试与
   WPS 门限，文档回填 `docs/21`。
+  **已完成**：全量 **501 / 490 / 1 expected / 10 failed**（既有 flaky）；新测试
+  9 条通过；WordFidelity `realUIBase` 通过、QuickLook 代理 pageimage 0.914115 /
+  restored 0.964710。真机 10+10 左右页、粉封面 3 角度、A4 5 张仍未执行，保持 `[~]`。
 
 ## P0/P1 · 页面预处理（历史执行，已暂停新工作）
 
@@ -104,8 +114,8 @@
 
 ## 验证与交付债
 
-- [x] 更新 `Makefile` 测试基线为全量实际值：**492 total / 481 passed / 1 expected failure**（2026-10-27 P0.1 新增 `PageEdgeCleaner` 回归测试 1；`PageContentEnvelopeDetectorTests` 共 4、`PageCropSafetyTests` +1、`PageCropConvergenceTests` 3）。全量 flaky 失败 10 个，见下。
-- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**492 total / 481 passed / 1 expected / 10 failed**；本轮 10 个为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1（`ReconstructEndToEndTests` 本轮未失败，曾在其他顺序下抖动）。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.1 测试均通过，全量不绿是既有债务，不是 P0.1 引入。
+- [x] 更新 `Makefile` 测试基线为全量实际值：**501 total / 490 passed / 1 expected failure**（2026-10-27 P0.2 新增 `PageIntentResolverTests` 5、`CaptureIntentFlowTests` 1、`PageEdgeCleaner` 粉色封面 1、`QuadSmoother` 2）。全量 flaky 失败 10 个，见下。
+- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**501 total / 490 passed / 1 expected / 10 failed**；本轮 10 个为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1（`ReconstructEndToEndTests` 本轮未失败，曾在其他顺序下抖动）。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.2 测试均通过，全量不绿是既有债务，不是 P0.2 引入。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] P1 guard 残余假阴性：无表头、无边框的表格仍可能漏检；需要更强的版面/线条模型。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。
@@ -119,7 +129,7 @@
   round1-4 单张通过；恢复时优先补粉色封面和打开书本左右页。
 - [ ] **PP-T032 真机全流程**：iPhone 13 相册→收藏→版面还原→Word/WPS 验收，暂停。
   P0.1 图片链路已通过；WPS 仅验证到 **0.906224** realbase，不等于全流程通过。
-- [ ] **全量 flaky 清理**：暂停。当前全量 **492 total / 481 passed / 1 expected /
+- [ ] **全量 flaky 清理**：暂停。当前全量 **501 total / 490 passed / 1 expected /
   10 failed**；失败仍为 Golden/WordFidelity/Review/ReviewSplit 的既有顺序/预览抖动，
   定向测试通过。恢复时先修测试治理，不改业务断言。
 - [ ] **真机 UI 全流程**：当前真机证据多为 parser/export 级，UI 全流程仍待补；

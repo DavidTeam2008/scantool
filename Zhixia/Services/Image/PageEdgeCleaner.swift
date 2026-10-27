@@ -100,18 +100,33 @@ enum PageEdgeCleaner {
             }
         }
 
-        // 右上角：书桌红色木纹/灰色页边可能在纸面边界之外，再做一次
-        // 受限的颜色清理。红色文字/图片在页面内侧，黑色页码是低饱和
-        // 黑色，不会命中红色条件。
+        // 右侧：书桌红色木纹/灰色页边可能在纸面边界之外，再做一次
+        // **受限**的颜色清理。这里刻意不再对顶部 7% 全宽扫描：粉色封面
+        // 本身也满足“高饱和红/粉”，全宽扫描会把封面顶部粉带刷成白色。
+        //
+        // 只处理右边缘条（以及右上角的极窄灰色页边），并要求边界内侧
+        // 紧邻像素确实是白纸/白底画布。粉色/彩色页面在右缘的内侧像素
+        // 是饱和色，会直接拒绝清理——宁可保留一条背景，也不动页面内容。
         let rightStart = Int(Double(width) * 0.94)
-        let topEnd = Int(Double(height) * 0.07)
         let topRightX = width - max(2, Int(Double(width) * 0.012))
         let topRightEnd = Int(Double(height) * 0.15)
+        let interiorProbeOffset = max(2, Int(Double(width) * 0.01))
         for y in 0..<height {
-            let isTopEdge = y < topEnd
             let isTopRight = y < topRightEnd
-            for x in 0..<width {
-                guard isTopEdge || x >= rightStart else { continue }
+            for x in rightStart..<width {
+                let probeX = max(0, x - interiorProbeOffset)
+                let probeOffset = y * bytesPerRow + probeX * 4
+                let probeRed = Double(pixels[probeOffset]) / 255
+                let probeGreen = Double(pixels[probeOffset + 1]) / 255
+                let probeBlue = Double(pixels[probeOffset + 2]) / 255
+                let probeMax = max(probeRed, probeGreen, probeBlue)
+                let probeMin = min(probeRed, probeGreen, probeBlue)
+                let probeSaturation = probeMax > 0 ? (probeMax - probeMin) / probeMax : 0
+                let probeLuma = 0.299 * probeRed + 0.587 * probeGreen + 0.114 * probeBlue
+                let interiorIsPaper = probeLuma >= pagePaperLumaThreshold
+                    && probeSaturation <= pagePaperSaturationThreshold
+                guard interiorIsPaper else { continue }
+
                 let offset = y * bytesPerRow + x * 4
                 let red = Double(pixels[offset]) / 255
                 let green = Double(pixels[offset + 1]) / 255

@@ -52,6 +52,9 @@ final class CaptureViewModel {
     /// 即使 smoother 继续插值也不再改变呈现框——任何裁切变化都发生在快门
     /// 前且屏幕上可见。tracking/searching 转换与拍摄复位时清除。
     private var frozenQuad: Quad?
+    /// P0.2 / CU-T004：跟踪态呈现去抖——相邻平滑框小于约 0.4% 的顶点位移
+    /// 不刷新屏幕；候选/手势明显变化仍会更新。搜索/快门后复位。
+    private var presentedQuad: Quad?
     /// US2（spec/overlay-frame-visibility，plan D2 / FR-005）：自动快门锁定
     /// 确认窗——当前锁定周期累计的**非可疑**锁定帧数。锁定周期首帧清零
     /// （重锁重新计时）；searching/tracking 转换、capture() 复位段、setMode()
@@ -270,6 +273,7 @@ final class CaptureViewModel {
         // 确认窗复位点（plan D2）：切换模式 = 放弃当前锁定周期，重新计时。
         lockedFrameCount = 0
         imageQuad = mode == .idCard ? Quad.idCardWindow : nil
+        presentedQuad = nil
         phase = .previewing
         // spec/guided-capture D3：切模式 → 引导框重置（证件模式不显示引导 UI）。
         resetGuide()
@@ -313,6 +317,13 @@ final class CaptureViewModel {
         } else {
             guidePhotoQuad = nil
             guideUndoSnapshot = nil
+            smoother.reset()
+            farHysteresis.reset()
+            frozenQuad = nil
+            presentedQuad = nil
+            imageQuad = nil
+            phase = .previewing
+            Task { await detector.resetLiveTracking() }
         }
     }
 
@@ -321,6 +332,21 @@ final class CaptureViewModel {
         guard intent != captureIntent else { return }
         captureIntent = intent
         preferences.captureIntent = intent
+        // 意图切换 = 放弃上一页的锚点/平滑轨迹，避免 sticky 或 smoother
+        // 把新意图拉回旧页；检测器侧的 sticky 也必须清锚。
+        smoother.reset()
+        farHysteresis.reset()
+        directive = .searching
+        frozenQuad = nil
+        presentedQuad = nil
+        didAutoCaptureThisLock = false
+        isAutoCaptureSuppressed = false
+        lockedFrameCount = 0
+        if captureMode == .auto {
+            imageQuad = nil
+            phase = .previewing
+        }
+        Task { await detector.resetLiveTracking() }
         guidePhotoQuad = nil
         ensureGuide()
     }
@@ -428,7 +454,11 @@ final class CaptureViewModel {
             ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "no-frame")
             return
         }
-        let detected = await detector.detect(frame: frame, idCardWindow: nil)
+        let detected = await detector.detect(
+            frame: frame,
+            idCardWindow: nil,
+            intent: captureIntent
+        )
         guard let detected, !detected.isDegenerate else {
             ZhixiaLog.guideAdjust(before: [], after: [], shift: 0, rejected: "no-candidate")
             return
@@ -525,7 +555,12 @@ final class CaptureViewModel {
         // 快门时刻屏幕所见，瞬时检测缺口不会使其回退静帧自由检测。
         // spec/frame-truth FR-007：`closer`（太远/无效框）时呈现框不可拍摄，
         // 按搜索态处理（静帧自由检测兜底）——避免把屏幕上的局部小框裁成废片。
-        let displayed = (mode == .idCard || directive != .closer) ? imageQuad : nil
+        // CU-T005：呈现框与快门快照同一来源。`presentedQuad` 是屏幕实际
+        // 渲染的去抖框（锁定时等于 frozenQuad）；搜索态没有呈现框才走静帧。
+        // 读取完这一行后立刻进入 capturing，帧消费不会再改它。
+        let displayed = (mode == .idCard || directive != .closer)
+            ? (mode == .document ? (presentedQuad ?? imageQuad) : imageQuad)
+            : nil
         phase = .capturing
         isFlashVisible = true
         do {
@@ -571,7 +606,8 @@ final class CaptureViewModel {
                 // FR-004 语义保留）；门禁 displayed=nil 直通静帧结果。
                 let detected = await detector.detect(
                     imageData: photo.jpegData,
-                    idCardWindow: nil
+                    idCardWindow: nil,
+                    intent: mode == .document ? captureIntent : .wholePage
                 )
                 ZhixiaLog.cropQuad(tag: "displayed", quad: nil)
                 ZhixiaLog.cropQuad(tag: "still", quad: detected)
@@ -616,6 +652,7 @@ final class CaptureViewModel {
         smoother.reset()
         farHysteresis.reset()
         frozenQuad = nil
+        presentedQuad = nil
         directive = .searching
         didAutoCaptureThisLock = false
         isAutoCaptureSuppressed = false
@@ -736,7 +773,8 @@ final class CaptureViewModel {
             _ = try await fileStore.writeOriginal(session: sessionID, page: pageID, data: jpeg)
             let detected = await detector.detect(
                 imageData: jpeg,
-                idCardWindow: mode == .idCard ? Quad.idCardWindow : nil
+                idCardWindow: mode == .idCard ? Quad.idCardWindow : nil,
+                intent: mode == .document ? captureIntent : .wholePage
             )
             drafts.append(
                 PageDraft(
@@ -800,7 +838,12 @@ final class CaptureViewModel {
         isDetecting = true
         defer { isDetecting = false }
         let window = mode == .idCard ? Quad.idCardWindow : nil
-        let detected = await detector.detect(frame: frame, idCardWindow: window)
+        let liveIntent: CaptureIntent = mode == .document ? captureIntent : .wholePage
+        let detected = await detector.detect(
+            frame: frame,
+            idCardWindow: window,
+            intent: liveIntent
+        )
         // spec/guided-capture T003：低分辨率帧留样（1/3 帧采样 ≈10fps）——
         // 诊断包「最近 5s 帧」的来源；仅诊断缓冲存在时采集。
         if let recorder = traceRecorder {
@@ -813,7 +856,11 @@ final class CaptureViewModel {
         // 最近的亮度边缘（最近峰策略：左缘稳定命中折痕而不是更强的折脊轮廓），
         // 再交给 smoother 做时域稳定。1080p 帧 + 160 列栅格，单帧约 1–2ms；
         // 吸附后的四边持续贴在真实边缘上，是「框贴边 + 不抖」的供给侧修复。
-        let snapped = mode == .document
+        //
+        // CU-T003：左右页意图的框可能有一条边就是书脊。四边独立吸附会把
+        // 书脊边吸到对页内容/折脊上（视频 4 的“越框越大”来源之一），因此
+        // 页面意图路径不跑 live 吸附，只依赖已解析出的单页四边形。
+        let snapped = mode == .document && liveIntent == .wholePage
             ? detected.map { EdgeSnapper.snap(quad: $0, image: frame.cgImage, maxShiftRatio: 0.06) }
             : detected
         // US3（plan D1）：live 检测结果是**视频 FOV** 的归一化坐标，而 PageDraft/
@@ -826,13 +873,14 @@ final class CaptureViewModel {
                 toAspect: geometry.photoAspect
             ))
         }
-        let track = smoother.ingest(photoDetected)
+        let track = smoother.ingest(photoDetected, at: frame.timestamp)
         // US6（FR-010）：四态引导与轨道态同帧推导（suspicious 优先级最高，
         // 太远经面积滞回去抖）；无 quad 帧自动复位滞回。
         directive = GuidanceDirective.evaluate(track: track, hysteresis: &farHysteresis)
         switch track {
         case .searching:
             frozenQuad = nil
+            presentedQuad = nil
             imageQuad = window
             if phase != .capturing {
                 phase = .previewing
@@ -844,7 +892,7 @@ final class CaptureViewModel {
             await recordTrace(track: track)
         case .tracking(let quad):
             frozenQuad = nil
-            imageQuad = quad
+            imageQuad = presented(quad)
             isAutoCaptureSuppressed = false
             if phase != .capturing {
                 phase = .previewing
@@ -861,28 +909,39 @@ final class CaptureViewModel {
             // 冻结种子取当前帧 detected 而非 smoother 平滑框（红队：手在动
             // 时平滑框与画面有相位差，对着错位的边吸附）。
             if !wasLocked, frozenQuad == nil, directive != .closer, let detected {
-                // 预算 5%→8%（spec/frame-truth 真机复测）：检出框内缩可能
-                // 超过 5%×短边；真机证据是搜索窗内一片平坦纸面（梯度峰值
-                // 0.05–0.07 全部低于阈值）——加窗后才可能够到纸边。s=0 守卫
-                // 与「最强梯度」语义不变，倍率仅放大可达范围。
-                let snappedVideo = EdgeSnapper.snap(
-                    quad: detected,
-                    image: frame.cgImage,
-                    maxShiftRatio: 0.08
-                ) { diagnostic in
-                    ZhixiaLog.snapEdge(
-                        edge: diagnostic.edge,
-                        g0: diagnostic.g0,
-                        outward: diagnostic.outward,
-                        inward: diagnostic.inward,
-                        shift: diagnostic.shift
-                    )
+                // 整页/单页路径继续在锁定瞬间做一次有界吸附；左右页意图
+                // 不吸附（书脊边必须保持在解析出的位置，不能被吸到对页）。
+                let snappedPhoto: Quad
+                if liveIntent == .wholePage {
+                    // 预算 5%→8%（spec/frame-truth 真机复测）：检出框内缩可能
+                    // 超过 5%×短边；真机证据是搜索窗内一片平坦纸面（梯度峰值
+                    // 0.05–0.07 全部低于阈值）——加窗后才可能够到纸边。s=0 守卫
+                    // 与「最强梯度」语义不变，倍率仅放大可达范围。
+                    let snappedVideo = EdgeSnapper.snap(
+                        quad: detected,
+                        image: frame.cgImage,
+                        maxShiftRatio: 0.08
+                    ) { diagnostic in
+                        ZhixiaLog.snapEdge(
+                            edge: diagnostic.edge,
+                            g0: diagnostic.g0,
+                            outward: diagnostic.outward,
+                            inward: diagnostic.inward,
+                            shift: diagnostic.shift
+                        )
+                    }
+                    snappedPhoto = clampedToPreview(FOVLayout.convert(
+                        quad: snappedVideo,
+                        fromAspect: geometry.videoAspect,
+                        toAspect: geometry.photoAspect
+                    ))
+                } else {
+                    snappedPhoto = clampedToPreview(FOVLayout.convert(
+                        quad: detected,
+                        fromAspect: geometry.videoAspect,
+                        toAspect: geometry.photoAspect
+                    ))
                 }
-                let snappedPhoto = clampedToPreview(FOVLayout.convert(
-                    quad: snappedVideo,
-                    fromAspect: geometry.videoAspect,
-                    toAspect: geometry.photoAspect
-                ))
                 frozenQuad = snappedPhoto
                 let seedPhoto = photoDetected
                 ZhixiaLog.snapOnLock(
@@ -894,6 +953,7 @@ final class CaptureViewModel {
             }
             let lockedQuad = frozenQuad ?? quad
             imageQuad = lockedQuad
+            presentedQuad = lockedQuad
             if phase != .capturing {
                 phase = .locked(lockedQuad)
             }
@@ -935,6 +995,20 @@ final class CaptureViewModel {
                 await capture()
             }
         }
+    }
+
+    /// 跟踪框显示去抖（CU-T004）：相邻帧/候选的微小位移不刷新屏幕。
+    /// 锁定时不经过此函数（`frozenQuad` 已经是冻结真值）；搜索/快门后清空。
+    private func presented(_ candidate: Quad) -> Quad {
+        guard let previous = presentedQuad else {
+            presentedQuad = candidate
+            return candidate
+        }
+        if candidate.meanVertexDistance(to: previous) < 0.004 {
+            return previous
+        }
+        presentedQuad = candidate
+        return candidate
     }
 
     /// 锁定框包围盒到取景框四边的最小距离（诊断日志用，与

@@ -15,6 +15,7 @@ struct ReviewView: View {
                 header
                 pageDots
                 canvas
+                splitSuggestion
                 tools
                 FilterStrip(selected: viewModel.current?.enhancement ?? .enhance) { enhancement in
                     viewModel.setFilter(enhancement)
@@ -129,6 +130,39 @@ struct ReviewView: View {
                 }
         } else {
             ProgressView().tint(.white).frame(maxHeight: .infinity)
+        }
+    }
+
+    /// CU-T007：拍后安全网——整理页第一屏显示拆分建议，用户点选才写框。
+    /// 这里不自动应用、不改 quad；只是把已有的 `SplitProposal` 变成可见入口。
+    @ViewBuilder
+    private var splitSuggestion: some View {
+        if let proposal = viewModel.splitProposal,
+           !viewModel.isAdjustingSplit,
+           !viewModel.isAdjustingCrop {
+            HStack(spacing: 10) {
+                Text("review.split")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                Spacer()
+                ForEach(SplitProposal.Selection.allCases, id: \.self) { selection in
+                    Button(title(for: selection)) {
+                        viewModel.applySplit(selection)
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(proposal.selection == selection ? Tokens.seal : Color.white.opacity(0.75))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func title(for selection: SplitProposal.Selection) -> LocalizedStringResource {
+        switch selection {
+        case .whole: "review.split.whole"
+        case .left: "review.split.left"
+        case .right: "review.split.right"
         }
     }
 

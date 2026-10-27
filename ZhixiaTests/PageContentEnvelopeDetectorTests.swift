@@ -100,6 +100,39 @@ struct PageContentEnvelopeDetectorTests {
             .write(to: out)
     }
 
+    @Test("粉色封面：页面内粉带保持，只有右缘木纹被刷白")
+    func preservesPinkCoverInterior() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: 400, height: 560),
+            format: format
+        )
+        let image = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 560))
+            // 粉色封面本体：顶部 7% 也在页面内，过去会被全宽红色清理洗白。
+            UIColor(red: 0.84, green: 0.28, blue: 0.48, alpha: 1).setFill()
+            context.fill(CGRect(x: 20, y: 40, width: 350, height: 480))
+            // 页面右侧白边 + 页外木纹；清理必须只动木纹。
+            UIColor(red: 0.55, green: 0.18, blue: 0.20, alpha: 1).setFill()
+            context.fill(CGRect(x: 382, y: 0, width: 10, height: 560))
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 60, y: 100, width: 250, height: 20))
+        }
+        let cg = try #require(image.cgImage)
+        let cleaned = try #require(PageEdgeCleaner.cleanedBackground(in: cg))
+        let topPink = pixel(cleaned, x: 200, y: 55)
+        #expect(topPink.0 > 120 && topPink.1 < 140 && topPink.2 < 160,
+                "页面内粉色不得被顶部红色清理刷白，实际 \(topPink)")
+        let midPink = pixel(cleaned, x: 200, y: 300)
+        #expect(midPink.0 > 120 && midPink.1 < 140 && midPink.2 < 160,
+                "页面内部粉色必须保持")
+        let wood = pixel(cleaned, x: 387, y: 100)
+        #expect(wood.0 > 245 && wood.1 > 245 && wood.2 > 245,
+                "页外右上木纹仍应被清掉，实际 \(wood)")
+    }
+
     @Test("真机 round1-3 右侧页外条可被识别")
     func detectsDeviceRound13RightStrip() throws {
         let root = URL(fileURLWithPath: #filePath)

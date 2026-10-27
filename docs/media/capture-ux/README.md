@@ -8,4 +8,10 @@
 - `3-ScreenRecording_10-27-2026-18-47-48_1.MP4`：右页，取景框跳跃时成片带左页/背景
 - `4-ScreenRecording_10-27-2026-18-51-59_1.MP4`：左页，框无法定位左页，成片为整摊
 
+关键成片：
+
+- `pink-cover-result.jpg`：修复前设备成片，顶部粉带被洗白；
+- `pink-cover-fixed.jpg`：修复后用设备原图 + DB quad 本地重渲染，顶部粉带保留；
+- `right-page-good.jpg` / `left-page-intent-failure.jpg`：右页对照 / 左页误拍整摊。
+
 根因与优化方案：`docs/21-capture-ux-stability.md`。

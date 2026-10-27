@@ -69,6 +69,38 @@ struct QuadSmootherTests {
         }
     }
 
+    @Test("真实时间戳驱动锁定：30fps 下按 0.2s 而非固定 1/15 累计")
+    func timestampDrivesLockDuration() {
+        var smoother = QuadSmoother(lockDuration: 0.20, frameDt: 1.0 / 15.0)
+        let quad = Quad.fullImage
+        var state = QuadTrackState.searching
+        // 0, 0.05, 0.10, 0.15, 0.20...；第 5 帧累计 0.15? 首帧不累计，
+        // 后续 4 个真实间隔 = 0.20 → 锁定。
+        for index in 0..<5 {
+            state = smoother.ingest(quad, at: Double(index) * 0.05)
+        }
+        guard case .locked = state else {
+            Issue.record("真实时间戳应让 0.20s 稳定窗按真实 0.20s 锁定")
+            return
+        }
+    }
+
+    @Test("锁定后累计漂移超过阈值会解锁，不再被逐帧小差粘住")
+    func cumulativeDriftUnlocks() {
+        var smoother = QuadSmoother(unlockEpsilon: 0.03, lockDuration: 0.2, frameDt: 0.1)
+        let base = rectQuad(0.2, 0.2, 0.8, 0.8)
+        for _ in 0..<5 { _ = smoother.ingest(base) }
+        // 每帧只移 1%，单帧距离 < 3%，但相对锁定起点累计到 4%。
+        var state = QuadTrackState.locked(base)
+        for step in 1...4 {
+            let drift = rectQuad(0.2 + Double(step) * 0.01, 0.2, 0.8 + Double(step) * 0.01, 0.8)
+            state = smoother.ingest(drift)
+        }
+        if case .locked = state {
+            Issue.record("累计漂移超过 unlockEpsilon 后必须解锁")
+        }
+    }
+
     // MARK: - Quad 扫描框边精度扩展（plan D5/D8，T006）
 
     private func rectQuad(_ x0: Double, _ y0: Double, _ x1: Double, _ y1: Double) -> Quad {

@@ -26,7 +26,7 @@ struct SplitProposal: Equatable, Sendable {
     }
 
     /// 用户选择。
-    enum Selection: String, Sendable, Equatable, CaseIterable {
+    enum Selection: String, Sendable, Equatable, CaseIterable, Hashable {
         /// 整页（放弃拆分，恢复提案前的框）。
         case whole
         /// 左页。

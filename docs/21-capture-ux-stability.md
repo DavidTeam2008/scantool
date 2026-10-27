@@ -30,7 +30,8 @@
 ## 二、录屏证据
 
 联系表：`docs/media/capture-ux/video*-contact.jpg`；关键成片：
-`pink-cover-result.jpg`、`left-page-intent-failure.jpg`、`right-page-good.jpg`。
+`pink-cover-result.jpg`（修复前）、`pink-cover-fixed.jpg`（修复后）、
+`left-page-intent-failure.jpg`、`right-page-good.jpg`。
 
 | # | 场景 | 录屏 | 观察 | 设备侧证据 |
 |---|---|---|---|---|
@@ -203,7 +204,51 @@ byte-identical；无新增 `PageEdgeCleaner` 回归。
 左/右页角点误差、用户需要手动修正次数。WPS 图片链路继续以
 `0.906224` 和 PNG byte-identical 为不回退门限。
 
-## 五、与旧计划的关系
+## 五、本轮实现与验收（2026-10-27）
+
+### 已落地
+
+- `CU-T002`：`PageEdgeCleaner` 去掉顶部 7% 全宽红色清理，红色/灰色木纹清理
+  限制到右侧边缘并要求边界内侧是白纸；新增粉色封面合成回归。用设备原图 +
+  DB quad 本地重渲染，顶部粉带保留，证据 `docs/media/capture-ux/pink-cover-fixed.jpg`。
+- `CU-T003`：`CaptureIntent` 在自动模式也可见；`PageIntentResolver` 在整书
+  外框上按 `SpreadSplitter` 书脊拆左/右页，右页候选尝试左折条裁切；意图切换
+  会清空 sticky/smoother 锚点。新增 `PageIntentResolverTests`、
+  `CaptureIntentFlowTests`。
+- `CU-T004`：`QuadSmoother` 使用真实 `frame.timestamp` 计算 dt，锁定后按
+  “相对锁定起点的累计位移”解锁；页面意图 sticky hold 窗从 5 帧扩到 15 帧；
+  跟踪框增加 0.4% 显示死区；意图路径不再跑四边吸附（保护书脊边）。
+- `CU-T005`：快门快照改为读取 `presentedQuad`（屏幕实际去抖框）；进入
+  `capturing` 后帧消费不再更新裁切框；页面意图无目标时检测器返回 nil 而不是
+  整书外框。
+- `CU-T007`：Review 第一屏在存在 `SplitProposal` 时显示“整页/左页/右页”
+  确认条；只有点选才写 quad（`ReviewView.splitSuggestion`）。
+
+### 测试与证据
+
+- 全量：**501 total / 490 passed / 1 expected / 10 failed**；10 个仍是既有
+  Golden/WordFidelity/Review/ReviewSplit 顺序/预览抖动，未因本轮新增。
+- 新测试：`PageIntentResolverTests` 5、`CaptureIntentFlowTests` 1、
+  `PageEdgeCleaner` 粉色封面 1、`QuadSmoother` 真实 dt/累计解锁 2。
+- `WordFidelity` 单类：`realUIBaseExportArtifact` 通过；宿主 QuickLook 检查
+  pageimage **0.914115**、restored **0.964710**（QuickLook 代理，不是 WPS）。
+- **WPS 兼容**：用本轮 `out-restored-realbase.docx` 重新渲染
+  `build/p02-wps/out-restored-realbase-wps.png`，SHA-256
+  `3faabfd0519da9add6024bff419a5c004a5ee1d407f8559b428d874526afa431`，与已接受
+  realbase 基线 byte-identical；按既定口径仍 **0.906224**。
+- 设备真机 10+10 张左右页、粉封面 3 角度、A4 5 张尚未执行；需要下一轮
+  真机录制回填，不能把本机合成/单张复现当作设备验收。
+
+### 未完成 / 保留
+
+- `CU-T006` 默认模式仍为 `.auto`：引导模式已经是静态兜底，但 20 张 A/B
+  尚未做，不能仅凭本轮四段录屏翻转默认值。
+- 彩色封面的左右白边仍可能保留一条桌面/纸边（顶部粉带已修复）；需要更
+  完整的彩色页面 mask/边缘裁切，而不是继续用白纸包络硬套。
+- 右页候选若没有可靠书脊/折痕，可能仍保留一条左页窄边；Review 的拆分
+  提案作为安全网。
+
+## 六、与旧计划的关系
 
 - `docs/15` 的结论（引导框 + 意图优先、锁定累计位移）仍然成立；本轮录屏进一步
   证明：**默认自动模式不能只靠调平滑/阈值**，必须先解决意图和候选切换。
@@ -212,7 +257,7 @@ byte-identical；无新增 `PageEdgeCleaner` 回归。
 - `spec/page-preprocess` 的 round1-4 单页成片验收通过；多条件样张、PP-T032
   全流程和 flaky 清理按用户要求暂停，见 `TODO.md` 的“暂停”段。
 
-## 六、对应 TODO
+## 七、对应 TODO
 
 任务拆分为 `TODO.md` 的 **P0.2 · 取景稳定性与拍摄意图**：
 

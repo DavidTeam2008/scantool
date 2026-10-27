@@ -84,6 +84,27 @@ protocol CameraPreviewAttaching: AnyObject {
 protocol EdgeDetecting: Sendable {
     func detect(frame: VideoFrame, idCardWindow: Quad?) async -> Quad?
     func detect(imageData: Data, idCardWindow: Quad?) async -> Quad?
+
+    /// P0.2 / CU-T003：自动取景的页面意图。默认实现保持旧检测语义，既有
+    /// 替身/调用点零改动；`VisionEdgeDetector` 用真实候选池解析左/右页。
+    func detect(frame: VideoFrame, idCardWindow: Quad?, intent: CaptureIntent) async -> Quad?
+    /// 静帧路径的意图版本（搜索态快门/拍后重检可用）。
+    func detect(imageData: Data, idCardWindow: Quad?, intent: CaptureIntent) async -> Quad?
+    /// 清空 live 候选粘滞锚点（用户切换左/右页意图时，旧锚点不得继续
+    /// 把新意图拉回上一页）。默认 no-op。
+    func resetLiveTracking() async
+}
+
+extension EdgeDetecting {
+    func detect(frame: VideoFrame, idCardWindow: Quad?, intent: CaptureIntent) async -> Quad? {
+        await detect(frame: frame, idCardWindow: idCardWindow)
+    }
+
+    func detect(imageData: Data, idCardWindow: Quad?, intent: CaptureIntent) async -> Quad? {
+        await detect(imageData: imageData, idCardWindow: idCardWindow)
+    }
+
+    func resetLiveTracking() async {}
 }
 
 protocol PerspectiveCorrecting: Sendable {

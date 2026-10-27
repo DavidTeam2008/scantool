@@ -188,6 +188,8 @@ enum DetectionStrategy {
 actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
     /// 候选粘滞状态（仅 live 文档路径使用；actor 串行访问保证状态安全）。
     private var sticky = CandidateSticky()
+    /// 页面意图解析的透视矫正上下文（仅左/右页意图需要，actor 串行持有）。
+    private let intentCIContext = CIContext(options: [.useSoftwareRenderer: false])
 
     #if DEBUG
     /// 候选快照回调（spec/guided-capture T002 / FR-007）：默认 nil = **零开销**
@@ -218,11 +220,36 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
             cgImage: frame.cgImage,
             orientation: .up,
             idCardWindow: idCardWindow,
-            stillImage: false
+            stillImage: false,
+            intent: .wholePage
+        )
+    }
+
+    /// P0.2 / CU-T003：带页面意图的 live 检测。整页路径完全沿用旧语义；
+    /// 左/右页路径会在候选池里生成书脊拆分/左折条裁切目标。
+    func detect(
+        frame: VideoFrame,
+        idCardWindow: Quad?,
+        intent: CaptureIntent
+    ) async -> Quad? {
+        detect(
+            cgImage: frame.cgImage,
+            orientation: .up,
+            idCardWindow: idCardWindow,
+            stillImage: false,
+            intent: intent
         )
     }
 
     func detect(imageData: Data, idCardWindow: Quad?) async -> Quad? {
+        await detect(imageData: imageData, idCardWindow: idCardWindow, intent: .wholePage)
+    }
+
+    func detect(
+        imageData: Data,
+        idCardWindow: Quad?,
+        intent: CaptureIntent
+    ) async -> Quad? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {
@@ -232,15 +259,21 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
             cgImage: image,
             orientation: imageOrientation(from: source),
             idCardWindow: idCardWindow,
-            stillImage: true
+            stillImage: true,
+            intent: intent
         )
+    }
+
+    func resetLiveTracking() async {
+        sticky.reset()
     }
 
     private func detect(
         cgImage: CGImage,
         orientation: CGImagePropertyOrientation,
         idCardWindow: Quad?,
-        stillImage: Bool
+        stillImage: Bool,
+        intent: CaptureIntent
     ) -> Quad? {
         let rectangles = detectRectangles(
             cgImage: cgImage,
@@ -250,7 +283,19 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
         // 分割来源：still 必跑；live 仅在矩形检测无页面档候选时条件触发（plan D6；
         // spec/frame-truth FR-002 页面先验口径），两条路径的结果并入同一
         // `DetectionStrategy.select` 统一择优。`gateSeg` 留存供遥测。
-        let gateSeg = stillImage || DetectionStrategy.needsDocumentSegmentation(rectangles: rectangles)
+        // 页面意图（左/右页）需要整书外框才能按书脊拆分。矩形检测若只给出
+        // 右页内框，常规门控不会跑文档分割——这里显式补一次；整页路径保持
+        // 既有门控不变。
+        let needsSpreadForIntent = intent != .wholePage
+            && !rectangles.contains {
+                PageIntentResolver.isSpreadLike($0)
+                    || (PageIntentResolver.isPageLike($0)
+                        && $0.area >= PageIntentResolver.minimumTargetArea
+                        && PageIntentResolver.matchesSide($0, intent: intent))
+            }
+        let gateSeg = stillImage
+            || DetectionStrategy.needsDocumentSegmentation(rectangles: rectangles)
+            || needsSpreadForIntent
         let segmented: Quad?
         if gateSeg {
             segmented = detectDocumentQuad(cgImage: cgImage, orientation: orientation)
@@ -285,6 +330,30 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
         }
         let rawCandidates = [segmented].compactMap { $0 } + rectangles + relaxedRectangles
         let selection = DetectionStrategy.select(rawCandidates: rawCandidates, idCardWindow: idCardWindow)
+        // P0.2 / CU-T003：页面意图解析。只在 live/静帧文档路径生效；证件
+        // 窗口路径保持比例窗语义。选择目标页时宁可返回 nil（搜索态），
+        // 也不把整书外框当作“右页”交给快门。
+        let intentImage: CGImage? = {
+            guard intent != .wholePage else { return nil }
+            if orientation == .up { return cgImage }
+            return uprightThumbnail(of: cgImage, orientation: orientation)
+        }()
+        let intentResolution: PageIntentResolver.Resolution? = {
+            guard intent != .wholePage, idCardWindow == nil, let intentImage else { return nil }
+            return PageIntentResolver.resolve(
+                selection: selection?.quad,
+                candidates: rawCandidates,
+                intent: intent,
+                image: intentImage,
+                ciContext: intentCIContext
+            )
+        }()
+        let intentSelection = intentResolution.map {
+            DetectionStrategy.Selection(quad: $0.quad, tier: max(1, selection?.tier ?? 1))
+        }
+        let selectionForSticky: DetectionStrategy.Selection? = intent == .wholePage
+            ? selection
+            : intentSelection
         // US3 候选粘滞（spec/wysiwyg-crop，plan D3，FR-006~007；v2 见
         // spec/case-b-sticky-v2，plan D1）：仅 live 文档路径
         // （`!stillImage && idCardWindow == nil`）在逐帧独立择优后应用——
@@ -316,11 +385,17 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
         //   分支③跟随限制 ≤20%/帧面积变化，堵包含链棘轮。
         let effective: DetectionStrategy.Selection?
         if !stillImage, idCardWindow == nil {
+            let stickyPool = DetectionStrategy.viablePool(
+                rawCandidates + (intentResolution.map { [$0.quad] } ?? [])
+            )
             let gated = sticky.apply(
-                selection: selection,
-                pool: DetectionStrategy.viablePool(rawCandidates),
+                selection: selectionForSticky,
+                pool: stickyPool,
                 similarityThreshold: 0.70,
-                missLimit: 5,
+                // CU-T004：3→5 帧的旧窗口在真机候选存在性交替下仍会周期性
+                // 逃逸；页面意图明确时使用 ~0.4–0.5s 的稳定窗（30fps≈15帧），
+                // 整页路径保持既有 5 帧语义。
+                missLimit: intent == .wholePage ? 5 : 15,
                 holdThroughMiss: true,
                 anchorMinArea: 0.12,
                 reanchorConfirmFrames: 3,
@@ -354,7 +429,7 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
             }
             effective = gated
         } else {
-            effective = selection
+            effective = intent == .wholePage ? selection : intentSelection
         }
         // spec/guided-capture T002 / FR-007：候选快照落盘——**订阅时才构造**
         // （默认 nil = 零开销：不排序、不分配）。载荷含全部 viable + top 8、
@@ -414,23 +489,35 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
             )
         }
         guard var quad = effective?.quad else { return nil }
+        // 页面意图的最终守卫：左/右页意图绝不能返回整书外框。sticky 可能在
+        // 短检测间隙里 hold 旧目标（已通过 page-like 校验）；若旧锚点是整书
+        // 或新目标退化，则回到搜索态，由下一帧重新解析。
+        if intent != .wholePage, !PageIntentResolver.isPageLike(quad) {
+            return nil
+        }
         // spec/word-fidelity T001：静帧路径的**页面判定**——页面外框常常检不出
         // （书页边缘不直/充满取景），此时绝不能裁到页面里的子框（表格/色块/
         // 底边条），否则整页被裁成一小块（用户实测「只识别了右页的一部分」）。
         // 判据见 `DetectionStrategy.stillPageCandidate`：大候选 = 页面；候选铺满
         // 整幅 = 整幅就是页面（**不裁**）；否则文档是画面里的子区域。
         if stillImage, idCardWindow == nil {
-            let viable = DetectionStrategy.viablePool(rawCandidates)
-            guard let page = DetectionStrategy.stillPageCandidate(viable: viable) else {
-                // 认不出页面 → 不裁（调用方回退整图），绝不裁到子框。
-                return nil
+            if intent != .wholePage {
+                // 静帧意图路径已经由 PageIntentResolver 选出单页目标；不再让
+                // stillPageCandidate 把整书外框覆盖回来。
+                guard intentResolution != nil else { return nil }
+            } else {
+                let viable = DetectionStrategy.viablePool(rawCandidates)
+                guard let page = DetectionStrategy.stillPageCandidate(viable: viable) else {
+                    // 认不出页面 → 不裁（调用方回退整图），绝不裁到子框。
+                    return nil
+                }
+                quad = page
             }
-            quad = page
         }
         // US6（plan D7）：still 路径择优后贴边吸附——检出框普遍内缩 1~3%，
         // 沿外法线恢复真实边缘。证件模式比例窗保持语义不变；live 路径不动。
         // 快门检测与整理页 refine 都经由本方法，单点接入全部受益。
-        if stillImage, idCardWindow == nil {
+        if stillImage, idCardWindow == nil, intent == .wholePage {
             quad = snapped(quad, cgImage: cgImage, orientation: orientation)
         }
         return quad
