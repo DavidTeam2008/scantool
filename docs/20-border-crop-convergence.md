@@ -53,7 +53,7 @@
 
 ### 1.3 竞品目标形态
 
-`docs/media/optimize/other-1-2026-10-26 23.33_1.JPG`（2204×3028，宽高比
+`docs/media/optimize/other-1-2026-10-26-23.33_1.JPG`（2204×3028，宽高比
 0.728）是竞品/扫描类输出：页面四边有均匀留白、背景基本纯白、无书脊/桌面，
 标题、页码、两个表、照片都保留。它说明用户要的“扫描感”不只是裁掉背景，
 还包括**白底画布 + 页面归一化 + 纸面干净**。
@@ -226,7 +226,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 | 幂等性 | 对第一轮输出再跑整图 draft：1694×2200 → 1694×2200 |
 | WPS realbase | **0.906224**，PNG SHA-256 与已接受基线 byte-identical |
 | 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 3/3、`ImagePipelineTests` 2/2 |
-| 全量 | 490 total / 481 passed / 1 expected / 8 known full-suite failures（flaky 集合 7–9） |
+| 全量 | 490 total / 482 passed / 1 expected / 7 known full-suite failures（flaky 集合 7–9） |
 
 证据：
 
@@ -234,6 +234,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 - `build/page-preprocess/crop-convergence/T050-IMG_7544.preprocess.json`
 - `build/page-preprocess/crop-convergence/T050-intermediate-summary.json`
 - `build/word-fidelity/p01-wps/`（WPS 独立复跑）
+- `build/page-preprocess/crop-convergence/device-round1-2/`（真实设备原图、旧报告、修复后本地复现）
 
 ### 7.4 真机 round1 回归（2026-10-27）
 
@@ -254,8 +255,33 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
   （`backgroundWhitened=true`），避免为了去背景破坏表格结构。
 - 新增 `PageCropConvergenceTests/pageLevelDraftStillRefines` 回归。
 
-真机复测待用户重新安装当前构建后确认；目前样张级验证已覆盖整图 draft
-与页面级 draft 两条路径。
+随后用户在同一流程得到：
+
+`docs/media/optimize/round1-2-BC0771BF-E8DC-4EB1-9C1E-9B875236D6AC-rendered.jpg`（1869×2200）
+
+出现回归：左侧折页进入、右侧背景变多、顶部有效信息被裁、右上角 `2` 消失。
+设备侧 `preprocess.json`（`build/device-round1-2/preprocess.json`）显示真实
+页面级 draft：
+
+- `proposed` 面积约 0.776；
+- 旧 `chosen.topLeft.y=0.1098`；
+- `textBounds.top=0.1178`，`paperEnvelope.top=0.0972`；
+- 右上方页码 `2` 的 OCR 顶部约 **0.086**，落在文字锚点之外。
+
+因此旧逻辑把 `2` 当页边背景裁掉；同时页级 draft 的左右范围已经包含
+折页/背景，包络候选在部分条件下还会向外扩。
+
+当前修复（未提交验收前）：
+
+- 包络候选必须夹在 `chosen` 内，禁止扩回折页/右侧背景；
+- 纸面有明显上边距（>3%）时保留纸面顶部 **1.5%** 页眉安全带，避免把
+  页码/页眉当背景裁掉；
+- 表格安全门拒绝裁切时保留原页几何、框外刷白；
+- 编码前裁掉透视采样产生的右侧 1px 黑边。
+
+用设备原图 + 真实 proposed 的本地复现：输出 **1562×2194**，
+`backgroundWhitened=true`（表格结构保护回退），OCR 回读右上 `2` 存在，
+目测无左侧折页/右侧背景。仍需重新安装构建后在 iPhone 13 上复测确认。
 
 ### 7.3 未闭环
 
@@ -270,3 +296,4 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
    OCR 输出中标题曾出现 `An rticle` 的识别错误，目测字形未被裁，但不能
    只靠 OCR 证明。
 5. **10–20 张多条件样张**：尚未跑；不能只凭 `IMG_7544` 宣称通用。
+6. **真机 round1-2 仍未复测**：本地设备原图/真实 proposed 已复现修复，待重新安装后确认。

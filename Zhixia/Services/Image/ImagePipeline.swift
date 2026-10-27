@@ -191,10 +191,16 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         guard let correctedImage = CIImage(data: corrected) else {
             throw ZhixiaError.perspectiveFailed
         }
-        workingImage = correctedImage
+        // 透视采样在图像最外沿可能留下 1px 的黑色未定义边（真机 round1
+        // 右侧黑线）；先去掉 1px，再由白底画布补回纸边。
+        let correctedExtent = correctedImage.extent.integral
+        let usableCorrected = correctedExtent.width > 3 && correctedExtent.height > 3
+            ? correctedImage.cropped(to: correctedExtent.insetBy(dx: 1, dy: 1))
+            : correctedImage
+        workingImage = usableCorrected
         if let backgroundWhiteningRect {
             workingImage = whiteOutside(
-                correctedImage,
+                usableCorrected,
                 rect: backgroundWhiteningRect
             )
             report.backgroundWhitened = true
@@ -205,7 +211,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
            preprocessRecipe.flattensPaperIllumination,
            !tableGuardAvailable,
            !tableGuardAttempted {
-            let guardOutcome = await detectTableGuard(correctedImage: correctedImage)
+            let guardOutcome = await detectTableGuard(correctedImage: workingImage)
             tableGuardAvailable = guardOutcome.isAvailable
             protectedTableRects = guardOutcome.tableRects
             tableGuardSource = guardOutcome.source
@@ -229,7 +235,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
             report.illuminationFallbackReason = "table_guard_unavailable"
             report.illuminationTableGuardAvailable = false
         } else if let output = illuminationFlattener.flatten(
-            correctedImage,
+            workingImage,
             context: context,
             options: preprocessRecipe.illuminationOptions,
             protectedRects: protectedTableRects
@@ -269,7 +275,7 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 borderRatio: CGFloat(preprocessRecipe.scanCanvasBorderRatio)
             )
             : filtered
-        let enhanced = try jpegData(from: outputImage, quality: 0.82)
+        let enhanced = try jpegData(from: outputImage, quality: 0.82, trimEdge: true)
         writePreprocessReport(report, original: original)
         let thumb = try await makeThumbnail(imageData: enhanced, maxWidth: 360)
         let size: CGSize
@@ -651,6 +657,15 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 // 用页内文字作为上/左锚点；右/下仍保留图片/页码内容包络。
                 // 上/左各留 0.8% 纸内边；其余由文字覆盖率和表格安全门兜底。
                 rect.origin.y = max(rect.origin.y, textBounds.minY - 0.008)
+                // 页码/页眉可能在 OCR 文本框之外（真机 IMG_7542 的右上
+                // “2”就是这种情况）。纸面有明显上边距时，至少保留纸面
+                // 顶部 1.5% 作为页眉安全带，避免把页码当背景裁掉。
+                if envelope.paperRect.minY > 0.03 {
+                    rect.origin.y = min(
+                        rect.origin.y,
+                        envelope.paperRect.minY - 0.015
+                    )
+                }
                 rect.size.height = max(
                     0,
                     min(rect.maxY, textBounds.maxY + 0.008) - rect.origin.y
@@ -666,6 +681,10 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
                 rect = rect.union(textBounds)
             }
             rect = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            // 重要：包络只能在当前页面框**内部**收边，不能把已经贴边的
+            // 页面级 draft 重新扩回折页/右侧背景。之前 round1-2 的左侧
+            // 折页和右侧背景就是这样被“扩”回来的。
+            rect = rect.intersection(chosen.boundingRect)
             let candidate = Quad(
                 topLeft: CGPoint(x: rect.minX, y: rect.minY),
                 topRight: CGPoint(x: rect.maxX, y: rect.minY),
@@ -944,16 +963,21 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         let scaled = image.transformed(
             by: CGAffineTransform(scaleX: scale, y: scale)
         )
+        // 多留 2px 白边，盖住 JPEG/CI 在最后一列留下的透明黑线。
+        let edgePadding: CGFloat = 2
         let canvasRect = CGRect(
             x: 0,
             y: 0,
-            width: pageWidth + border * 2,
-            height: pageHeight + border * 2
+            width: pageWidth + border * 2 + edgePadding * 2,
+            height: pageHeight + border * 2 + edgePadding * 2
         )
         let canvas = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
             .cropped(to: canvasRect)
         let page = scaled.transformed(
-            by: CGAffineTransform(translationX: border, y: border)
+            by: CGAffineTransform(
+                translationX: border + edgePadding,
+                y: border + edgePadding
+            )
         )
         return page.composited(over: canvas)
     }
@@ -1063,9 +1087,21 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         return current
     }
 
-    private func jpegData(from image: CIImage, quality: CGFloat) throws -> Data {
-        let extent = image.extent.integral
-        guard let cgImage = context.createCGImage(image, from: extent) else {
+    private func jpegData(
+        from image: CIImage,
+        quality: CGFloat,
+        trimEdge: Bool = false
+    ) throws -> Data {
+        let rawExtent = image.extent.integral
+        let extent = trimEdge
+            ? rawExtent.insetBy(dx: 2, dy: 2)
+            : rawExtent
+        // 透明/未覆盖的边缘在 JPEG 里会变黑（真机 round1 右侧 1px 黑边）。
+        // 先铺一层白底再编码，白画布/页面边缘不会被编码器吃成黑线。
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+            .cropped(to: extent)
+        let flattened = image.composited(over: white)
+        guard let cgImage = context.createCGImage(flattened, from: extent) else {
             throw ZhixiaError.perspectiveFailed
         }
         let data = NSMutableData()
@@ -1077,7 +1113,12 @@ actor ImagePipeline: PerspectiveCorrecting, Enhancing, Thumbnailing, ImageRender
         ) else {
             throw ZhixiaError.perspectiveFailed
         }
-        CGImageDestinationAddImage(destination, cgImage, [
+        let finalImage: CGImage = trimEdge && cgImage.width > 4
+            ? (cgImage.cropping(
+                to: CGRect(x: 0, y: 0, width: cgImage.width - 1, height: cgImage.height)
+            ) ?? cgImage)
+            : cgImage
+        CGImageDestinationAddImage(destination, finalImage, [
             kCGImageDestinationLossyCompressionQuality: quality
         ] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {

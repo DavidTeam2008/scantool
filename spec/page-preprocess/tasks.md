@@ -2,7 +2,7 @@
 
 **Input**: `spec.md` / `plan.md`
 **当前优先级**: P0.1（边框/背景单次收敛，2026-10-27 起）→ P1（裁切路径已交付，guard 覆盖待扩展）→ P2（页边拉直/行矫正）→ P3（网格/真机）
-**测试基线**: `Makefile` 490 total / 481 passed / 1 expected（2026-10-27 全量；已知 9 个 full-suite 失败见 `TODO.md`）
+**测试基线**: `Makefile` 490 total / 482 passed / 1 expected（2026-10-27 全量；已知 9 个 full-suite 失败见 `TODO.md`）
 
 ## P0 · 边界与页外裁切（当前）
 
