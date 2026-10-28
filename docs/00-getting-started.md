@@ -7,7 +7,9 @@
 版面还原见 [06](06-document-reconstruction.md)，真机根因见 [08](08-reconstruct-v3-realworld-fix.md)。
 
 更新：2026-09-07（与当前 `Zhixia` 工程对齐）；2026-09-12 补上手册指引；
-2026-09-26 补 Makefile 用法、还原档位与测试套件对齐（wysiwyg-crop / wps-parity-layout 两周期后）
+2026-09-26 补 Makefile 用法、还原档位与测试套件对齐（wysiwyg-crop / wps-parity-layout 两周期后）；
+**2026-10-28 当前主线更新**：P0.3 取景包络跟踪，测试基线 518/507/1/10 known，
+详见 [12 交接文档](12-handover.md) 与 [22 取景包络](22-capture-envelope-tracking.md)。
 
 ---
 
@@ -78,7 +80,7 @@ Zhixia/
     ServiceProtocols.swift   全部能力协议
   DesignSystem/        Tokens + 组件
   Localizable.xcstrings
-ZhixiaTests/           44 个测试文件 / 449 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure）
+ZhixiaTests/           66 个测试文件 / 518 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure + 10 个已知全量失败）
 ```
 
 依赖方向：**Features → Domain / DesignSystem / Environment 协议**。禁止 Feature 里直接 `AVCaptureSession` / `CIFilter` / `VNRecognize…`（预览 Representable 除外）。
@@ -111,6 +113,7 @@ ZhixiaTests/           44 个测试文件 / 449 个 @Test（含端到端 + 真�
 | --- | --- |
 | 首页卡片 / 搜索 | `Features/Library/*`，`DocumentStore` |
 | 框抖、锁不住、证件窗 | `QuadSmoother`、`VisionEdgeDetector`（内含 `CandidateSticky`）、`DocumentMaskQuad`、`FrameMapper` |
+| 包络/左页右角/拍后左右页输出 | `CaptureEnvelopeTracker`、`PageIntentResolver.envelope/resolve`、`CaptureViewModel.consumeEnvelope`、`EdgeOverlayView`、`ReviewViewModel.applyOutputIntent*`；先读 [22](22-capture-envelope-tracking.md) |
 | 快门成片 ≠ 屏幕上的框（WYSIWYG） | `Domain/CropConsistencyGate.swift`（门禁）、`Services/Vision/CandidateSticky.swift`（粘滞）；契约见 [09 §4.2](09-project-handbook.md) |
 | 滤镜观感 | `EnhancementRecipe.swift`（不要散落魔法数） |
 | OCR 中文乱码 / 选图策略 | `VisionTextRecognizer`、`OCRTextQuality` |
@@ -176,22 +179,23 @@ make doctor                      # 环境自检（Xcode / 模拟器 / Busy 提�
 
 > 📌 **计数陷阱**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 > failure`，不是 `passed`——按 `passed` 关键字搜日志会少数。以 `make test` 末尾自动
-> 打印的 xcresulttool 计数为准（当前基线：`total=448 passed=447 failed=0
-> expectedFailures=1`）。
+> 打印的 xcresulttool 计数为准。当前基线：
+> `total=518 passed=507 failed=10 expectedFailures=1`；10 个失败是既有测试债
+> （Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），不是本轮新回归。
 
-**手工裸跑**（与 Makefile 等价，模拟器名称/OS 按本机调整；本机只有 26.4.1 时
-追加 `,OS=26.4.1`）：
+**手工裸跑**（与 Makefile 等价，模拟器名称/OS 按本机调整；默认
+`iPhone 18 Pro` / iOS 27.0）：
 
 ```bash
 # 全量单测
 xcodebuild -project Zhixia.xcodeproj -scheme Zhixia \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0' \
   CODE_SIGNING_ALLOWED=NO OTHER_SWIFT_FLAGS="-disable-sandbox" test
 
-# 只跑还原相关
+# 只跑取景包络相关
 xcodebuild -project Zhixia.xcodeproj -scheme Zhixia \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  -only-testing:ZhixiaTests/ReconstructV2Tests \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0' \
+  -only-testing:ZhixiaTests/ReviewSplitProposalTests \
   CODE_SIGNING_ALLOWED=NO OTHER_SWIFT_FLAGS="-disable-sandbox" test
 ```
 

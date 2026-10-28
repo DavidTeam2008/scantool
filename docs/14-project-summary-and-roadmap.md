@@ -1,14 +1,21 @@
 # 14 项目全面总结与优化路线图（2026-10-21）
 
+> **2026-10-28 交接提示**：本文是 2026-10-21 的完整复盘快照，其中“下一步”与
+> 取景路线已被 **P0.3 包络跟踪** 取代。当前事实源：
+> [12 交接文档](12-handover.md)、[22 取景包络](22-capture-envelope-tracking.md)、
+> [TODO](../TODO.md)。本文保留作“为什么走到这里”的背景，不要按本文的 P0-1/P0-2
+> 继续调 sticky/smoother。
+>
 > 本文是「一次完整复盘」：项目做什么、怎么搭的、核心原理与实现细节、走过的卡点，
 > 以及**截至 2026-10-21 仍未完成的完整优化计划**（含竞品对标）。
 > 交接/日常入口仍是 [12 交接文档](12-handover.md)；本文侧重「为什么」与「下一步」。
 >
-> **2026-10-21 复核后执行顺序**：以
+> **2026-10-21 当时的执行顺序（已被 P0.3 取代，保留作历史）**：以
 > [`15 取景卡点复盘`](15-capture-recovery-assessment.md) 与
 > `spec/guided-capture/` 为准——先做引导框 MVP + 画布真值 + trace/replay，
 > 不再把自动平滑调参作为 P0。本文的 P0-1/P0-2（alpha/显示死区/锁定判据）
 > 降级为引导未胜出后的备选路线，保留作参考，不删除。
+> **当前执行顺序见 [12 §3](12-handover.md#3-路线图按优先级2026-10-28)。**
 
 ---
 
@@ -33,7 +40,9 @@ DesignSystem（Tokens / 组件，横切）
 
 - 依赖只向下；Domain 不 import Services/SwiftUI（`ZhixiaLog` 只作为注释提及）。
 - 所有副作用经 `Services/ServiceProtocols.swift` 协议注入（**铁律 ①：签名不可动**）。
-- 测试：Swift Testing，基线只增不减（**铁律 ②**）；当前 **449 = 448 passed + 1 expected failure + 0 failed**。
+- 测试：Swift Testing，基线只增不减（**铁律 ②**）；2026-10-21 快照为
+  **449 = 448 passed + 1 expected failure + 0 failed**，当前（2026-10-28）为
+  **518 total / 507 passed / 1 expected / 10 known failures**（见 [12 §0](12-handover.md)）。
 
 ## 三、实现原理（两条主链路）
 

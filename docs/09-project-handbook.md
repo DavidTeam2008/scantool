@@ -4,7 +4,13 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：2026-10-21 · 对应代码 108 个 Swift 文件（主工程）/ 约 14.5k 行 / 全量 449 用例 = 396 passed + 1 expected failure + 0 failed · 当前最大卡点：取景主场景仍缺“我要拍右页”的意图（见 [15](15-capture-recovery-assessment.md) 与 `spec/guided-capture/`）；frame-truth / Case B 修复已交付、真机验收待做（[12 §2.1/§2.2](12-handover.md)）。新同事第一读请先看 [12 交接文档](12-handover.md)，AI agent 从 [AGENTS.md](../AGENTS.md) 进入
+> 最后更新：**2026-10-28** · 当前代码 141 个主工程 Swift 文件 / 约 24.9k 行 / 全量
+> **518 用例 = 507 passed + 1 expected failure + 10 known full-suite failures**。
+> **当前主线是 P0.3 取景包络跟踪**：CF-T001~CF-T005 第一版已交付，真机视频 5/7
+> 验收待做（[22](22-capture-envelope-tracking.md) / [12 §0](12-handover.md)）。
+> 本文的 §5/§6 是历史快照，当前状态以 [12](12-handover.md) + [22](22-capture-envelope-tracking.md)
+> + [TODO](../TODO.md) 为准。新同事第一读 [12 交接文档](12-handover.md)，AI agent 从
+> [AGENTS.md](../AGENTS.md) 进入。
 
 ---
 
@@ -17,10 +23,9 @@
 **现状一句话**：**扫描主链路（拍、框、拉正、增强、OCR、导出图片 PDF）已经可用**；
 **「版面还原 → 导出 Word」在 iOS 26 上已经打通**（`RecognizeDocumentsRequest` 直接给表格行列结构，
 实测样张读出 7 行 × 3 列），**默认导出已翻转为流式档**（对标 WPS，含丢字哨兵与通路可观测，§4.5/§6.12）；
-**取景 WYSIWYG 的 Case A/B 根因已定案、修复已交付**（case-b-sticky-v2 +
-folded-page-capture + frame-truth，当前总基线 449 全绿；真机验收仍待做，主清单
-`spec/frame-truth/device-acceptance.md`，§6.13；2026-10-21 复核后新增引导框主线
-`spec/guided-capture/`，见 §7）；**iOS 18~25 仍走几何兜底、
+**取景已切换为“整摊包络 + 拍后输出意图”主线**（CF-T001~CF-T005 第一版交付；
+真机视频 5/7 验收待做，见 [22](22-capture-envelope-tracking.md)），
+历史 Case A/B/frame-truth 修复仍在代码里；**iOS 18~25 仍走几何兜底、
 真机依旧出不了表**；iOS 26 结构化通路真机接通性未验证（L1 疑案，§6.12 已知限制 ③）——见 §6。
 
 ### 仓库地图
@@ -29,15 +34,15 @@ folded-page-capture + frame-truth，当前总基线 449 全绿；真机验收仍
 scantool/
 ├── AGENTS.md                AI coding agent 冷启动入口（定位 / 铁律 / 命令速查）
 ├── Makefile                 构建/测试命令固化（test / test-only / smoke / device-build / doctor）
-├── Zhixia/                  主工程（108 个 .swift）
+├── Zhixia/                  主工程（141 个 .swift）
 │   ├── App/                 入口、DI 容器（AppEnvironment）、路由
 │   ├── Features/            按页面拆：Capture / Edit / Document / Reconstruct / Library / OCR / Settings …
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             44 个测试文件 / 449 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
-├── docs/                    本文 + 专题文档（00~15；12 为交接文档单入口）
-├── spec/                    SDD 周期工件（14 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
+├── ZhixiaTests/             66 个测试文件 / 518 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── docs/                    本文 + 专题文档（00~22；12 为交接文档单入口，22 为当前取景主线）
+├── spec/                    SDD 周期工件（17 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
 │   ├── ocr-dump/            从样张图导出 OCR 夹具
 │   └── pdf-ocr-dump/        **从导出的 PDF 反解真机 OCR**（排障利器，见 §8.3）
@@ -578,8 +583,11 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- 44 个测试文件 / 449 个 `@Test`，全量 **396 passed + 0 failed + 1 expected failure**
-  （known issue：真机 OCR 缺表格结构的历史记录用例，`recorded an expected failure`，非失败）。
+- **当前（2026-10-28）**：66 个测试文件 / 518 个 `@Test`，全量
+  **507 passed + 1 expected failure + 10 known full-suite failures**。
+  10 个已知失败：Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1；
+  新增 CF-T004/CF-T005 用例全绿，`Makefile` 基线 518/507。
+  下列 396/449 等是历史周期快照，保留作回归史参考，不是当前门禁。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的
   `needsRelaxedRectangles` 门控穷举与放宽候选进池择优 + `CaptureFallbackChainTests`
@@ -916,9 +924,11 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 
 ## 7. 后续优化方向
 
-> **2026-10-21**：最新完整优化路线图见
-> [`docs/14-project-summary-and-roadmap.md`](14-project-summary-and-roadmap.md)
->（取景稳定性 / 拍后裁切校准 / 竞品对标 / 工程债；含真机数值与优先级）。
+> **2026-10-28 当前入口**：本节及以下 P0-0/Case A/B 路线是历史记录。
+> 当前主线是 **P0.3 取景包络跟踪**：先做 CF-T007 真机/WPS 验收，再做
+> CF-T008 光流传播 / CF-T006 UI 快门 / CF-T009 观测增强。当前事实源：
+> [12 §0](12-handover.md) · [22](22-capture-envelope-tracking.md) · [TODO](../TODO.md)。
+> 不要按本节 P0-0 继续调 `cropGate`/`stickyOverride`/sticky 阈值。
 
 
 > 2026-09-12 更新：原 P0/P1/P3 大部分已完成（见 §6.7 与下方「已完成」）。
@@ -1024,7 +1034,7 @@ Swift Testing 套件内用例**并行**，并发首调各自发起重复真实 p
 ```bash
 OTHER_SWIFT_FLAGS="-disable-sandbox" xcodebuild test \
   -project Zhixia.xcodeproj -scheme Zhixia \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0' \
   -skipPackagePluginValidation -skipMacroValidation
 ```
 

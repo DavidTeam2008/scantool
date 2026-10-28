@@ -6,8 +6,8 @@ schemaVersion: 1
 # 需要时在 enabledWorkflows 里追加即可。
 enabledWorkflows: ["simulator", "device", "project-discovery"]
 
-# 项目 + scheme + 测试基线模拟器（AGENTS.md：make test 用 iPhone 17 Pro）
+# 项目 + scheme + 测试基线模拟器（与 Makefile 默认一致：iPhone 18 Pro / iOS 27.0）
 sessionDefaults:
   projectPath: "./Zhixia.xcodeproj"
   scheme: "Zhixia"
-  simulatorName: "iPhone 17 Pro"
+  simulatorName: "iPhone 18 Pro"

@@ -2,6 +2,11 @@
 
 目标：把「镜头里的一张纸」稳定变成「库里的一份可分享 / 可还原文档」，可测试、可替换、符合 Swift 6 并发。
 
+> **2026-10-28 状态提示**：当前取景主线是 P0.3 包络跟踪
+> （[22](22-capture-envelope-tracking.md)）；本文的扫描链路小节仍以
+> frame-truth / 旧检测链为背景，新增的 envelope/target 路径见
+> [22](22-capture-envelope-tracking.md) 与 `spec/capture-envelope-tracking/`。
+
 产品：[01](01-product-prototype.md) · 接手：[00](00-getting-started.md) · 还原：[06](06-document-reconstruction.md)  
 图：[layers](diagrams/layers.svg) · [pipeline](diagrams/pipeline.svg) · [modules](diagrams/modules.svg)
 
@@ -134,7 +139,7 @@ Zhixia/
   DesignSystem/
   Localizable.xcstrings
   Info.plist · Assets.xcassets
-ZhixiaTests/           44 个测试文件 / 449 个 @Test
+ZhixiaTests/           66 个测试文件 / 518 个 @Test
   QuadSmootherTests · ImagePipelineTests · DocumentStoreTests
   CaptureViewModelTests · OCRViewModelTests · ReconstructTests
   CropConsistencyGateTests · CandidateStickyTests · CropGateAtShutterTests   // WYSIWYG
@@ -357,7 +362,7 @@ Library
 | OCR | 中文质量、双图择优 |
 | 还原 | 场景路由、阅读序、段落、配图空洞、DOCX 含 `w:tbl` / `word/media`；端到端 `ReconstructEndToEndTests` + 金标准 `GoldenWorksheetEndToEndTests`（真实 Vision 链路）；丢字哨兵 `InkTextReconcilerTests` |
 
-全量 449 用例 = 396 passed + 1 expected failure + 0 failed（跑法与计数陷阱见
+全量 518 用例 = 507 passed + 1 expected failure + 10 known failures（跑法与计数陷阱见
 [00 §7](00-getting-started.md#7-怎么测) 与 `Makefile`）。
 
 Preview：`PreviewSupport` 假相机 / 假识别器 / 内存 Store。

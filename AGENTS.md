@@ -13,18 +13,19 @@
 |---|---|
 | 语言 / 最低部署 | Swift 6 · iOS 18.0+（结构化识别用 iOS 26 `RecognizeDocumentsRequest`） |
 | bundle id | `com.david.Zhixia` |
-| 测试基线 | **456 = 455 passed + 1 expected failure + 0 failed**（`ZhixiaTests/`；iPhone 18 Pro / iOS 27；只增不减） |
+| 测试基线 | **518 total / 507 passed / 1 expected / 10 known full-suite failures**（`ZhixiaTests/`；iPhone 18 Pro / iOS 27；总数只增不减） |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构 | App → Features(SwiftUI VM) → Domain(纯函数) → Services(actor 副作用)，依赖只向下 |
 | 构建 | `Zhixia.xcodeproj`，Xcode 26.x，scheme `Zhixia`，PBXFileSystemSynchronizedRootGroup（新文件免改 pbxproj） |
 
 ## 2. 必读顺序（冷启动必读）
 
-1. `docs/12-handover.md` —— 交接文档：全貌 / 当前卡点 / 路线图 / 上手路径（单入口）
-2. `docs/09-project-handbook.md` —— 项目手册：架构、实现原理、卡点史（§4 契约、§6 卡点清单最常被引用）
-3. `docs/00-getting-started.md` —— 实操细节
-4. `docs/14-project-summary-and-roadmap.md` —— 全面复盘 + **完整优化路线图**（2026-10-21 最新）
-5. `docs/15-capture-recovery-assessment.md` —— **取景卡点复核 + 引导框 10 天计划**（2026-10-21 新主线；与 `spec/guided-capture/` 配套）
+1. `docs/12-handover.md` —— 交接文档：全貌 / 当前主线 / 卡点 / 路线图 / 上手路径（单入口）
+2. `docs/22-capture-envelope-tracking.md` —— **当前 P0.3 取景包络主线**：CF-T001~T009、验收指标、WPS 证据
+3. `TODO.md` —— 当前任务勾选、暂停项、已知测试债
+4. `docs/09-project-handbook.md` —— 项目手册：架构、实现原理、卡点史（§4 契约、§6 卡点清单最常被引用；历史快照）
+5. `docs/00-getting-started.md` —— 实操细节
+6. `docs/14` / `docs/15` —— 2026-10-21 历史复盘；需要背景时再读，不要按旧时间线继续调 sticky/smoother
 
 改哪个模块前，先读对应专题：还原链 → `docs/06`/`07`/`08`；取景检测 → 对应 `spec/` 周期工件（见 §5）。
 
@@ -33,15 +34,16 @@
 | 命令 | 用途 |
 |---|---|
 | `make help` | 列出全部命令 |
-| `make test` | 全量单测（iPhone 17 Pro 模拟器）+ 自动输出 xcresulttool 计数 |
-| `make test-only T=<测试类名>` | 局部单测，例 `make test-only T=GoldenWorksheetEndToEndTests` |
+| `make test` | 全量单测（iPhone 18 Pro / iOS 27.0 模拟器）+ 自动输出 xcresulttool 计数 |
+| `make test-only T=<测试类名>` | 局部单测，例 `make test-only T=ReviewSplitProposalTests` |
 | `make smoke` | 装机冒烟：模拟器 build + install + launch + 进程存活检查 |
 | `make device-build` | 真机目标编译（`generic/platform=iOS`，免签名） |
 | `make doctor` | 环境自检（Xcode / 模拟器 / Busy 提示） |
 
-> **本机 destination**：`iPhone 17 Pro` 只有 iOS 26.4.1，未指定 OS 时可能被
-> 解析到 27.0 并失败。T000 修好 `Makefile` 前用
-> `make test DEST_SIM='platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4.1'`。
+> **destination**：默认 `iPhone 18 Pro` / iOS 27.0（`Makefile` 顶部 `SIM_NAME`/`SIM_OS`）。
+> 本机没有该 runtime 时用
+> `make test DEST_SIM='platform=iOS Simulator,name=<机型>,OS=<版本>'` 覆盖；
+> 不要直接改默认值。
 
 > **MCP 工具**：本机已装 6 个 MCP server（mobilebuildmcp / xcode / agent-device / maestro /
 > testflight / app-store-connect），分工、配置落点与使用铁律见
@@ -50,8 +52,9 @@
 
 **计数陷阱（必读）**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 failure`，**不是** `passed`——按 `passed` 关键字搜日志会少算 1 条。以 `make test`
-末尾自动打印的 xcresulttool 计数为准：`total=448 passed=447 failed=0
-expectedFailures=1` 才是全绿。
+末尾自动打印的 xcresulttool 计数为准。当前全量预期：
+`total=518 passed=507 failed=10 expectedFailures=1`；其中 10 个是既有测试债
+（Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），不是新回归。
 
 **环境坑**（已固化进 Makefile，手工执行时别漏）：① `DEVELOPER_DIR` 必须指向本机
 Xcode；② 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`（macOS 26.x 宏沙箱失效，
@@ -61,20 +64,25 @@ Xcode；② 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`（macOS 26.x 宏沙
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动
    全部替身测试连锁崩。
-2. **既有测试断言零修改**——基线 449 只增不减；方向性翻转属唯一例外，须在周期
-   tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
-3. **纯离线**——不引任何网络依赖、不加云调用；云通路是 P4 路线图，须独立周期评审。
+2. **既有测试断言零修改**——测试总数基线 518 只增不减；方向性翻转属唯一例外，须在周期
+   tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。全量 10 个失败是既有
+   测试债，不要为了让全量变绿去删测试/放宽断言。
+3. **纯离线**——不引任何网络依赖、不加云调用；云通路须独立立项评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 在模拟器永远返回空，
    条码相关断言只能靠 `BarcodeDetecting` 协议注入替身 + 真机验收。
 5. **`withKnownIssue` 日志陷阱**——expected failure ≠ failed ≠ passed（见 §3）。
 6. **动 capture 侧 / reconstruct 侧前先读对应 spec**——每轮修复都钉在
    `spec/<周期>/spec.md`（FR/SC 编号）；跳过 spec 直接改代码是历次回归的根因。
    契约速查：WYSIWYG 裁切 → `docs/09` §4.2；版面对标 → `docs/09` §4.5。
+7. **取景不在无框时回退 `.fullImage`**——屏幕外框/桌面最大矩形不是页面；
+   无当前帧包络时保持搜索态并禁用快门（CF-T002/CF-T004）。
+8. **成片 = 快门瞬间呈现框**——frame-truth 契约；拍后 refine 不得静默扩回用户
+   没看见的内容；左/右页是输出意图，不是实时精确单页门槛。
 
 ## 5. SDD 工作流（本仓库的改动管理方式）
 
-功能开发走 **spec-driven**：`spec/feature.json` 指向当前周期目录（如
-`spec/agent-handover/`），周期内五阶段流水——
+功能开发走 **spec-driven**：`spec/feature.json` 指向当前周期目录（当前为
+`spec/capture-envelope-tracking/`），周期内五阶段流水——
 
 ```
 spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.md（任务拆解）
@@ -85,57 +93,41 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
 · `spec/scan-fidelity` · `spec/scan-edge-accuracy` · `spec/live-edge-crop` ·
 `spec/overlay-frame-visibility` · `spec/wysiwyg-crop` · `spec/wps-parity-layout` ·
 `spec/agent-handover` · `spec/case-b-sticky-v2` · `spec/folded-page-capture` ·
-`spec/frame-truth` · `spec/scan-enhance` · `spec/guided-capture` · **`spec/page-preprocess`（当前周期）**。
+`spec/frame-truth` · `spec/scan-enhance` · `spec/guided-capture` ·
+`spec/page-preprocess` · `spec/word-fidelity` · **`spec/capture-envelope-tracking`（当前 P0.3）**。
 真机验收清单都在各周期 `device-acceptance.md`。
 
-## 6. 当前状态指针（2026-10-26）
+> **注意**：`spec/feature.json` 已指向 `spec/capture-envelope-tracking/`；P0.3 的
+> 详细论证仍在 `docs/22`，任务勾选在 `TODO.md` 与 `spec/capture-envelope-tracking/tasks.md`。
 
-- **当前状态**：Case A（折页书）与 Case B（摊开书）的既有修复已交付
-  （case-b-sticky-v2 + folded-page-capture + frame-truth 三周期；全量
-  **449 = 448 passed + 1 expected failure + 0 failed**），真机验收仍待做
-  （主清单 `spec/frame-truth/device-acceptance.md`；同会话合并 Case B 复测与
-  `reconstructPath` L1 取证）。
-- **2026-10-21 复核后新增主线**：`docs/15-capture-recovery-assessment.md` +
-  `spec/guided-capture/`。结论：主场景缺“我要拍右页”的意图，继续调
-  sticky/smoother 阈值不是优先项；先做引导框 MVP + 画布真值 + trace/replay。
-  默认仍 `.auto`，引导模式经真机 A/B 后再决定是否翻转默认。
-- **guided-capture 进度（2026-10-22）**：**Phase 0（T000~T004）+ Phase 1
-  （T010~T016）+ Phase 2（T020~T023）代码已交付**（基线 417→436；模拟器走查
-  通过：切引导 → 拖角 → 拍 → 切回自动；拆分语料 0 静默误裁 / 10-10 可修正 /
-  10-10 u 误差 ≤2%）。**未做**：T005 真机 V1/V2/V3、真机 A/B（T030~T034）。
-  **动 capture 侧前先读 `spec/guided-capture/plan.md` D1~D10**；引导路径与
-  自动路径**互不影响**（自动路径本周期零改动）。
-- **word-fidelity 周期（2026-10-22，已收尾）**：**Word 导出保真度**——用户实测
-  「复杂页面的 Word 样式会乱」。评估见 [`docs/16`](docs/16-word-export-fidelity.md)，
-  工件在 [`spec/word-fidelity/`](spec/word-fidelity/)。Phase 0 已交付：新增**图片版**
-  导出档（整页图铺页，样式不可能乱）+ **静帧页面判定**（认不出页面就不裁，绝不裁到
-  页面里的子框）+ **保真度闸门**（`make word-fidelity`：docx → 渲染 → SSIM ≥0.90，
-  实测 0.914/0.919；可编辑的「版面还原」档对照 0.785 **未达标** → 迭代方案见
-  [`docs/17`](docs/17-editable-tier-fidelity-iteration.md)（归因/口径分层/子目标 G1~G6/
-  排期 R2~R5）。档位命名：**高保真 = 图片版**（默认），旧「高保真」= 可编辑版面还原
-  （rawValue 迁移到 `layoutEditable`，老用户行为不变）。**真机收尾**：WPS 真实渲染
-  0.906/0.907（docs/17 §八），真机表格 3×4→2×5 已修；背景字重影暂缓。
-- **page-preprocess 周期（2026-10-25 起，当前周期）**：先做页面边界/页外裁切，
-  再做折痕/光照与页边拉直；计划见 [`docs/19`](docs/19-page-preprocess-plan.md)，
-  任务见 [`spec/page-preprocess/tasks.md`](spec/page-preprocess/tasks.md)、
-  执行清单 [`TODO.md`](TODO.md)。**P0 本样张已闭环（2026-10-26）**：模拟器
-  `IMG_7542` 亮折页条裁切 1752×2200；真机 iPhone 13 页级左缘内收 1% 后
-  1554×2200，标题/页码/表格保留，最终结构表 5×2；WPS 基线仍 0.906224。
-  **P1 折痕/光照已交付（2026-10-26）**：`PaperIlluminationFlattener` 只接
-  `renderPage`，P0 表框内强制不增益；真机背景场方差 −98.97%、表结构 off/on
-  6/6 次 `5×2`、OCR 归一化召回 99.93%，WPS PNG 与 P0 证据 byte-identical（0.906224）。
-  未裁切页已加通用 guard：`.enhance` 预览 + Vision 结构识别，漏表再用深色表头/
-  网格兜底；真机未裁切表 6/6。无表头/无边框表格仍可能漏检；冷启动整页 1764ms；
-  PP-T032 冷启动优化已暂缓。P2 已进入测量：`PageTextLineAnalyzer` 写行角/水平带
-  （iPhone 13 中位 0.49°、p90 1.11°）；局部 shear 原型因表格 1→0、OCR 回退未启用。
-  像素级页外残留可视化仍待补。
-- **WPS 参考录屏已评估（2026-10-21）**：49s 录屏显示手动快门 + 单实线自动跟随框 +
-  拍后自动重裁/滤镜；框在右页/整页间切换，快门时也不紧。结论：我们的固定引导框
-  是替代范式而非 WPS 同款；不照搬静默换框，WPS 式自动裁边/滤镜列为 `T040`/`T041`
-  后续项。详见 `docs/15` §十一。
-- **动刀前必须**：先读当周期 spec 四件套；取景/还原链修改前读
-  `spec/guided-capture/plan.md`（D1~D10）与
-  `spec/folded-page-capture/plan.md`、`spec/case-b-sticky-v2/plan.md`。
+## 6. 当前状态指针（2026-10-28）
+
+- **代码基线**：`b7ea065`「feat(capture): land output target and intent split」。
+- **当前主线**：P0.3 取景包络跟踪（[`docs/22`](docs/22-capture-envelope-tracking.md)）。
+  - 已交付第一版：CF-T002 包络兜底、CF-T003 tracker、CF-T004 目标页显示、
+    CF-T005 `outputIntent` + 1600px 拍后书脊/折页拆分。
+  - 已移除 `Quad.fullImage` 兜底；屏幕外框/贴边 frame 在包络、拆分、快门链路统一拒绝。
+  - 无当前帧包络或 tracker hold 时快门置灰；左/右页目标缺失时仍可手动拍包络，
+    由 Review 拆分。
+- **测试**：全量 **518 total / 507 passed / 1 expected / 10 known failures**。
+  10 个已知失败：Golden 4、WordFidelity 1、Review preview 4、ReviewSplit 1；
+  新增 CF 用例全绿。`Makefile` 基线 518/507。
+- **WPS**：realbase 导出 docx SHA-256
+  `80903b1d…8cf4153` 与 final/g1 基线 byte-identical，0.906224 不退；
+  证据 `build/word-fidelity/realbase-cf45-20261028/`。
+- **下一步（按顺序）**：
+  1. **CF-T007 真机与 WPS 验收**：视频 5/7 + 20+20+10+10 场景，按 `docs/22` §六量化；
+     清单 `spec/capture-envelope-tracking/device-acceptance.md`；
+  2. **CF-T008 光流/单应性传播**（当前只有低频观测 + hold/平滑）；
+  3. **CF-T006 UI/快门收口**（置信度态、按下冻结、自动/手动快门）；
+  4. **CF-T009 观测增强**（按需，端侧 mask；只输出 mask/几何）；
+  5. 恢复暂停项 PP-T032、多样张回归、flaky 清理（用户解除暂停后再做）。
+- **历史背景**：Case A/B + frame-truth + guided-capture 的完整记录见
+  `docs/12` §2 与 `docs/15`；这些修复仍在代码里，但不要按旧路线继续调
+  sticky/smoother 阈值。
+- **动刀前必须**：读 `docs/12` §0/§3/§4、`docs/22`、`TODO.md`；取景侧再读
+  `spec/frame-truth/plan.md` 与 `spec/guided-capture/plan.md`（历史契约），
+  还原侧读 `spec/wps-parity-layout/spec.md` 与 `docs/09` §4.5。
 - **待定案疑案**：L1 真机通路（iOS 26.7 结构化识别疑似静默回退，模拟器不复现）——
-  取证步骤 `spec/wps-parity-layout/device-acceptance.md` §A（已并入上述真机会话）。
-- 路线图与优先级：`docs/12-handover.md` §3（以 `docs/15` 的执行顺序为准）。
+  取证步骤 `spec/wps-parity-layout/device-acceptance.md` §A；与后续真机会话合并。
+- 路线图与优先级：`docs/12-handover.md` §3（以 `docs/22` / `TODO.md` 为准）。

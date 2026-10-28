@@ -10,35 +10,44 @@
 | Bundle ID | `com.david.Zhixia` |
 | 系统 / 语言 | iOS 18+ · Swift 6 |
 | 设备 | 仅 iPhone（竖屏） |
-| 规模 | 147 个 Swift 文件（主工程 107 / 测试 40）/ 主工程约 14.5k 行 / 357 个测试用例（全量 356 passed + 1 expected failure + 0 failed） |
+| 规模 | 141 个主工程 Swift 文件 / 66 个测试文件 / 518 个测试用例（507 passed + 1 expected + 10 known full-suite failures） |
+| 当前主线 | P0.3 取景包络跟踪（[`docs/22`](docs/22-capture-envelope-tracking.md)）；CF-T001~T005 第一版已交付；CF-T007 真机视频 5/7 验收待做 |
 
 ---
 
 ## 新人怎么读
 
 **第一读：[docs/12-handover.md](docs/12-handover.md)** —— 交接文档单入口（项目全貌 /
-当前卡点 / 路线图 / AI 工程师上手路径，每项可下钻到证据）。
-**第二读：[docs/09-project-handbook.md](docs/09-project-handbook.md)** —— 一页讲全
-（产品原型 / 架构 / 技术选型 / 实现原理 / 已实现功能 / 卡点 / 后续方向 / 上手操作）。
+当前主线 / 卡点 / 路线图 / 上手路径，每项可下钻到证据）。
+**第二读：[docs/22-capture-envelope-tracking.md](docs/22-capture-envelope-tracking.md)** ——
+当前取景主线的事实源（包络跟踪 / CF-T001~T007 / 验收指标）。
+**第三读：[TODO.md](TODO.md)** —— 当前任务勾选、暂停项、已知测试债。
 
 然后按需下钻：
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/12-handover.md](docs/12-handover.md) | **交接文档（新人第一读）**：全貌 / 卡点 / 路线图 / 上手路径 |
-| [docs/09-project-handbook.md](docs/09-project-handbook.md) | **接手手册**：架构原理 + 卡点史 + 优化方向 |
+| [docs/12-handover.md](docs/12-handover.md) | **交接文档（新人第一读）**：全貌 / 当前主线 / 卡点 / 路线图 / 上手路径 |
+| [docs/22-capture-envelope-tracking.md](docs/22-capture-envelope-tracking.md) | **当前 P0.3 主线**：包络跟踪 + 拍后拆页 + 验收指标 |
+| [TODO.md](TODO.md) | 当前任务、暂停项、已知测试债 |
+| [docs/09-project-handbook.md](docs/09-project-handbook.md) | **接手手册**：架构原理 + 卡点史 + 优化方向（历史快照） |
 | [AGENTS.md](AGENTS.md) | AI coding agent 冷启动入口：定位 / 铁律 / 命令速查 |
 | [docs/00-getting-started.md](docs/00-getting-started.md) | 实操：目录地图、主路径、改哪里、怎么测 |
 | [docs/01-product-prototype.md](docs/01-product-prototype.md) | 产品原型：场景、信息架构、主路径、视觉 |
 | [docs/02-architecture.md](docs/02-architecture.md) | 分层、模块、数据流、工程结构（与代码对齐） |
 | [docs/03-tech-choices.md](docs/03-tech-choices.md) | 技术选型与取舍 |
 | [docs/04-implementation-principles.md](docs/04-implementation-principles.md) | 几何 / 管线 / 并发 / 落盘 / 编码规矩 |
-| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑现状与后续 |
+| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑现状与后续（历史路线，当前看 12/22） |
 | [docs/06-document-reconstruction.md](docs/06-document-reconstruction.md) | 版面还原：IR、本机 R2、TextIn stub、**已知问题** |
 | [docs/07-reconstruct-r2-optimization.md](docs/07-reconstruct-r2-optimization.md) | **R2 优化方案**：原型 / 架构 / 选型 / 原理 / 阻碍 / 计划 + 实测数据 |
 | [docs/08-reconstruct-v3-realworld-fix.md](docs/08-reconstruct-v3-realworld-fix.md) | **真机回归**：反解方法、根因链、P0~P3 路线图 |
 | [docs/10-project-summary.md](docs/10-project-summary.md) | 项目总结：架构 / 技术原理 / SDD 周期史 |
 | [docs/11-wps-parity-research.md](docs/11-wps-parity-research.md) | **WPS 扫描对标调研**：docx 取证 / 差距分析 / 周期规划 |
+| [docs/16-word-export-fidelity.md](docs/16-word-export-fidelity.md) | Word 导出保真度：图片版档 / 保真度闸门 |
+| [docs/17-editable-tier-fidelity-iteration.md](docs/17-editable-tier-fidelity-iteration.md) | 可编辑 Word 档迭代（0.785 未达标，暂停） |
+| [docs/19-page-preprocess-plan.md](docs/19-page-preprocess-plan.md) | 页面预处理计划（边界/折痕/光照） |
+| [docs/20-border-crop-convergence.md](docs/20-border-crop-convergence.md) | 边框/背景单次收敛 |
+| [docs/21-capture-ux-stability.md](docs/21-capture-ux-stability.md) | 取景候选粘滞/显示去抖（P0.2 历史） |
 | [docs/fixtures/README.md](docs/fixtures/README.md) | 样张 OCR 夹具：怎么导、怎么生成、保真度说明 |
 | [prototype/index.html](prototype/index.html) | 可交互界面原型 |
 | [docs/reconstruct-r2-preview.html](docs/reconstruct-r2-preview.html) | 还原功能界面线框（8 屏） |
@@ -76,9 +85,9 @@ make doctor    # 环境自检
 
 ```
 Zhixia/          App · Features · Domain · Services · DesignSystem
-ZhixiaTests/     40 个测试文件 / 357 个 @Test（含端到端断言 + 真实样张 + 金标准语法页）
+ZhixiaTests/     66 个测试文件 / 518 个 @Test（含端到端断言 + 真实样张 + 金标准语法页）
 docs/            接手手册 + 交接文档 + 产品 / 架构 / 选型 / 原理 / 路线图 / 还原专题
-spec/            SDD 周期工件（9 个周期：spec/plan/tasks/device-acceptance 四件套）
+spec/            SDD 周期工件（17 个周期：spec/plan/tasks/device-acceptance 四件套）
 Tools/           ocr-dump（造夹具）· pdf-ocr-dump（反解真机 OCR）
 prototype/       可交互界面原型
 ```
@@ -96,13 +105,16 @@ prototype/       可交互界面原型
 
 ---
 
-## 能力现状（2026-09-26）
+## 能力现状（2026-10-28）
 
 ### 已可用
 
 | 能力 | 状态 |
 | --- | --- |
 | 取景 / 实时框边（三级检测兜底 + 连续实线整框）/ 连拍 / 相册导入 | ✅ |
+| **取景：包络跟踪（CF-T002/CF-T003）** | ✅ 第一版：整摊/书/单页包络、hold/平滑、目标页缺失仍显示包络 |
+| **取景：目标页显示（CF-T004）** | ✅ 第一版：左/右页目标实线主框 + 整摊包络虚线上下文；屏幕外框/fullImage 拒绝 |
+| **拍后输出意图（CF-T005）** | ✅ 第一版：`outputIntent` + 1600px 书脊/折页拆分；高置信自动落地、低置信提案 |
 | 取景：自动快门确认窗 + 可疑锁定门禁 + 四态引导 | ✅ |
 | 整理：拖角、五档滤镜、旋转、保存入库 | ✅ |
 | 库：文件夹、搜索、收藏、加页 | ✅ |
@@ -120,13 +132,15 @@ prototype/       可交互界面原型
 | **还原：漫画条整块内联** | ✅ **新增**：细长大图形单张完整内联于阅读序原位（金标准验证） |
 | 还原：左右分栏排阅读序（`PageColumnSplitter`） | ✅ |
 | 还原：正文里的照片（`InkFigureDetector` 像素墨块） | ✅ |
-| **取景：快门裁切门禁 + 候选粘滞（WYSIWYG 契约）** | ✅ 单测钉死（`CropConsistencyGate` / `CandidateSticky`）；⚠️ 真机 Case A/B 未达效，见下 |
+| **取景：快门裁切门禁 + 候选粘滞（WYSIWYG 契约）** | ✅ 单测钉死（`CropConsistencyGate` / `CandidateSticky`）；真机验收并入 P0.3 |
 
 ### 未达可用标准 / 未完成
 
 | 能力 | 状态 |
 | --- | --- |
-| **取景 WYSIWYG（真机验收标准）** | 🔴 **当前最大卡点**：折页书 Case A 成片仍含折起部分；摊开书 Case B 实线框仍跳、手动拍成片含左页大半——R4/R5 修复经 2026-09-26 新包复测未达效，待日志定案（见 [docs/09 §6.13](docs/09-project-handbook.md)） |
+| **取景 P0.3 真机验收** | 🟠 **当前最大风险**：CF-T004/CF-T005 只在合成测试/模拟器验证；视频 5/7 的目标框可见性、左页右角、左右页成片正确率待真机确认 |
+| **取景跟踪跟手性** | 🟠 CF-T003 第一版只有低频观测 + hold/平滑；光流/单应性传播未做 |
+| **取景 UI/快门收口** | 🟠 CF-T006：置信度态、按下冻结、自动/手动快门待收口 |
 | **还原：表格（iOS 18~25 几何兜底）** | ⚠️ 锚点命中才出表，**真机仍 `w:tbl = 0`**（known issue 钉住） |
 | 还原：配图 / 条码裁切 | ⚠️ 能出图，真机质量差 |
 | TextIn / 云版面解析 | ❌ stub：无密钥、无网络实现，`parse` 直接 throw |
@@ -134,76 +148,60 @@ prototype/       可交互界面原型
 
 ---
 
-## 当前最大卡点
+## 当前最大风险（2026-10-28）
 
-### 1. 取景裁剪 WYSIWYG 未达（🔴 头号问题，2026-09-26 复测）
+### 1. P0.3 取景真机验收未做（🟠 头号风险）
 
-用户用含 wysiwyg-crop + wps-parity-layout 两周期全部改动的新包真机复测（iPhone 13 ·
-iOS 26.7）：
+CF-T002~CF-T005 第一版已交付，但**只在合成测试/模拟器验证**。需要在真机上按
+视频 5/7 复核：
 
-- **Case A**（折页书翻中间、左侧折起拍右页）：成片**仍含折起部分**——R4 修复（快门裁切
-  门禁「呈现框 = 裁切基准」）未达效。两个待定案假设：H1 显示侧（呈现框本身锁了含折起
-  的整书外轮廓，门禁按契约工作、错在锁定对象）vs H2 门禁侧（误纳静帧/路径未命中）。
-- **Case B**（摊开书从中线取景拍右页）：实线框**仍持续跳动**，手动拍成片**含左页大半**
-  ——R5 修复（候选粘滞）未达效；高置信假设：粘滞 v1「池交替」盲区（候选池存在性逐帧
-  交替时无相似帧可改写）。
-- **总体**：WPS 扫描对标（取景拍照 + 还原版面 Word）未达。
+- 右页/左页目标框是否持续可见；
+- 左页目标的右上/右下角是否落在书脊上；
+- 00:55 屏幕外框是否不再被拍下；
+- 01:15–01:25 左页输出是否最终落到左页；
+- 彩色/黑白 × 左/右/整页成片是否正确、背景残留是否可接受。
 
-**两轮修复的共同短板**：`cropGate` / `stickyOverride` 日志从未取得，根因至今未定案。
-**下轮必须先实时抓日志定案再动刀**（步骤：`spec/wysiwyg-crop/device-acceptance.md` §0）。
-逐字记录与归因：`spec/agent-handover/device-retest-20260926.md`。
+验收指标与失败定位见 [docs/22 §六](docs/22-capture-envelope-tracking.md#六验收指标建议先量化再调参)；
+真机失败先留日志/录屏，不要直接改阈值。
 
-### 2. L1 真机通路疑案（iOS 26 结构化识别疑似静默回退）
+### 2. 跟踪跟手性（CF-T003 第一版，后续 CF-T008）
 
-iPhone 13（iOS 26.7）2026-09-21 真机导出的 docx 走了几何回退通路，而模拟器（iOS 26.4.1）
-结构化通路正常——真机接通性从未验证。已加 `reconstructPath` 决策日志（每页一条），
-取证一步到位：`spec/wps-parity-layout/device-acceptance.md` §A。
+当前 tracker 是低频观测 + hold/平滑/候选切换确认，尚未接光流/单应性传播。
+日常移动相机时可能仍有延迟/切换；先做离线回放，再接主路径。
 
-### 3. 真机表格（iOS 26 已解决，老系统仍未解决）
+### 3. L1 真机通路疑案（iOS 26 结构化识别疑似静默回退）
 
-根因链（见 [docs/08](docs/08-reconstruct-v3-realworld-fix.md)）：Vision 老的
-`VNRecognizeTextRequest` **只给 line 级 bbox**，真机把整行单元格合并成一个 line
-（`项目每100克NRV%`），于是「按 OCR 行的 midX 聚类推列」这条假设**直接失效** ——
-`TableGridV2Detector` 直接 `return nil` → **整表消失 → Word 里 `w:tbl = 0`**。
-iOS 26 的 `RecognizeDocumentsRequest` 直接返回二维 Cell 数组绕开该假设（模拟器实测
-7×3）；iOS 18~25 仍走几何兜底 —— `ReconstructEndToEndTests.realDeviceOcrStillLacksTable`
-用 `withKnownIssue` 钉在测试里。
+iPhone 13（iOS 26.7）真机导出的 docx 曾走几何回退通路，模拟器正常——真机接通性
+从未验证。已加 `reconstructPath` 决策日志，取证步骤：
+`spec/wps-parity-layout/device-acceptance.md` §A。
 
-### 4. 单张 fixture 过拟合（部分缓解）
+### 4. 真机表格（iOS 26 已解决，老系统仍未解决）
 
-iOS 26 通路绕开了旧阈值；但**几何兜底仍然过拟合**，且阈值本身没有改。
+iOS 18~25 仍走几何兜底，真机 OCR 把整行单元格合并成一个 line，`TableGridV2Detector`
+直接返回 nil → `w:tbl = 0`。`ReconstructEndToEndTests.realDeviceOcrStillLacksTable`
+用 `withKnownIssue` 钉住；修复前不要回到阈值过拟合。
 
-### 5. 架构性天花板
+### 5. 历史记录
 
-| 维度 | 扫描王 / WPS | 纸匣 | 差距性质 |
-| --- | --- | --- | --- |
-| 图像预处理 | 自动裁边 + 去阴影 + 二值化 + 锐化 | ✅ 已补 OCR 专用预处理档 | —— |
-| OCR 引擎 | 自研/定制 + 云 | Apple Vision（端侧） | 端侧差一档，需云通路 |
-| 版面分析 | 深度学习版面模型 | ✅ iOS 26 走系统结构化识别 | 老系统仍有差距 |
-| 表格还原 | 深度学习表格结构识别 | ✅ iOS 26 用 `RecognizeDocumentsRequest` | 老系统仍有差距 |
-
-### 已修历史（详录见 [docs/09 §6](docs/09-project-handbook.md)）
-
-2026-09-08 ~ 09-24 共 8 个 SDD 周期修复了：数据安全三缺陷、导出六缺陷、真机第二轮
-五缺陷、扫描保真六缺陷、取景框不可见两环、WYSIWYG 门禁与粘滞（单测级）、默认导出
-对标 WPS（流式默认/零假表/丢字防护/段落收敛/漫画条内联）等——完整卡点史与回归网
-见手册 §6.1~§6.12。
+2026-09-08 ~ 10-21 的 Case A/B、frame-truth、guided-capture、page-preprocess、
+word-fidelity 根因与修复见 [docs/12 §2](docs/12-handover.md) 与
+[docs/09 §6](docs/09-project-handbook.md)；它们是历史背景，当前取景主线已转为
+[docs/22](docs/22-capture-envelope-tracking.md)。
 
 ---
 
-## 后续方向（摘要）
+## 后续方向（摘要，2026-10-28）
 
 | 优先级 | 内容 |
 | --- | --- |
-| **P0** | 取景裁剪质量：实时抓 `cropGate` / `stickyOverride` 日志定案 Case A（H1/H2）与 Case B（池交替），再修复 |
-| **P0** | L1 真机通路取证：真机解析语法页，抄录 `reconstructPath` 行定案（iOS 26.7 结构化通路疑案） |
-| **P1** | 老系统兜底：表格降级阶梯（anchor → 通用数字列）；列/行切分改投影找 gutter |
-| **P2** | 导出层：DOCX 表格样式（`w:tblPr` / 表头加粗 / 数值右对齐）；合并单元格 `gridSpan`/`vMerge` |
-| **P3** | 工程债：`LibraryViewModel.reload` 全表加载 + N+1；`ReviewViewModel.save` 全量驻留内存 |
-| **P4** | 接通云解析（TextIn）；手写 / 勾选识别 |
+| **P0** | 真机视频 5/7 验收 CF-T004/CF-T005：目标框可见、左页右角在书脊、无 fullImage 误拍、左右页成片正确 |
+| **P0** | CF-T007 真机 + 20+20+10+10 场景验收；CF-T008 光流/单应性传播；CF-T006 UI/快门收口；CF-T009 观测增强（按需） |
+| **P1** | 恢复暂停项：PP-T032 全流程、多条件样张回归、flaky 清理；Word 可编辑档 0.785→目标；L1 真机取证 |
+| **P2** | 工程债：Library N+1、Review 内存驻留、SwiftData 零测试/迁移；老系统表格降级阶梯 |
+| **P3** | 云解析（TextIn）/手写/勾选：独立周期评审，纯离线是铁律 |
 
-详细排期与任务拆解见 [docs/12-handover.md §3](docs/12-handover.md) 与
-[docs/09-project-handbook.md §7](docs/09-project-handbook.md#7-后续优化方向)。
+详细排期与任务拆解见 [docs/12-handover.md §3](docs/12-handover.md#3-路线图按优先级2026-10-28) 与
+[docs/22](docs/22-capture-envelope-tracking.md)；当前勾选状态见 [TODO.md](TODO.md)。
 
 ---
 

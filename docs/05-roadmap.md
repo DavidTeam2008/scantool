@@ -3,7 +3,8 @@
 原则：先拍下一张干净的纸，再连拍入库，再 OCR / 证件，再版面还原。
 接手：[09 接手手册](09-project-handbook.md) · 上手：[00](00-getting-started.md) · 还原专项：[06](06-document-reconstruction.md)
 
-更新：2026-09-26
+更新：2026-09-26（历史快照；**2026-10-28 当前主线已转为 P0.3 取景包络跟踪**，
+见 [12 §0](12-handover.md) / [22](22-capture-envelope-tracking.md) / [TODO](../TODO.md)）
 
 ---
 

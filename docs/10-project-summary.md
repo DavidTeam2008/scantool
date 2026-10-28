@@ -1,7 +1,13 @@
 # 智夏（Zhixia）项目总结
 
-> **生成日期**：2026-09-21；**更新**：2026-09-26
-> **当前状态**：8 个特性周期交付完毕（scan-edge-accuracy → layout-restore → layout-engine → scan-fidelity → live-edge-crop → overlay-frame-visibility → wysiwyg-crop → wps-parity-layout），第 9 个周期 agent-handover（交接与项目 Agent 化）进行中；测试基线 **357 用例 = 356 passed + 1 expected failure（豁免）+ 0 failed**；⚠️ 当前最大卡点：wysiwyg-crop 的 R4/R5 修复经 2026-09-26 真机复测未达效（Case A/B，见 [09 §6.13](09-project-handbook.md)）。
+> **生成日期**：2026-09-21；**更新**：2026-09-26（历史快照）
+> **2026-10-28 交接提示**：本文是早期总结，当前主线已转为 **P0.3 取景包络跟踪**，
+> 测试基线 **518 total / 507 passed / 1 expected / 10 known failures**。
+> 当前事实源：[12 交接文档](12-handover.md)、[22 取景包络](22-capture-envelope-tracking.md)、
+> [TODO](../TODO.md)。本文保留作架构/周期史背景。
+> **当时状态**：8 个特性周期交付完毕（scan-edge-accuracy → … → wps-parity-layout），
+> agent-handover 进行中；测试基线 **357 用例**；当时最大卡点是 Case A/B（见
+> [09 §6.13](09-project-handbook.md)）。
 > **配套文档**：`docs/00~12`（产品原型 / 架构 / 技术选型 / 实现原则 / 路线图 / 重建三篇 / 项目手册 / WPS 对标调研 / 交接文档）+ `AGENTS.md`（AI agent 入口）+ `Makefile`（构建测试命令固化）；各周期 `spec/<name>/{spec,plan,tasks,device-acceptance}.md` 四件套。
 
 ---
