@@ -45,7 +45,9 @@ final class ReviewViewModel {
     private let fileStore: any PageFileStoring
     private let documentStore: any DocumentStore
     private let preferences: PreferencesStore
-    private var didRefineQuads = false
+    /// 首轮拍后精修（静帧重检/书脊拆分）是否完成——测试与诊断用的只读锚点，
+    /// 不依赖预览渲染（渲染在慢机器/并发全量测试时可能长时间不返回）。
+    private(set) var didRefineQuads = false
     private var pipelineTask: Task<Void, Never>?
     private var renderGeneration = 0
 
@@ -370,7 +372,25 @@ final class ReviewViewModel {
                     acceptedStill = true
                 }
             }
-            let split = makeSplitProposal(index: index, data: data)
+            let split: SplitOutcome
+            if let intent = drafts[index].outputIntent, intent != .wholePage {
+                // CF-T005：拍摄时明确选了左/右页。拍到的若仍是整摊包络，
+                // 在**全分辨率原图**上按书脊拆出目标页；已经是目标页的
+                // 单页框不二次拆分（避免把左页硬拆成折条）。
+                if PageIntentResolver.isSpreadLike(drafts[index].quad) {
+                    split = applyOutputIntentSplit(index: index, data: data, intent: intent)
+                } else if intent == .rightPage {
+                    // 折页书的右页常见形态：单页框左缘仍带折起条。复用暗折条/
+                    // 亮折条模型，高置信才自动裁掉，否则只给预选提案。
+                    split = applyOutputIntentFoldSplit(index: index, data: data)
+                } else {
+                    var outcome = SplitOutcome()
+                    outcome.reason = "intentPage"
+                    split = outcome
+                }
+            } else {
+                split = makeSplitProposal(index: index, data: data)
+            }
             ZhixiaLog.refineStage(
                 capturedArea: captured.area,
                 stillArea: stillArea,
@@ -383,10 +403,158 @@ final class ReviewViewModel {
                 spineU: split.spineU,
                 prominence: split.prominence,
                 continuity: split.continuity,
-                splitApplied: false
+                splitApplied: split.applied
             )
         }
     }
+
+    /// CF-T005：拍后高分辨率拆分（左/右页输出意图）。
+    ///
+    /// 与实时 600px 矫正图不同，这里用 1600px 原图矫正后再找书脊——书脊
+    /// 阴影带、折页暗条在高分辨率下更完整，左右页边界更准。策略：
+    /// - 只有书脊证据（`SpreadSplitter.analyzeSpine`）才作为左/右页输出；
+    ///   左侧折条模型是“右页左缘”，套到左页会切出折页窄条，故不采用；
+    /// - 置信度 ≥ `SplitProposalConfidence.applyThreshold` → 直接落到目标页
+    ///   （可见页立即正确，并压入撤销栈）；
+    /// - 置信度不足 → 只生成提案并预选目标侧，Review 首屏可见、由用户确认。
+    private func applyOutputIntentSplit(
+        index: Int,
+        data: Data,
+        intent: CaptureIntent
+    ) -> SplitOutcome {
+        var outcome = SplitOutcome()
+        guard let image = Self.uprightImage(from: data) else {
+            outcome.reason = "noImage"
+            return outcome
+        }
+        let quad = drafts[index].quad
+        outcome.aspect = SpreadSplitter.pixelAspect(of: quad, imageSize: image.extent.size)
+        guard let rectified = Self.rectifiedImage(
+            image,
+            quad: quad,
+            maxLongestEdge: Self.outputIntentRectifyLongEdge
+        ) else {
+            outcome.reason = "noRectified"
+            return outcome
+        }
+        let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
+        let diagnosis = analysis.diagnosis
+        outcome.spineU = diagnosis.bestU
+        outcome.prominence = diagnosis.prominence
+        outcome.continuity = diagnosis.continuity
+        guard let spine = analysis.spine else {
+            outcome.reason = diagnosis.reason.isEmpty ? "noSpine" : diagnosis.reason
+            return outcome
+        }
+        let confidence = SplitProposalConfidence.spine(
+            prominence: diagnosis.prominence,
+            continuity: diagnosis.continuity
+        )
+        let target: Quad = intent == .leftPage
+            ? SpreadSplitter.split(quad, at: spine.u).left
+            : SpreadSplitter.split(quad, at: spine.u).right
+        let proposal = SplitProposal(
+            u: spine.u,
+            source: .spine,
+            prominence: diagnosis.prominence,
+            continuity: diagnosis.continuity,
+            confidence: confidence,
+            quadBefore: quad,
+            quadAfter: target,
+            selection: intent == .leftPage ? .left : .right
+        )
+        outcome.reason = "spine"
+        if confidence >= SplitProposalConfidence.applyThreshold {
+            drafts[index].quad = target
+            drafts[index].userAdjustedQuad = true
+            splitUndoStack.append(
+                SplitUndo(pageID: drafts[index].id, quadBefore: quad, proposal: proposal)
+            )
+            outcome.applied = true
+        } else {
+            proposalsByPage[drafts[index].id] = proposal
+        }
+        ZhixiaLog.reviewSplit(
+            proposalU: spine.u,
+            source: SplitProposal.Source.spine.rawValue,
+            prominence: diagnosis.prominence,
+            continuity: diagnosis.continuity,
+            confidence: confidence,
+            selection: proposal.selection.rawValue,
+            applied: outcome.applied
+        )
+        return outcome
+    }
+
+    /// CF-T005：右页输出意图的折条裁切（单页框形态）。
+    ///
+    /// 折页书右页常见「右页 + 左侧折起条」，框本身不是整摊（宽高比 <0.95），
+    /// 不能走书脊拆分。这里复用 `SpreadSplitter` 的暗折条/亮折条模型，在
+    /// 1600px 矫正图上找左缘；高置信直接裁掉，低置信只给预选右页提案。
+    /// 左页意图不适用（折条裁切的左侧本来就是左页，不是要输出的右页）。
+    private func applyOutputIntentFoldSplit(index: Int, data: Data) -> SplitOutcome {
+        var outcome = SplitOutcome()
+        guard let image = Self.uprightImage(from: data) else {
+            outcome.reason = "noImage"
+            return outcome
+        }
+        let quad = drafts[index].quad
+        outcome.aspect = SpreadSplitter.pixelAspect(of: quad, imageSize: image.extent.size)
+        guard let rectified = Self.rectifiedImage(
+            image,
+            quad: quad,
+            maxLongestEdge: Self.outputIntentRectifyLongEdge
+        ) else {
+            outcome.reason = "noRectified"
+            return outcome
+        }
+        let trims = [
+            SpreadSplitter.leftFoldTrim(inRectified: rectified),
+            SpreadSplitter.leftBrightFoldTrim(inRectified: rectified)
+        ].compactMap { $0 }
+        guard let trim = trims.first(where: { $0.u >= 0.03 && $0.u <= 0.35 }) else {
+            outcome.reason = "noLeftFold"
+            return outcome
+        }
+        let confidence = SplitProposalConfidence.leftFold(stripDepth: trim.stripDepth)
+        let target = SpreadSplitter.split(quad, at: trim.u).right
+        outcome.trimU = trim.u
+        outcome.trimDepth = trim.stripDepth
+        outcome.reason = "leftFold"
+        let proposal = SplitProposal(
+            u: trim.u,
+            source: .leftFold,
+            prominence: 0,
+            continuity: 0,
+            confidence: confidence,
+            quadBefore: quad,
+            quadAfter: target,
+            selection: .right
+        )
+        if confidence >= SplitProposalConfidence.applyThreshold {
+            drafts[index].quad = target
+            drafts[index].userAdjustedQuad = true
+            splitUndoStack.append(
+                SplitUndo(pageID: drafts[index].id, quadBefore: quad, proposal: proposal)
+            )
+            outcome.applied = true
+        } else {
+            proposalsByPage[drafts[index].id] = proposal
+        }
+        ZhixiaLog.reviewSplit(
+            proposalU: trim.u,
+            source: SplitProposal.Source.leftFold.rawValue,
+            prominence: 0,
+            continuity: 0,
+            confidence: confidence,
+            selection: proposal.selection.rawValue,
+            applied: outcome.applied
+        )
+        return outcome
+    }
+
+    /// 拍后输出意图的高分辨率矫正边长（原图坐标；只用于书脊/折条扫描）。
+    private static let outputIntentRectifyLongEdge: CGFloat = 1600
 
     /// 整理页拍后增强的身份锚定阈值（spec/scan-enhance FR-001）。
     private static let refineIdentityIOU: Double = 0.85

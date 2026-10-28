@@ -57,6 +57,42 @@ struct PageIntentResolverTests {
         #expect(PageIntentResolver.envelope(selection: nil, candidates: []) == nil)
     }
 
+    @Test("整幅/贴边画面外框不是包络：不得回退 fullImage")
+    func envelopeRejectsScreenEdgeFrames() {
+        #expect(
+            PageIntentResolver.envelope(selection: .fullImage, candidates: [.fullImage]) == nil,
+            "整幅外框不是页面，必须回到搜索态而不是画贴屏假框"
+        )
+        let edge = Quad(
+            topLeft: CGPoint(x: 0, y: 0.01),
+            topRight: CGPoint(x: 1, y: 0.01),
+            bottomRight: CGPoint(x: 1, y: 0.99),
+            bottomLeft: CGPoint(x: 0, y: 0.99)
+        )
+        #expect(PageIntentResolver.envelope(selection: edge, candidates: [edge]) == nil)
+        // 真实整摊（左右留边、上下留边）不受影响。
+        let spread = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.04),
+            topRight: CGPoint(x: 0.98, y: 0.04),
+            bottomRight: CGPoint(x: 0.98, y: 0.96),
+            bottomLeft: CGPoint(x: 0.02, y: 0.96)
+        )
+        #expect(PageIntentResolver.envelope(selection: spread, candidates: [spread]) == spread)
+    }
+
+    @Test("整幅候选不得被书脊拆成半屏")
+    func resolveRejectsScreenEdgeFrame() {
+        let context = CIContext()
+        let result = PageIntentResolver.resolve(
+            selection: .fullImage,
+            candidates: [.fullImage],
+            intent: .rightPage,
+            image: spreadImage(),
+            ciContext: context
+        )
+        #expect(result == nil, "整幅画面里的暗带不是书脊，不能拆成半屏")
+    }
+
     @Test("整书外框 + 左页意图：按书脊拆出左半页")
     func splitsSpreadForLeftIntent() throws {
         let spread = Quad(

@@ -39,12 +39,27 @@ enum PageIntentResolver {
     static let minimumConfidence: Double = 0.30
 
     static func isSpreadLike(_ quad: Quad) -> Bool {
-        guard !quad.isDegenerate else { return false }
+        guard !quad.isDegenerate, !isScreenEdgeFrame(quad) else { return false }
         let rect = quad.boundingRect
         guard rect.width >= 0.45, rect.height >= 0.35, quad.area >= 0.20 else {
             return false
         }
         return rect.width / max(rect.height, 0.0001) >= spreadAspectThreshold
+    }
+
+    /// 检测器兜底把“整个画面外框”当成文档时，会得到一个近满幅/四边贴边的
+    /// 矩形。它不是书页，也不是整摊：用它当包络会画出贴屏一周的假框，用它
+    /// 拍/拆会把整张照片当成页面（视频 7 的 00:55 场景）。
+    ///
+    /// 判据只拒绝**近满幅**或**同时贴满左右与上下**的框；书本真实占满宽度、
+    /// 但上下仍有页边距时不会被误杀。
+    static func isScreenEdgeFrame(_ quad: Quad) -> Bool {
+        guard !quad.isDegenerate else { return true }
+        if quad.area >= 0.97 { return true }
+        let rect = quad.boundingRect
+        let fillsWidth = rect.minX <= 0.005 && rect.maxX >= 0.995
+        let fillsHeight = rect.minY <= 0.005 && rect.maxY >= 0.995
+        return fillsWidth && fillsHeight
     }
 
     static func isPageLike(_ quad: Quad) -> Bool {
@@ -167,8 +182,13 @@ enum PageIntentResolver {
     /// 优先级：最大的整摊候选 → 最大的单页候选 → 当前择优（若它至少是
     /// 页面尺度）。不把文字带/表格小块当包络；包络可以暂时不精确，但必须
     /// 能持续显示，供用户对准和拍后精修。
+    ///
+    /// CF-T004：**绝不回退 `.fullImage`**。整幅画面外框不是页面——把它当包络
+    /// 会画出贴屏的假框，并让快门拍下整张照片。没有可信页面时返回 nil，
+    /// 由 tracker 保持上一有效包络（hold）或回到搜索态并禁用快门。
     static func envelope(selection: Quad?, candidates: [Quad]) -> Quad? {
         let pool = uniqueQuads(([selection].compactMap { $0 } + candidates))
+            .filter { !isScreenEdgeFrame($0) }
         let spreads = pool.filter(isSpreadLike).sorted { $0.area > $1.area }
         if let spread = spreads.first { return spread }
 
@@ -177,15 +197,12 @@ enum PageIntentResolver {
 
         if let selection,
            !selection.isDegenerate,
+           !isScreenEdgeFrame(selection),
            selection.area >= minimumTargetArea,
-           selection.area < 0.995,
            isPlausibleEnvelopeShape(selection) {
             return selection
         }
-        // 有检测但只有一个明显是条带/小块的候选时，返回整幅作为显示包络，
-        // 让用户至少能看到画面；目标页仍为 nil，拍后由 Review 拆分。
-        // 完全无候选时仍返回 nil（tracker 会进入 searching）。
-        return selection == nil ? nil : Quad.fullImage
+        return nil
     }
 
     /// 目标页必须是非退化、面积达标，并且明显小于整书（避免书脊误判后

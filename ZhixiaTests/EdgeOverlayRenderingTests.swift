@@ -104,3 +104,46 @@ struct EdgeOverlayRenderingTests {
         return points
     }
 }
+
+/// CF-T004：左/右页目标必须是实线主框，整摊包络只是虚线上下文。
+/// 该解析是 `EdgeOverlayView` 的渲染输入，钉住它即可防止“只画包络、
+/// 目标页四角永远不出现”的回归。
+struct CaptureOverlayQuadsTests {
+    private static let envelope = Quad(
+        topLeft: CGPoint(x: 10, y: 100),
+        topRight: CGPoint(x: 380, y: 100),
+        bottomRight: CGPoint(x: 380, y: 740),
+        bottomLeft: CGPoint(x: 10, y: 740)
+    )
+
+    private static let leftPage = Quad(
+        topLeft: CGPoint(x: 10, y: 100),
+        topRight: CGPoint(x: 195, y: 100),
+        bottomRight: CGPoint(x: 195, y: 740),
+        bottomLeft: CGPoint(x: 10, y: 740)
+    )
+
+    @Test("目标页优先作为主框，包络降为上下文")
+    func targetWinsOverEnvelope() {
+        let resolved = CaptureOverlayQuads.resolve(
+            envelope: Self.envelope,
+            target: Self.leftPage
+        )
+        #expect(resolved.primary == Self.leftPage)
+        #expect(resolved.context == Self.envelope)
+        // 左页右侧两角落在书脊上（x≈195），不随包络右缘（x=380）出屏。
+        #expect(resolved.primary?.topRight.x == 195)
+        #expect(resolved.primary?.bottomRight.x == 195)
+    }
+
+    @Test("没有目标页时包络就是主框；目标与包络重合时不画第二框")
+    func withoutTargetOnlyEnvelope() {
+        let onlyEnvelope = CaptureOverlayQuads.resolve(envelope: Self.envelope, target: nil)
+        #expect(onlyEnvelope.primary == Self.envelope)
+        #expect(onlyEnvelope.context == nil)
+
+        let same = CaptureOverlayQuads.resolve(envelope: Self.envelope, target: Self.envelope)
+        #expect(same.primary == Self.envelope)
+        #expect(same.context == nil)
+    }
+}

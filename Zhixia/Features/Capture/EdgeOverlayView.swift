@@ -3,6 +3,12 @@ import SwiftUI
 struct EdgeOverlayView: View {
     /// 照片空间的检测框（ViewModel 摄入边界已换算，plan D1）。
     var imageQuad: Quad?
+    /// CF-T004：左/右页输出目标（照片空间）。非 nil 时它是**实线主框**，
+    /// `imageQuad` 降级为虚线上下文包络——左页目标的右角落在书脊上，
+    /// 不会因为整摊包络超出屏幕而消失。
+    var targetQuad: Quad? = nil
+    /// tracker 正在 hold 上一帧包络：只画淡虚线残影，不画可拍摄的实线。
+    var isHolding: Bool = false
     /// 运行时取景几何（T019 / FR-007）：视频/照片竖屏宽高比 —— 解析式映射的
     /// 唯一输入（`OverlaySpaceMap`：照片→视频 `FOVLayout` 逆换算 ⊕ 视频→屏幕
     /// aspectFill 放置，y-down 全链不翻转）。渲染真值不再依赖运行时探针。
@@ -23,6 +29,10 @@ struct EdgeOverlayView: View {
             let viewQuad = imageQuad.map {
                 OverlaySpaceMap.screenQuad(fromPhotoQuad: $0, geometry: geometry, viewSize: proxy.size)
             }
+            let targetViewQuad = targetQuad.map {
+                OverlaySpaceMap.screenQuad(fromPhotoQuad: $0, geometry: geometry, viewSize: proxy.size)
+            }
+            let quads = CaptureOverlayQuads.resolve(envelope: viewQuad, target: targetViewQuad)
             ZStack {
                 if mode == .idCard {
                     // 证件模式路径不变（T020）：idMask + 检测框描边保持现状。
@@ -34,8 +44,16 @@ struct EdgeOverlayView: View {
                                 dash: isLocked ? [] : [8, 6]
                             ))
                     }
-                } else if let viewQuad {
-                    documentEdgeOverlay(quad: viewQuad, in: proxy.size)
+                } else if let primary = quads.primary {
+                    if isHolding {
+                        holdingOverlay(primary: primary, context: quads.context)
+                    } else {
+                        documentEdgeOverlay(
+                            primary: primary,
+                            context: quads.context,
+                            in: proxy.size
+                        )
+                    }
                 }
             }
             .onAppear {
@@ -80,32 +98,66 @@ struct EdgeOverlayView: View {
     }
 
     /// T020（US5 / FR-008）+ live-edge-crop（US2 / FR-003）：文档模式边框视觉——
-    /// ① 框外压暗（reverseMask 挖空 quad；tracking 0.25 / locked 0.45）；
+    /// ① 框外压暗（reverseMask 挖空**主框**；tracking 0.25 / locked 0.45）；
     /// ② 四角 L 形粗括号（臂长 ≈ min(viewSize)×3%，白 4pt + 暗描边——亮纸面上
     ///    纯白也保底可辨）；
     /// ③ 连续实线整框（`DocumentFrameStyle`）：跟踪 = 朱砂细实线（替换旧虚线
-    ///    [8,6]）；锁定 = 白面线 + 暗描边粗实线（新增——锁定态此前无整框）。
-    ///    裁切边界一眼可见（折页/杂乱背景场景辨识度）。
+    ///    [8,6]）；锁定 = 白面线 + 暗描边粗实线。
+    ///
+    /// CF-T004：`primary` 是实际输出目标（左/右页），`context` 是整摊包络。
+    /// 包络只画淡虚线，不参与压暗；这样左页的右角落在书脊上始终可见，不会
+    /// 被超出屏幕的整摊包络裁掉。
     @ViewBuilder
-    private func documentEdgeOverlay(quad: Quad, in size: CGSize) -> some View {
+    private func documentEdgeOverlay(primary: Quad, context: Quad?, in size: CGSize) -> some View {
         Color.black.opacity(isLocked ? 0.45 : 0.25)
             .reverseMask {
-                QuadShape(quad: quad).fill(Color.white)
+                QuadShape(quad: primary).fill(Color.white)
             }
+        if let context {
+            contextFrame(quad: context)
+        }
         let armLength = min(size.width, size.height) * 0.03
-        CornerBracketsShape(quad: quad, armLength: armLength)
+        CornerBracketsShape(quad: primary, armLength: armLength)
             .stroke(
                 Color.black.opacity(0.35),
                 style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round)
             )
-        CornerBracketsShape(quad: quad, armLength: armLength)
+        CornerBracketsShape(quad: primary, armLength: armLength)
             .stroke(
                 Color.white,
                 style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
             )
         if let frameStyle = DocumentFrameStyle.resolve(isLocked: isLocked, mode: mode) {
-            frameStroke(quad: quad, style: frameStyle)
+            frameStroke(quad: primary, style: frameStyle)
         }
+    }
+
+    /// 上下文包络（整摊/整书外框）：细虚线 + 暗描边，只提供“框还在”的连续
+    /// 视觉，不承诺裁切边界（CF-T004）。
+    @ViewBuilder
+    private func contextFrame(quad: Quad) -> some View {
+        QuadShape(quad: quad)
+            .stroke(
+                Color.black.opacity(0.30),
+                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round, dash: [6, 6])
+            )
+        QuadShape(quad: quad)
+            .stroke(
+                Color.white.opacity(0.55),
+                style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round, dash: [6, 6])
+            )
+    }
+
+    /// hold 残影：检测缺口内保留上一帧包络，但明确画成虚线——它不是这一帧
+    /// 的可拍摄真值（快门同时置灰）。
+    @ViewBuilder
+    private func holdingOverlay(primary: Quad, context: Quad?) -> some View {
+        if let context {
+            QuadShape(quad: context)
+                .stroke(Color.white.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [6, 6]))
+        }
+        QuadShape(quad: primary)
+            .stroke(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 6]))
     }
 
     /// 整框实线描边：双线结构先画暗描边再画面线（面线叠在描边之上，与四角括号
@@ -192,6 +244,26 @@ struct DocumentFrameStyle: Equatable {
     /// 暗描边样式（仅双线结构消费）——dash 恒为空（类型不变量）。
     var outlineStyle: StrokeStyle {
         StrokeStyle(lineWidth: outlineWidth, lineCap: .round, lineJoin: .round)
+    }
+}
+
+// MARK: - 文档模式叠加层主框/上下文（CF-T004）
+
+/// 叠加层要画的两个框：`primary` = 实际输出目标（实线、压暗、角括号），
+/// `context` = 整摊/整书包络（淡虚线）。纯数据解析，便于单测钉住“目标优先”
+/// 的显示契约——左/右页目标不得被更小的整页框或更大的包络覆盖。
+struct CaptureOverlayQuads: Equatable {
+    var primary: Quad?
+    var context: Quad?
+
+    static func resolve(envelope: Quad?, target: Quad?) -> CaptureOverlayQuads {
+        guard let envelope else {
+            return CaptureOverlayQuads(primary: target, context: nil)
+        }
+        guard let target, target != envelope else {
+            return CaptureOverlayQuads(primary: envelope, context: nil)
+        }
+        return CaptureOverlayQuads(primary: target, context: envelope)
     }
 }
 

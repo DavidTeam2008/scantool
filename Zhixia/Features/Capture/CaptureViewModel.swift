@@ -137,8 +137,33 @@ final class CaptureViewModel {
         // 可拍摄的锁定框/震动——上一周期真机「靠近一点 + 白色锁定框同屏」
         // 的语义矛盾由此消除。`.backOff`（可疑近满幅/贴边）不抑制：手动拍
         // 仍尊重用户意图，自动拍另由 suspicious 门禁拦截。
-        if case .locked = phase { return directive != .closer }
+        if case .locked = phase {
+            guard directive != .closer else { return false }
+            // CF-T004：页面意图还没有解析出目标页时，包络锁定不等于“可以
+            // 出片”；保持跟踪态视觉，避免白线承诺一个整摊输出。
+            if usesEnvelopePath, captureIntent != .wholePage, outputTargetQuad == nil {
+                return false
+            }
+            return !envelopeIsHolding
+        }
         return false
+    }
+
+    /// 当前是否真的可以按下快门（CF-T002 / CF-T004）。
+    ///
+    /// 自动文档路径只有“当前帧观测到可信包络”时可拍：tracker 的 hold 只是
+    /// 显示残影，不能把上一帧的框当成这一帧的裁切真值；搜索态（无包络）
+    /// 同样不可拍，绝不再回退 `.fullImage`。
+    var isCaptureReady: Bool {
+        guard mode == .document, captureMode == .auto else { return true }
+        guard envelopeDetector != nil else { return imageQuad != nil }
+        guard let envelope = imageQuad, !envelopeIsHolding else { return false }
+        return !PageIntentResolver.isScreenEdgeFrame(envelope)
+    }
+
+    /// 自动文档路径是否走包络观测（真实检测器）。
+    private var usesEnvelopePath: Bool {
+        envelopeDetector != nil && mode == .document && captureMode == .auto
     }
 
     /// 轨道相位本身是否锁定（不掺入引导有效性）——锁定震动/确认窗/冻结
@@ -597,11 +622,15 @@ final class CaptureViewModel {
         // - 左/右页意图：优先拍 outputTargetQuad，目标不可靠时拍包络，
         //   交给 Review 做拍后拆页；
         // - 绝不再在“没有呈现框”时静默落 fullImage。
-        let envelopePath = envelopeDetector != nil && mode == .document && captureMode == .auto
+        let envelopePath = usesEnvelopePath
         let envelope = presentedQuad ?? imageQuad
-        if envelopePath, envelope == nil {
-            // 没有书/页面可拍：保持 previewing，不写 fullImage，也不闪快门。
-            return
+        if envelopePath {
+            // CF-T004：没有当前帧包络、或 tracker 只是在 hold 上一帧的框时
+            // 不拍——hold 的残影不是快门时刻的裁切真值。屏幕边框矩形也绝不
+            // 能落成整张照片。
+            guard let envelope, !envelopeIsHolding,
+                  !PageIntentResolver.isScreenEdgeFrame(envelope)
+            else { return }
         }
         let displayed: Quad?
         if envelopePath {
@@ -680,7 +709,13 @@ final class CaptureViewModel {
                 id: pageID,
                 sessionID: sessionID,
                 quad: quad,
-                enhancement: preferences.defaultEnhancement
+                enhancement: preferences.defaultEnhancement,
+                // CF-T005：把拍摄时的左/右页意图带到整理页。拍到的若仍是
+                // 整摊包络，Review 用高分辨率书脊拆分落地到目标页；若已经
+                // 是目标页，则该字段不会触发二次拆分。
+                outputIntent: envelopePath && captureIntent != .wholePage
+                    ? captureIntent
+                    : nil
             )
             if let replacePageID, let index = drafts.firstIndex(where: { $0.id == replacePageID }) {
                 drafts[index] = draft
@@ -1075,13 +1110,17 @@ final class CaptureViewModel {
             idCardWindow: nil,
             intent: captureIntent
         )
-        let photoObservation = observation.map { observation in
-            CaptureEnvelopeObservation(
-                envelope: clampedToPreview(FOVLayout.convert(
-                    quad: observation.envelope,
-                    fromAspect: geometry.videoAspect,
-                    toAspect: geometry.photoAspect
-                )),
+        // CF-T004：屏幕边框矩形（近满幅/四边贴边）不是页面。即使检测器
+        // 兜底返回了它，也不得进入 tracker——否则会画出贴屏假框并拍下整幅。
+        let photoObservation = observation.flatMap { observation -> CaptureEnvelopeObservation? in
+            let envelope = clampedToPreview(FOVLayout.convert(
+                quad: observation.envelope,
+                fromAspect: geometry.videoAspect,
+                toAspect: geometry.photoAspect
+            ))
+            guard !PageIntentResolver.isScreenEdgeFrame(envelope) else { return nil }
+            return CaptureEnvelopeObservation(
+                envelope: envelope,
                 target: observation.target.map {
                     clampedToPreview(FOVLayout.convert(
                         quad: $0,
@@ -1096,7 +1135,7 @@ final class CaptureViewModel {
         let state = envelopeTracker.ingest(photoObservation, at: frame.timestamp)
         envelopeIsHolding = state.isHolding
         envelopeIntentSatisfied = state.intentSatisfied
-        outputTargetQuad = state.target
+        outputTargetQuad = displayTarget(from: state)
 
         if let envelope = state.envelope {
             imageQuad = envelope
@@ -1140,6 +1179,22 @@ final class CaptureViewModel {
             didAutoCaptureThisLock = true
             await capture()
         }
+    }
+
+    /// CF-T004：从 tracker 状态取出**显示用目标页**。
+    ///
+    /// - 整页意图没有“另一个目标页”：包络本身就是输出，返回 nil，overlay
+    ///   只画一个实线框；
+    /// - 左/右页目标与包络几乎重合（单页/A4 无书脊）时同样不画第二个框；
+    /// - 目标页必须是非屏幕边框、且与包络有可见差异，避免双框重叠闪烁。
+    private func displayTarget(from state: CaptureEnvelopeTracker.State) -> Quad? {
+        guard captureIntent != .wholePage,
+              let envelope = state.envelope,
+              let target = state.target,
+              !PageIntentResolver.isScreenEdgeFrame(target),
+              target.meanVertexDistance(to: envelope) > 0.002
+        else { return nil }
+        return target
     }
 
     /// 跟踪框显示去抖（CU-T004）：相邻帧/候选的微小位移不刷新屏幕。

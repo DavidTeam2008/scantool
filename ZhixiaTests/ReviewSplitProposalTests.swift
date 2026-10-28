@@ -44,6 +44,17 @@ struct ReviewSplitProposalTests {
         return image.jpegData(compressionQuality: 0.9)!
     }
 
+    /// 合成无书脊的平坦纸面（输出意图回退安全网用：不得硬拆）。
+    private static func flatJPEG() -> Data {
+        let size = CGSize(width: 400, height: 300)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(white: 0.95, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+        return image.jpegData(compressionQuality: 0.9)!
+    }
+
     private static let spreadQuad = Quad(
         topLeft: CGPoint(x: 0.02, y: 0.05),
         topRight: CGPoint(x: 0.98, y: 0.05),
@@ -56,6 +67,7 @@ struct ReviewSplitProposalTests {
         jpeg: Data,
         quad: Quad,
         userAdjusted: Bool = false,
+        outputIntent: CaptureIntent? = nil,
         extraPages: [PageDraft] = []
     ) async throws -> (ReviewViewModel, PageFileStore) {
         let root = FileManager.default.temporaryDirectory
@@ -71,7 +83,8 @@ struct ReviewSplitProposalTests {
                 sessionID: session,
                 quad: quad,
                 enhancement: .original,
-                userAdjustedQuad: userAdjusted
+                userAdjustedQuad: userAdjusted,
+                outputIntent: outputIntent
             )
         ] + extraPages
         let viewModel = ReviewViewModel(
@@ -128,6 +141,51 @@ struct ReviewSplitProposalTests {
         #expect(viewModel.drafts.first?.quad == Self.spreadQuad)
     }
 
+    @Test("CF-T005：左页/右页输出意图在高置信书脊上自动落地目标页")
+    func outputIntentAutoAppliesHighConfidenceSpine() async throws {
+        for intent in [CaptureIntent.leftPage, .rightPage] {
+            let (viewModel, _) = try await makeViewModel(
+                jpeg: Self.spreadJPEG(),
+                quad: Self.spreadQuad,
+                outputIntent: intent
+            )
+            viewModel.appear()
+            #expect(await waitUntil { viewModel.drafts.first?.userAdjustedQuad == true })
+
+            let applied = try #require(viewModel.drafts.first?.quad)
+            #expect(applied.area < Self.spreadQuad.area * 0.75, "应拆成单页面积")
+            #expect(viewModel.splitProposal == nil, "高置信已自动落地，不再留待确认")
+            #expect(viewModel.canUndoSplit, "自动落地仍可撤销")
+            switch intent {
+            case .leftPage:
+                #expect(applied.topRight.x > 0.42 && applied.topRight.x < 0.58, "左页右缘应落在书脊")
+                #expect(applied.center.x < 0.5)
+            case .rightPage:
+                #expect(applied.topLeft.x > 0.42 && applied.topLeft.x < 0.58, "右页左缘应落在书脊")
+                #expect(applied.center.x > 0.5)
+            case .wholePage:
+                break
+            }
+
+            viewModel.undoSplit()
+            #expect(viewModel.drafts.first?.quad == Self.spreadQuad)
+        }
+    }
+
+    @Test("CF-T005：没有书脊证据时不硬拆，保留整摊包络")
+    func outputIntentFallsBackWithoutSpine() async throws {
+        let (viewModel, _) = try await makeViewModel(
+            jpeg: Self.flatJPEG(),
+            quad: Self.spreadQuad,
+            outputIntent: .rightPage
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.didRefineQuads })
+        #expect(viewModel.drafts.first?.quad == Self.spreadQuad, "无书脊时不得硬拆整摊")
+        #expect(viewModel.drafts.first?.userAdjustedQuad == false)
+        #expect(viewModel.splitProposal == nil)
+    }
+
     @Test("整页 / 左页 / 右页三种应用结果正确")
     func selectionResults() async throws {
         let (viewModel, _) = try await makeViewModel(jpeg: Self.spreadJPEG(), quad: Self.spreadQuad)
@@ -172,6 +230,29 @@ struct ReviewSplitProposalTests {
         let applied = try #require(viewModel.drafts.first?.quad)
         #expect(applied.topLeft.x > 0.05 && applied.topLeft.x < 0.15, "折条应被裁掉")
         #expect(applied.area < captured.area * 0.97)
+    }
+
+    @Test("CF-T005：右页意图且单页框带折条时，高置信自动裁掉折条")
+    func outputIntentRightFoldAutoApplies() async throws {
+        // 折页书右页：单页框左缘仍带折起条（宽高比 <0.95，不能走书脊拆分）。
+        let captured = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.02),
+            topRight: CGPoint(x: 0.62, y: 0.02),
+            bottomRight: CGPoint(x: 0.62, y: 0.98),
+            bottomLeft: CGPoint(x: 0.02, y: 0.98)
+        )
+        let (viewModel, _) = try await makeViewModel(
+            jpeg: Self.foldStripJPEG(),
+            quad: captured,
+            outputIntent: .rightPage
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.drafts.first?.userAdjustedQuad == true })
+        let applied = try #require(viewModel.drafts.first?.quad)
+        #expect(applied.topLeft.x > 0.04 && applied.topLeft.x < 0.15, "折条应被裁掉")
+        #expect(applied.area < captured.area * 0.97)
+        #expect(viewModel.splitProposal == nil)
+        #expect(viewModel.canUndoSplit)
     }
 
     @Test("低置信提案不被自动应用（只降级为提示）")

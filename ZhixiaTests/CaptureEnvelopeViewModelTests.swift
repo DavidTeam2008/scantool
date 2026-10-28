@@ -33,6 +33,7 @@ struct CaptureEnvelopeViewModelTests {
         #expect(viewModel.drafts.count == 1)
         #expect(viewModel.drafts.last?.quad == envelope)
         #expect(viewModel.drafts.last?.quad != .fullImage)
+        #expect(viewModel.drafts.last?.outputIntent == .rightPage, "拍摄意图应带到整理页")
     }
 
     @Test("目标页可用时，快门使用目标页而不是整摊包络")
@@ -64,6 +65,62 @@ struct CaptureEnvelopeViewModelTests {
         await viewModel.capture()
         #expect(viewModel.drafts.last?.quad == rightPage)
         #expect(viewModel.drafts.last?.quad != envelope)
+    }
+
+    @Test("左页目标：右角落在书脊上，仍作为快门目标")
+    func leftPageTargetWinsAtShutter() async throws {
+        let envelope = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.05),
+            topRight: CGPoint(x: 0.98, y: 0.05),
+            bottomRight: CGPoint(x: 0.98, y: 0.92),
+            bottomLeft: CGPoint(x: 0.02, y: 0.92)
+        )
+        // 左页右缘 = 书脊，远在整摊包络右缘左侧；这正是视频 7 里
+        // “左页右上/右下角始终不出现”的目标框。
+        let leftPage = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.08),
+            topRight: CGPoint(x: 0.50, y: 0.08),
+            bottomRight: CGPoint(x: 0.50, y: 0.90),
+            bottomLeft: CGPoint(x: 0.02, y: 0.90)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: envelope,
+            target: leftPage,
+            confidence: 0.9,
+            intentSatisfied: true
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        viewModel.setCaptureIntent(.leftPage)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.outputTargetQuad == leftPage })
+        #expect(viewModel.outputTargetQuad?.topRight.x == 0.50)
+        #expect(viewModel.outputTargetQuad?.bottomRight.x == 0.50)
+
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == leftPage)
+        #expect(viewModel.drafts.last?.outputIntent == .leftPage)
+    }
+
+    @Test("屏幕整幅观测不得成为包络，也不得拍出 fullImage")
+    func screenEdgeObservationIsRejected() async throws {
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: .fullImage,
+            target: nil,
+            confidence: 1,
+            intentSatisfied: false
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        await viewModel.start()
+        await camera.yieldFrame()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(viewModel.imageQuad == nil, "整幅外框不是书页，必须保持无框搜索态")
+        #expect(!viewModel.isCaptureReady, "无可信包络时快门不可用")
+
+        await viewModel.capture()
+        #expect(viewModel.drafts.isEmpty, "不得把整张照片当成页面落盘")
     }
 
     private func makeViewModel(

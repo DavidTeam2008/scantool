@@ -86,6 +86,8 @@ struct CaptureView: View {
         } else {
             EdgeOverlayView(
                 imageQuad: viewModel.imageQuad,
+                targetQuad: viewModel.outputTargetQuad,
+                isHolding: viewModel.envelopeIsHolding,
                 geometry: viewModel.geometry,
                 // T022：预览层探针降级为诊断对照（SC-004 证据链），不再参与渲染。
                 diagnosticProbe: { size in
@@ -277,13 +279,11 @@ struct CaptureView: View {
         if viewModel.captureMode == .guided, viewModel.mode == .document {
             return viewModel.isGuideReady
         }
-        // CF-T002：自动包络路径没有找到书/页面时不假装能拍；避免快门
-        // 再回退 fullImage。找到包络后即使目标页暂缺，也可拍包络交给
-        // Review 拆分。
-        if viewModel.captureMode == .auto,
-           viewModel.mode == .document,
-           viewModel.imageQuad == nil {
-            return false
+        // CF-T002 / CF-T004：自动包络路径没有找到书/页面时不假装能拍；
+        // tracker hold 的上一帧残影也不是这一帧的裁切真值——两者都置灰，
+        // 避免快门再回退 fullImage 或拍下过期框。
+        if viewModel.captureMode == .auto, viewModel.mode == .document {
+            return viewModel.isCaptureReady
         }
         return true
     }

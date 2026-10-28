@@ -278,10 +278,10 @@ EnvelopeObservation {
 - 状态文案从“已对准/搜索中”改为“已找到书页 / 正在微调 / 请移动远一点”；
 - 保留手动拖框/引导模式作为兜底，但引导模式不再是唯一能获得稳定框的路径。
 
-## 四、本轮已落地（CF-T002 / CF-T003 第一版）
+## 四、本轮已落地（CF-T002 / CF-T003 / CF-T004 / CF-T005 第一版）
 
-> 代码已落，真机/模拟器测试待补；本轮新增了包络观测协议、纯 tracker 和
-> ViewModel 自动路径，旧 `EdgeDetecting` / 旧测试路径保持不变。
+> CF-T002/CF-T003 已落包络观测与跟踪；2026-10-28 按视频 7 回归补齐
+> CF-T004 目标页显示与 CF-T005 拍后输出，旧 `EdgeDetecting` / 引导路径保持不变。
 
 - `Zhixia/Domain/CaptureEnvelope.swift`：
   - `CaptureEnvelopeObservation`（envelope + target + confidence + intentSatisfied）；
@@ -293,29 +293,46 @@ EnvelopeObservation {
   - 目标页失联 0.25s 后回退到包络输出；
   - 输出 `State` 供 ViewModel 显示/自动快门使用。
 - `Zhixia/Services/Vision/PageIntentResolver.swift`：
-  - 新增 `envelope(selection:candidates:)`，优先整摊、其次单页，避免页面内小块。
+  - `envelope(selection:candidates:)` 优先整摊、其次单页，避免页面内小块；
+  - `isScreenEdgeFrame`：近满幅/四边贴边的画面外框不是页面，显示包络、
+    书脊拆分、拍后高置信应用统一拒绝；
+  - 删除 `Quad.fullImage` 兜底：没有可信页面时返回 nil，由 tracker hold
+    上一有效包络或进入搜索态。
 - `Zhixia/Services/Vision/VisionEdgeDetector.swift`：
-  - 新增 `observeEnvelope`：一次检测同时给 envelope 和 target；
+  - `observeEnvelope`：一次检测同时给 envelope 和 target；
   - 目标页解析失败不再让 envelope 为 nil。
 - `Zhixia/Features/Capture/CaptureViewModel.swift`：
-  - 真实 `VisionEdgeDetector` 自动文档路径改走 `consumeEnvelope`；
-  - 左/右页目标缺失时显示/拍摄包络，不再静默 `.fullImage`；
-  - 快门优先使用 `outputTargetQuad`，否则使用包络。
-- `Zhixia/Features/Capture/CaptureView.swift`：
-  - 无包络时自动模式快门置灰，避免空拍。
-- 新增测试：
+  - 真实 `VisionEdgeDetector` 自动文档路径走 `consumeEnvelope`；
+  - **CF-T004**：`imageQuad` 保持整摊包络，新增 `outputTargetQuad` 作为左/右页
+    实际输出目标；目标缺失时只显示包络，不再伪装成可拍白线；
+  - hold 残影/屏幕边框不可拍：`isCaptureReady` 与 `capture()` 双重守卫；
+  - **CF-T005**：拍摄时把左/右页 `outputIntent` 写入 `PageDraft`。
+- `Zhixia/Features/Capture/EdgeOverlayView.swift` + `CaptureView.swift`：
+  - 主框 = `outputTargetQuad ?? imageQuad`（实线 + 压暗 + 四角括号）；
+  - 包络降为淡虚线上下文，左页右角落在书脊上，不再被出屏包络裁掉；
+  - hold 时只画淡虚线残影，快门置灰。
+- `Zhixia/Features/Edit/ReviewViewModel.swift`：
+  - **CF-T005**：Review 首轮精修按 `outputIntent` 在原图 1600px 矫正图上找书脊；
+  - 置信度 ≥0.5 直接落左/右目标页（可撤销）；不足只生成预选提案，首屏可见；
+  - 已是单页的目标框不二次拆分，无书脊证据时保留整摊，不硬拆。
+- 新增/更新测试：
   - `CaptureEnvelopeTrackerTests` 5 条；
-  - `CaptureEnvelopeViewModelTests` 2 条；
-  - `PageIntentResolver.envelope` 1 条。
-- 验证：定向（tracker/viewmodel/resolver/capture/guided/edge）**30/30 passed**；全量
-  **509 total / 498 passed / 1 expected / 10 failed**（10 个仍是既有 flaky）。
-  真机视频 5/6 场景回归尚未执行。
+  - `CaptureEnvelopeViewModelTests` 4 条（包络兜底/左右目标/fullImage 拒绝）；
+  - `PageIntentResolverTests` 新增 2 条（envelope 拒绝整幅/贴边、resolve 拒绝整幅拆分）；
+  - `CaptureOverlayQuadsTests` 2 条（目标主框/包络上下文）；
+  - `ReviewSplitProposalTests` 新增 3 条（书脊高置信自动落地/右页折条自动裁切/无书脊回退）。
+- 验证：定向测试全绿；全量 **518 total / 507 passed / 1 expected / 10 failed**
+  （10 个仍是既有 flaky）。真机视频 5/7 复测尚未执行；WPS 图片链未改动，
+  `realUIBaseExportArtifact` 仍通过，导出 docx SHA-256
+  `80903b1d…8cf4153` 与 final/g1 基线 byte-identical，0.906224 基线不变
+  （证据 `build/word-fidelity/realbase-cf45-20261028/`）。
 
 ### 这一版的边界
 
 CF-T003 第一版是**低频观测 + 时域 hold/平滑/切换确认**；光流/单应性传播
-仍是下一子步。它已经解决“目标页缺失导致无框/fullImage”，但相机快速移动时
-的跟踪跟手性还需要光流预测，不能把这一版当成最终 WPS 等价实现。
+仍是下一子步。CF-T004 已把“目标页显示”从包络中拆出来，CF-T005 已把左/右页
+意图落到拍后原图拆分；但相机快速移动时的跟踪跟手性、彩色页面 mask、内容安全门
+仍未完成，不能把这一版当成最终 WPS 等价实现。
 
 ## 五、分阶段落地计划
 
