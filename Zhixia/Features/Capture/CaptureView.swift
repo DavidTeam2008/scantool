@@ -277,6 +277,14 @@ struct CaptureView: View {
         if viewModel.captureMode == .guided, viewModel.mode == .document {
             return viewModel.isGuideReady
         }
+        // CF-T002：自动包络路径没有找到书/页面时不假装能拍；避免快门
+        // 再回退 fullImage。找到包络后即使目标页暂缺，也可拍包络交给
+        // Review 拆分。
+        if viewModel.captureMode == .auto,
+           viewModel.mode == .document,
+           viewModel.imageQuad == nil {
+            return false
+        }
         return true
     }
 

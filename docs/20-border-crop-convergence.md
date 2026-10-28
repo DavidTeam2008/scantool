@@ -228,7 +228,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 | 幂等性 | 对第一轮输出再跑整图 draft：1694×2200 → 1694×2200 |
 | WPS realbase | **0.906224**，PNG SHA-256 与已接受基线 byte-identical |
 | 单测 | `PageContentEnvelopeDetectorTests` 2/2、`PageCropSafetyTests` 5/5、`PageCropConvergenceTests` 3/3、`ImagePipelineTests` 2/2 |
-| 全量（P0.1 后） | 492 total / 481 passed / 1 expected / 10 failed（P0.2 后为 501 / 490 / 1 / 10；见 TODO） |
+| 全量（P0.1 后） | 492 total / 481 passed / 1 expected / 10 failed（P0.2 后为 509 / 498 / 1 / 10；见 TODO） |
 
 证据：
 
@@ -310,7 +310,7 @@ refine 只是兜底，不应成为主路径。若首轮内容包络正确，refi
 `round2-realbase-wps.png` **SHA-256 完全一致**（`3faabfd0…`），仍
 **0.906224**。
 
-全量 `make test` 当前 **501 total / 490 passed / 1 expected / 10 failed**；
+全量 `make test` 当前 **509 total / 498 passed / 1 expected / 10 failed**；
 本轮 10 个失败为 Golden 4、WordFidelity 1、Review preview 4、ReviewSplit
 1；`ReconstructEndToEndTests` 本轮未失败（曾在其他顺序下抖动），单独跑
 ReviewViewModelTests、ReviewSplitProposalTests、ReconstructEndToEndTests

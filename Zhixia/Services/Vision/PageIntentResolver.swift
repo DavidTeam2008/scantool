@@ -162,6 +162,32 @@ enum PageIntentResolver {
         return Resolution(quad: target, source: .spine, confidence: confidence)
     }
 
+    /// CF-T002：选择实时显示用的“书/整摊包络”。
+    ///
+    /// 优先级：最大的整摊候选 → 最大的单页候选 → 当前择优（若它至少是
+    /// 页面尺度）。不把文字带/表格小块当包络；包络可以暂时不精确，但必须
+    /// 能持续显示，供用户对准和拍后精修。
+    static func envelope(selection: Quad?, candidates: [Quad]) -> Quad? {
+        let pool = uniqueQuads(([selection].compactMap { $0 } + candidates))
+        let spreads = pool.filter(isSpreadLike).sorted { $0.area > $1.area }
+        if let spread = spreads.first { return spread }
+
+        let pages = pool.filter(isPageLike).sorted { $0.area > $1.area }
+        if let page = pages.first { return page }
+
+        if let selection,
+           !selection.isDegenerate,
+           selection.area >= minimumTargetArea,
+           selection.area < 0.995,
+           isPlausibleEnvelopeShape(selection) {
+            return selection
+        }
+        // 有检测但只有一个明显是条带/小块的候选时，返回整幅作为显示包络，
+        // 让用户至少能看到画面；目标页仍为 nil，拍后由 Review 拆分。
+        // 完全无候选时仍返回 nil（tracker 会进入 searching）。
+        return selection == nil ? nil : Quad.fullImage
+    }
+
     /// 目标页必须是非退化、面积达标，并且明显小于整书（避免书脊误判后
     /// 把整页再返回一次）。
     private static func isValidTarget(
@@ -173,6 +199,13 @@ enum PageIntentResolver {
             && target.area >= minimumTargetArea
             && target.area < source.area * maxAreaRatio
             && isPageLike(target)
+    }
+
+    private static func isPlausibleEnvelopeShape(_ quad: Quad) -> Bool {
+        let rect = quad.boundingRect
+        guard rect.height > 0 else { return false }
+        let aspect = rect.width / rect.height
+        return aspect >= 0.30 && aspect <= 1.60
     }
 
     static func matchesSide(_ quad: Quad, intent: CaptureIntent) -> Bool {

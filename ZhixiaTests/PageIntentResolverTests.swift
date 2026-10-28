@@ -35,6 +35,28 @@ struct PageIntentResolverTests {
         return image.cgImage!
     }
 
+    @Test("显示包络优先选整摊，而不是页面内的小候选")
+    func envelopePrefersSpread() {
+        let spread = Quad(
+            topLeft: CGPoint(x: 0.02, y: 0.04),
+            topRight: CGPoint(x: 0.98, y: 0.04),
+            bottomRight: CGPoint(x: 0.98, y: 0.96),
+            bottomLeft: CGPoint(x: 0.02, y: 0.96)
+        )
+        let page = Quad(
+            topLeft: CGPoint(x: 0.50, y: 0.08),
+            topRight: CGPoint(x: 0.96, y: 0.08),
+            bottomRight: CGPoint(x: 0.96, y: 0.92),
+            bottomLeft: CGPoint(x: 0.50, y: 0.92)
+        )
+        let envelope = PageIntentResolver.envelope(
+            selection: page,
+            candidates: [page, spread]
+        )
+        #expect(envelope == spread)
+        #expect(PageIntentResolver.envelope(selection: nil, candidates: []) == nil)
+    }
+
     @Test("整书外框 + 左页意图：按书脊拆出左半页")
     func splitsSpreadForLeftIntent() throws {
         let spread = Quad(

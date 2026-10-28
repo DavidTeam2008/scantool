@@ -278,7 +278,46 @@ EnvelopeObservation {
 - 状态文案从“已对准/搜索中”改为“已找到书页 / 正在微调 / 请移动远一点”；
 - 保留手动拖框/引导模式作为兜底，但引导模式不再是唯一能获得稳定框的路径。
 
-## 四、分阶段落地计划
+## 四、本轮已落地（CF-T002 / CF-T003 第一版）
+
+> 代码已落，真机/模拟器测试待补；本轮新增了包络观测协议、纯 tracker 和
+> ViewModel 自动路径，旧 `EdgeDetecting` / 旧测试路径保持不变。
+
+- `Zhixia/Domain/CaptureEnvelope.swift`：
+  - `CaptureEnvelopeObservation`（envelope + target + confidence + intentSatisfied）；
+  - `EnvelopeDetecting`（独立的包络观测接口）。
+- `Zhixia/Services/Vision/CaptureEnvelopeTracker.swift`：
+  - 稳定观测锁定（0.4s）；
+  - 短检测缺口 0.5s 内保留包络；
+  - 不同候选先保持旧框，连续确认 0.3s 后才平滑切换；
+  - 目标页失联 0.25s 后回退到包络输出；
+  - 输出 `State` 供 ViewModel 显示/自动快门使用。
+- `Zhixia/Services/Vision/PageIntentResolver.swift`：
+  - 新增 `envelope(selection:candidates:)`，优先整摊、其次单页，避免页面内小块。
+- `Zhixia/Services/Vision/VisionEdgeDetector.swift`：
+  - 新增 `observeEnvelope`：一次检测同时给 envelope 和 target；
+  - 目标页解析失败不再让 envelope 为 nil。
+- `Zhixia/Features/Capture/CaptureViewModel.swift`：
+  - 真实 `VisionEdgeDetector` 自动文档路径改走 `consumeEnvelope`；
+  - 左/右页目标缺失时显示/拍摄包络，不再静默 `.fullImage`；
+  - 快门优先使用 `outputTargetQuad`，否则使用包络。
+- `Zhixia/Features/Capture/CaptureView.swift`：
+  - 无包络时自动模式快门置灰，避免空拍。
+- 新增测试：
+  - `CaptureEnvelopeTrackerTests` 5 条；
+  - `CaptureEnvelopeViewModelTests` 2 条；
+  - `PageIntentResolver.envelope` 1 条。
+- 验证：定向（tracker/viewmodel/resolver/capture/guided/edge）**30/30 passed**；全量
+  **509 total / 498 passed / 1 expected / 10 failed**（10 个仍是既有 flaky）。
+  真机视频 5/6 场景回归尚未执行。
+
+### 这一版的边界
+
+CF-T003 第一版是**低频观测 + 时域 hold/平滑/切换确认**；光流/单应性传播
+仍是下一子步。它已经解决“目标页缺失导致无框/fullImage”，但相机快速移动时
+的跟踪跟手性还需要光流预测，不能把这一版当成最终 WPS 等价实现。
+
+## 五、分阶段落地计划
 
 ### P0.3-A：包络兜底与“无框消失”修复（1–2 天，先止血）
 
@@ -326,7 +365,7 @@ EnvelopeObservation {
   背景残留、内容丢失、用户修正次数；
 - 现有 WPS realbase **0.906224** 继续作为图片链路不回退门限。
 
-## 五、验收指标（建议先量化再调参）
+## 六、验收指标（建议先量化再调参）
 
 | 指标 | 目标 |
 |---|---|
@@ -343,7 +382,7 @@ EnvelopeObservation {
 > “框可见率”必须高于“框绝对准确率”。WPS 的体验已经证明：用户更怕框消失/跳，
 > 而不是框边缘偶尔多 1–2% 背景。
 
-## 六、为什么这比继续调当前方案更可行
+## 七、为什么这比继续调当前方案更可行
 
 - 当前方案的上限是**单帧检测器**：彩色/曲面/低对比页面每次都可能给出不同候选，
   单靠平滑无法弥补“根本没有目标候选”的帧；
@@ -352,7 +391,7 @@ EnvelopeObservation {
 - WPS 的录屏已经验证了这条产品路径：框近似、平滑、可见，结果页由拍后处理；
 - 仍然完全离线，不需要云端/LLM；可选分割模型只输出 mask。
 
-## 七、明确不做/暂不做
+## 八、明确不做/暂不做
 
 - 不继续围绕 `containmentPenalty`、`epsilon`、`alpha` 微调，期待单帧候选变稳；
 - 不要求实时显示“精确左页/右页四边形”后才允许拍摄；
@@ -361,7 +400,7 @@ EnvelopeObservation {
 - 不引入生成式修复/LLM 像素；
 - 不在没有 20+20 场景 A/B 前切换默认模式。
 
-## 八、与现有文档/代码的关系
+## 九、与现有文档/代码的关系
 
 - `docs/21-capture-ux-stability.md`：P0.2 的候选粘滞、显示去抖、快门快照仍然
   有价值，但它把“左右页”当成实时单页目标，已被本轮视频 5 证明不足；
@@ -374,7 +413,7 @@ EnvelopeObservation {
 - `Zhixia/Features/Edit/ReviewViewModel.swift`：拍后拆页提案已有基础，P0.3 把它
   提升为默认输出路径，而不是只在特殊情况提示。
 
-## 九、下一步
+## 十、下一步
 
 建议按顺序执行：
 

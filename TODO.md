@@ -14,12 +14,19 @@
 - [x] **CF-T001 证据与竞品行为复核**：视频 5（彩色/黑白右/左/整页）和视频 6（WPS
   万能扫描）已抽帧；结论见 `docs/22-capture-envelope-tracking.md`，关键帧见
   `docs/media/capture-ux/video5-*`、`video6-*`。
-- [ ] **CF-T002 无框消失止血**：`PageIntentResolver` 拆出 `displayEnvelope` 与
+- [~] **CF-T002 无框消失止血**：`PageIntentResolver` 拆出 `displayEnvelope` 与
   `outputIntent`；目标页不可靠时返回整摊/书包络供显示，绝不因左/右页找不到而清空
   取景框；快门不再静默回退 `.fullImage`。
-- [ ] **CF-T003 连续包络跟踪器**：新增 `CaptureEnvelopeTracker`——低频观测
+  **代码已落**：`CaptureEnvelopeObservation` / `EnvelopeDetecting` /
+  `CaptureEnvelopeTracker` / `VisionEdgeDetector.observeEnvelope` /
+  `CaptureViewModel.consumeEnvelope`；新增 tracker/viewmodel 测试；全量
+  **509 / 498 / 1 expected / 10 failed**（10 个既有 flaky），定向 30/30 通过；
+  真机录制验收待补。
+- [~] **CF-T003 连续包络跟踪器**：新增 `CaptureEnvelopeTracker`——低频观测
   （文档分割/矩形/边缘）+ 高频光流/单应性传播 + 1€/Kalman + 候选滞回 + 状态机；
   离线回放视频 5/6 调参。
+  **第一版已落**：hold/平滑/候选切换确认/目标失联回退；光流/单应性传播仍是
+  下一子步，不能宣称已达 WPS 跟手性。
 - [ ] **CF-T004 意图输出化**：实时蓝色包络始终存在；左/右页只改变书脊高亮和
   拍后输出；单页/无书脊时提示按整页输出。
 - [ ] **CF-T005 拍后高分辨率拆分**：全分辨率包络精修、书脊/折页拆分、彩色页面
@@ -70,7 +77,7 @@
 - [~] **CU-T008 录屏回归与验收**：粉封面 3 角度、右页 10、左页 10、A4 5；记录候选
   切换次数/s、锁定延迟、单帧跳变 p95、禁止内容入片率、修正次数；重跑全量测试与
   WPS 门限，文档回填 `docs/21`。
-  **已完成（P0.2）**：全量 **501 / 490 / 1 expected / 10 failed**（既有 flaky）；新测试
+  **已完成（P0.2）**：全量 **509 / 498 / 1 expected / 10 failed**（既有 flaky）；新测试
   9 条通过；WordFidelity `realUIBase` 通过、QuickLook 代理 pageimage 0.914115 /
   restored 0.964710。**2026-10-28 新增视频 5/6**：左右页实时框仍不达目标，整体验收
   转入 P0.3 CF-T007。
@@ -144,8 +151,8 @@
 
 ## 验证与交付债
 
-- [x] 更新 `Makefile` 测试基线为全量实际值：**501 total / 490 passed / 1 expected failure**（2026-10-27 P0.2 新增 `PageIntentResolverTests` 5、`CaptureIntentFlowTests` 1、`PageEdgeCleaner` 粉色封面 1、`QuadSmoother` 2）。全量 flaky 失败 10 个，见下。
-- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**501 total / 490 passed / 1 expected / 10 failed**；本轮 10 个为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1（`ReconstructEndToEndTests` 本轮未失败，曾在其他顺序下抖动）。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.2 测试均通过，全量不绿是既有债务，不是 P0.2 引入。
+- [x] 更新 `Makefile` 测试基线为全量实际值：**509 total / 498 passed / 1 expected failure**（2026-10-28 P0.3 新增 `CaptureEnvelopeTrackerTests` 5、`CaptureEnvelopeViewModelTests` 2、`PageIntentResolver.envelope` 1）。全量 flaky 失败 10 个，见下。
+- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**509 total / 498 passed / 1 expected / 10 failed**；本轮 10 个为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1（`ReconstructEndToEndTests` 本轮未失败，曾在其他顺序下抖动）。单独跑 `ReviewViewModelTests` 7/7、`ReviewSplitProposalTests` 7/7、`ReconstructEndToEndTests` 2 passed + 1 expected；新增 P0.2/P0.3 测试均通过，全量不绿是既有债务，不是本轮引入。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] P1 guard 残余假阴性：无表头、无边框的表格仍可能漏检；需要更强的版面/线条模型。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。
@@ -159,7 +166,7 @@
   round1-4 单张通过；恢复时优先补粉色封面和打开书本左右页。
 - [ ] **PP-T032 真机全流程**：iPhone 13 相册→收藏→版面还原→Word/WPS 验收，暂停。
   P0.1 图片链路已通过；WPS 仅验证到 **0.906224** realbase，不等于全流程通过。
-- [ ] **全量 flaky 清理**：暂停。当前全量 **501 total / 490 passed / 1 expected /
+- [ ] **全量 flaky 清理**：暂停。当前全量 **509 total / 498 passed / 1 expected /
   10 failed**；失败仍为 Golden/WordFidelity/Review/ReviewSplit 的既有顺序/预览抖动，
   定向测试通过。恢复时先修测试治理，不改业务断言。
 - [ ] **真机 UI 全流程**：当前真机证据多为 parser/export 级，UI 全流程仍待补；

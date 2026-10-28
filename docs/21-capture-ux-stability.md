@@ -231,7 +231,7 @@ byte-identical；无新增 `PageEdgeCleaner` 回归。
 
 ### 测试与证据
 
-- 全量：**501 total / 490 passed / 1 expected / 10 failed**；10 个仍是既有
+- 全量：**509 total / 498 passed / 1 expected / 10 failed**；10 个仍是既有
   Golden/WordFidelity/Review/ReviewSplit 顺序/预览抖动，未因本轮新增。
 - 新测试：`PageIntentResolverTests` 5、`CaptureIntentFlowTests` 1、
   `PageEdgeCleaner` 粉色封面 1、`QuadSmoother` 真实 dt/累计解锁 2。

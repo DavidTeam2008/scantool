@@ -185,7 +185,7 @@ enum DetectionStrategy {
     }
 }
 
-actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
+actor VisionEdgeDetector: EdgeDetecting, EnvelopeDetecting, CandidateSnapshotReporting {
     /// 候选粘滞状态（仅 live 文档路径使用；actor 串行访问保证状态安全）。
     private var sticky = CandidateSticky()
     /// 页面意图解析的透视矫正上下文（仅左/右页意图需要，actor 串行持有）。
@@ -265,6 +265,81 @@ actor VisionEdgeDetector: EdgeDetecting, CandidateSnapshotReporting {
     }
 
     func resetLiveTracking() async {
+        sticky.reset()
+    }
+
+    // MARK: - CF-T002/CF-T003：实时包络观测
+
+    /// 每帧只做一次低成本观测，返回：
+    /// - `envelope`：整摊/书/单页外轮廓，供 overlay 持续显示；
+    /// - `target`：左/右页输出目标（找不到时 nil，但 envelope 仍然存在）。
+    ///
+    /// 这里不使用 `CandidateSticky`：粘滞是单 quad 选择器，而包络跟踪由
+    /// `CaptureEnvelopeTracker` 做时域融合；检测器只负责给当前帧的原始观测，
+    /// 避免“目标页缺失 → detect 返回 nil → 屏幕无框”的旧链路。
+    func observeEnvelope(
+        frame: VideoFrame,
+        idCardWindow: Quad?,
+        intent: CaptureIntent
+    ) async -> CaptureEnvelopeObservation? {
+        guard idCardWindow == nil else { return nil }
+        let cgImage = frame.cgImage
+        let orientation: CGImagePropertyOrientation = .up
+        let rectangles = detectRectangles(
+            cgImage: cgImage,
+            orientation: orientation,
+            relaxed: false
+        )
+        // 页面意图需要整摊外框来拆左右页；即使矩形检测已经给出一个单页，
+        // 也补一次文档分割。整页路径沿用现有“无页面候选才补分割”的门控。
+        let needsSpreadForIntent = intent != .wholePage
+            && !rectangles.contains(where: PageIntentResolver.isSpreadLike)
+        let gateSeg = DetectionStrategy.needsDocumentSegmentation(rectangles: rectangles)
+            || needsSpreadForIntent
+        let segmented: Quad? = gateSeg
+            ? detectDocumentQuad(cgImage: cgImage, orientation: orientation)
+            : nil
+
+        var relaxedRectangles: [Quad] = []
+        if DetectionStrategy.needsRelaxedRectangles(rectangles: rectangles, segmented: segmented) {
+            relaxedRectangles = detectRectangles(
+                cgImage: cgImage,
+                orientation: orientation,
+                relaxed: true
+            )
+        }
+        let rawCandidates = [segmented].compactMap { $0 } + rectangles + relaxedRectangles
+        let selection = DetectionStrategy.select(rawCandidates: rawCandidates, idCardWindow: nil)
+        guard let envelope = PageIntentResolver.envelope(
+            selection: selection?.quad,
+            candidates: rawCandidates
+        ) else { return nil }
+
+        var target: Quad? = envelope
+        var intentSatisfied = true
+        if intent != .wholePage {
+            let resolution = PageIntentResolver.resolve(
+                selection: selection?.quad,
+                candidates: rawCandidates,
+                intent: intent,
+                image: cgImage,
+                ciContext: intentCIContext
+            )
+            target = resolution?.quad
+            intentSatisfied = resolution != nil
+        }
+
+        // 面积给出保守置信度；真正的连续/锁定状态由 tracker 决定。
+        let confidence = min(1, max(0.2, envelope.area * 1.5))
+        return CaptureEnvelopeObservation(
+            envelope: envelope,
+            target: target,
+            confidence: confidence,
+            intentSatisfied: intentSatisfied
+        )
+    }
+
+    func resetEnvelopeTracking() async {
         sticky.reset()
     }
 

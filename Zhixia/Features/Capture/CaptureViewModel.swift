@@ -30,6 +30,15 @@ final class CaptureViewModel {
 
     private let camera: any CameraCapturing
     private let detector: any EdgeDetecting
+    /// CF-T002/CF-T003：真实检测器支持包络观测时，自动文档路径改走
+    /// “包络 + 跟踪”；旧替身/旧路径保持原语义，既有测试不需要改。
+    private let envelopeDetector: (any EnvelopeDetecting)?
+    private var envelopeTracker = CaptureEnvelopeTracker()
+    /// 当前左/右页输出目标（照片空间）；nil = 只能拍包络，拍后由 Review 拆分。
+    private(set) var outputTargetQuad: Quad?
+    /// 包络来自上一观测的 hold（不是新帧），自动快门/锁定提示必须保守。
+    private(set) var envelopeIsHolding = false
+    private(set) var envelopeIntentSatisfied = false
     private let fileStore: any PageFileStoring
     private let permissions: any PermissionGranting
     private let preferences: PreferencesStore
@@ -112,6 +121,7 @@ final class CaptureViewModel {
         self.appendToDocumentID = launch.documentID
         self.camera = camera
         self.detector = detector
+        self.envelopeDetector = detector as? any EnvelopeDetecting
         self.fileStore = fileStore
         self.permissions = permissions
         self.preferences = preferences
@@ -274,6 +284,15 @@ final class CaptureViewModel {
         lockedFrameCount = 0
         imageQuad = mode == .idCard ? Quad.idCardWindow : nil
         presentedQuad = nil
+        outputTargetQuad = nil
+        envelopeIsHolding = false
+        envelopeIntentSatisfied = false
+        envelopeTracker.reset()
+        Task {
+            if let envelopeDetector = self.envelopeDetector {
+                await envelopeDetector.resetEnvelopeTracking()
+            }
+        }
         phase = .previewing
         // spec/guided-capture D3：切模式 → 引导框重置（证件模式不显示引导 UI）。
         resetGuide()
@@ -321,9 +340,18 @@ final class CaptureViewModel {
             farHysteresis.reset()
             frozenQuad = nil
             presentedQuad = nil
+            outputTargetQuad = nil
+            envelopeIsHolding = false
+            envelopeIntentSatisfied = false
+            envelopeTracker.reset()
             imageQuad = nil
             phase = .previewing
-            Task { await detector.resetLiveTracking() }
+            Task {
+                await detector.resetLiveTracking()
+                if let envelopeDetector = self.envelopeDetector {
+                    await envelopeDetector.resetEnvelopeTracking()
+                }
+            }
         }
     }
 
@@ -339,6 +367,10 @@ final class CaptureViewModel {
         directive = .searching
         frozenQuad = nil
         presentedQuad = nil
+        outputTargetQuad = nil
+        envelopeIsHolding = false
+        envelopeIntentSatisfied = false
+        envelopeTracker.reset()
         didAutoCaptureThisLock = false
         isAutoCaptureSuppressed = false
         lockedFrameCount = 0
@@ -346,7 +378,12 @@ final class CaptureViewModel {
             imageQuad = nil
             phase = .previewing
         }
-        Task { await detector.resetLiveTracking() }
+        Task {
+            await detector.resetLiveTracking()
+            if let envelopeDetector = self.envelopeDetector {
+                await envelopeDetector.resetEnvelopeTracking()
+            }
+        }
         guidePhotoQuad = nil
         ensureGuide()
     }
@@ -555,12 +592,27 @@ final class CaptureViewModel {
         // 快门时刻屏幕所见，瞬时检测缺口不会使其回退静帧自由检测。
         // spec/frame-truth FR-007：`closer`（太远/无效框）时呈现框不可拍摄，
         // 按搜索态处理（静帧自由检测兜底）——避免把屏幕上的局部小框裁成废片。
-        // CU-T005：呈现框与快门快照同一来源。`presentedQuad` 是屏幕实际
-        // 渲染的去抖框（锁定时等于 frozenQuad）；搜索态没有呈现框才走静帧。
-        // 读取完这一行后立刻进入 capturing，帧消费不会再改它。
-        let displayed = (mode == .idCard || directive != .closer)
-            ? (mode == .document ? (presentedQuad ?? imageQuad) : imageQuad)
-            : nil
+        // CU-T005：呈现框与快门快照同一来源。实拍路径现在以包络为主：
+        // - 整页意图：拍屏幕上的包络；
+        // - 左/右页意图：优先拍 outputTargetQuad，目标不可靠时拍包络，
+        //   交给 Review 做拍后拆页；
+        // - 绝不再在“没有呈现框”时静默落 fullImage。
+        let envelopePath = envelopeDetector != nil && mode == .document && captureMode == .auto
+        let envelope = presentedQuad ?? imageQuad
+        if envelopePath, envelope == nil {
+            // 没有书/页面可拍：保持 previewing，不写 fullImage，也不闪快门。
+            return
+        }
+        let displayed: Quad?
+        if envelopePath {
+            displayed = captureIntent == .wholePage
+                ? envelope
+                : (outputTargetQuad ?? envelope)
+        } else {
+            displayed = (mode == .idCard || directive != .closer)
+                ? (mode == .document ? (presentedQuad ?? imageQuad) : imageQuad)
+                : nil
+        }
         phase = .capturing
         isFlashVisible = true
         do {
@@ -653,6 +705,10 @@ final class CaptureViewModel {
         farHysteresis.reset()
         frozenQuad = nil
         presentedQuad = nil
+        outputTargetQuad = nil
+        envelopeIsHolding = false
+        envelopeIntentSatisfied = false
+        envelopeTracker.reset()
         directive = .searching
         didAutoCaptureThisLock = false
         isAutoCaptureSuppressed = false
@@ -835,6 +891,16 @@ final class CaptureViewModel {
             }
             return
         }
+        // CF-T002/CF-T003：真实检测器走“整摊包络 + 跟踪”，不再让单页
+        // 意图的 nil 直接清空 overlay。旧替身/旧路径保持原语义。
+        if let envelopeDetector = envelopeDetector,
+           mode == .document,
+           captureMode == .auto {
+            isDetecting = true
+            defer { isDetecting = false }
+            await consumeEnvelope(frame, detector: envelopeDetector)
+            return
+        }
         isDetecting = true
         defer { isDetecting = false }
         let window = mode == .idCard ? Quad.idCardWindow : nil
@@ -994,6 +1060,85 @@ final class CaptureViewModel {
                 didAutoCaptureThisLock = true
                 await capture()
             }
+        }
+    }
+
+    /// CF-T002/CF-T003：真实包络路径。检测器只给 envelope/target 观测，
+    /// tracker 负责 hold/平滑/锁定；overlay 始终显示 envelope，不再因
+    /// 左/右页目标暂时缺失而清空。
+    private func consumeEnvelope(
+        _ frame: VideoFrame,
+        detector: any EnvelopeDetecting
+    ) async {
+        let observation = await detector.observeEnvelope(
+            frame: frame,
+            idCardWindow: nil,
+            intent: captureIntent
+        )
+        let photoObservation = observation.map { observation in
+            CaptureEnvelopeObservation(
+                envelope: clampedToPreview(FOVLayout.convert(
+                    quad: observation.envelope,
+                    fromAspect: geometry.videoAspect,
+                    toAspect: geometry.photoAspect
+                )),
+                target: observation.target.map {
+                    clampedToPreview(FOVLayout.convert(
+                        quad: $0,
+                        fromAspect: geometry.videoAspect,
+                        toAspect: geometry.photoAspect
+                    ))
+                },
+                confidence: observation.confidence,
+                intentSatisfied: observation.intentSatisfied
+            )
+        }
+        let state = envelopeTracker.ingest(photoObservation, at: frame.timestamp)
+        envelopeIsHolding = state.isHolding
+        envelopeIntentSatisfied = state.intentSatisfied
+        outputTargetQuad = state.target
+
+        if let envelope = state.envelope {
+            imageQuad = envelope
+            presentedQuad = envelope
+            frozenQuad = nil
+            phase = state.phase == .locked && !state.isHolding
+                ? .locked(envelope)
+                : .previewing
+        } else {
+            imageQuad = nil
+            presentedQuad = nil
+            phase = .previewing
+        }
+        directive = GuidanceDirective.evaluate(track: state.track, hysteresis: &farHysteresis)
+
+        // 自动快门只在 tracker 真正 locked、仍收到新观测、且目标页可靠时
+        // 触发；页面意图尚未满足时，用户仍可手动拍包络，由 Review 拆分。
+        let suspicious = preferences.autoCapture
+            && (state.envelope?.isSuspiciousForAutoCapture() ?? true)
+        if suspicious, !isAutoCaptureSuppressed, let envelope = state.envelope {
+            isAutoCaptureSuppressed = true
+            ZhixiaLog.suspiciousLock(area: envelope.area, minMargin: minimumEdgeMargin(of: envelope))
+        } else if !suspicious {
+            isAutoCaptureSuppressed = false
+        }
+        let canAutoCapture = preferences.autoCapture
+            && !state.isHolding
+            && state.phase == .locked
+            && !suspicious
+            && directive != .closer
+            && (captureIntent == .wholePage || state.intentSatisfied)
+        if canAutoCapture {
+            lockedFrameCount += 1
+        } else {
+            lockedFrameCount = 0
+        }
+        await recordTrace(track: state.track)
+        if canAutoCapture,
+           !didAutoCaptureThisLock,
+           lockedFrameCount >= autoCaptureHoldFrames {
+            didAutoCaptureThisLock = true
+            await capture()
         }
     }
 
