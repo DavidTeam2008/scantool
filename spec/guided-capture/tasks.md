@@ -12,6 +12,11 @@ T000 后直接 `make test`。局部：`make test-only T=<Suite>`
 > **2026-10-27 状态**：guided-capture 实现已交付，但默认仍是 `auto`；用户四段真机
 > 录屏复核见 `docs/21-capture-ux-stability.md`。T030/T031/T032 仍未完成，且四段录屏
 > 不能替代 20 张/场景的设备验收；当前新工作拆到 `TODO.md` 的 P0.2（CU-T001~T008）。
+>
+> **2026-10-28 追加**：视频 5 显示实时单页意图仍频繁无框；P0.3 改为“整摊/书包络
+> 跟踪 + 拍后拆页”，见 `docs/22-capture-envelope-tracking.md` 与 TODO 的
+> **P0.3 · 取景包络跟踪**（CF-T001~CF-T007）。本 spec 的 T030/T031/T032 仍保留为
+> 引导模式 A/B 待办，不再作为自动取景的唯一主线。
 
 ## Format: `[ID] [P?] [Story] Description`
 
