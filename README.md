@@ -10,8 +10,8 @@
 | Bundle ID | `com.david.Zhixia` |
 | 系统 / 语言 | iOS 18+ · Swift 6 |
 | 设备 | 仅 iPhone（竖屏） |
-| 规模 | 141 个主工程 Swift 文件 / 66 个测试文件 / 518 个测试用例（507 passed + 1 expected + 10 known full-suite failures） |
-| 当前主线 | P0.3 取景包络跟踪（[`docs/22`](docs/22-capture-envelope-tracking.md)）；CF-T001~T005 第一版已交付；CF-T007 真机视频 5/7 验收待做 |
+| 规模 | 141 个主工程 Swift 文件 / 69 个测试文件 / **547 个测试用例**（10 条既有债，5~10 条 flaky 命中；最近一次 536 passed + 10 failed + 1 expected） |
+| 当前主线 | P0.3 取景包络跟踪（[`docs/22`](docs/22-capture-envelope-tracking.md)）；CF-T002~T011a 已交付；真机验收记录待补 |
 
 ---
 
@@ -23,34 +23,9 @@
 当前取景主线的事实源（包络跟踪 / CF-T001~T007 / 验收指标）。
 **第三读：[TODO.md](TODO.md)** —— 当前任务勾选、暂停项、已知测试债。
 
-然后按需下钻：
-
-| 文档 | 内容 |
-| --- | --- |
-| [docs/12-handover.md](docs/12-handover.md) | **交接文档（新人第一读）**：全貌 / 当前主线 / 卡点 / 路线图 / 上手路径 |
-| [docs/22-capture-envelope-tracking.md](docs/22-capture-envelope-tracking.md) | **当前 P0.3 主线**：包络跟踪 + 拍后拆页 + 验收指标 |
-| [TODO.md](TODO.md) | 当前任务、暂停项、已知测试债 |
-| [docs/09-project-handbook.md](docs/09-project-handbook.md) | **接手手册**：架构原理 + 卡点史 + 优化方向（历史快照） |
-| [AGENTS.md](AGENTS.md) | AI coding agent 冷启动入口：定位 / 铁律 / 命令速查 |
-| [docs/00-getting-started.md](docs/00-getting-started.md) | 实操：目录地图、主路径、改哪里、怎么测 |
-| [docs/01-product-prototype.md](docs/01-product-prototype.md) | 产品原型：场景、信息架构、主路径、视觉 |
-| [docs/02-architecture.md](docs/02-architecture.md) | 分层、模块、数据流、工程结构（与代码对齐） |
-| [docs/03-tech-choices.md](docs/03-tech-choices.md) | 技术选型与取舍 |
-| [docs/04-implementation-principles.md](docs/04-implementation-principles.md) | 几何 / 管线 / 并发 / 落盘 / 编码规矩 |
-| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑现状与后续（历史路线，当前看 12/22） |
-| [docs/06-document-reconstruction.md](docs/06-document-reconstruction.md) | 版面还原：IR、本机 R2、TextIn stub、**已知问题** |
-| [docs/07-reconstruct-r2-optimization.md](docs/07-reconstruct-r2-optimization.md) | **R2 优化方案**：原型 / 架构 / 选型 / 原理 / 阻碍 / 计划 + 实测数据 |
-| [docs/08-reconstruct-v3-realworld-fix.md](docs/08-reconstruct-v3-realworld-fix.md) | **真机回归**：反解方法、根因链、P0~P3 路线图 |
-| [docs/10-project-summary.md](docs/10-project-summary.md) | 项目总结：架构 / 技术原理 / SDD 周期史 |
-| [docs/11-wps-parity-research.md](docs/11-wps-parity-research.md) | **WPS 扫描对标调研**：docx 取证 / 差距分析 / 周期规划 |
-| [docs/16-word-export-fidelity.md](docs/16-word-export-fidelity.md) | Word 导出保真度：图片版档 / 保真度闸门 |
-| [docs/17-editable-tier-fidelity-iteration.md](docs/17-editable-tier-fidelity-iteration.md) | 可编辑 Word 档迭代（0.785 未达标，暂停） |
-| [docs/19-page-preprocess-plan.md](docs/19-page-preprocess-plan.md) | 页面预处理计划（边界/折痕/光照） |
-| [docs/20-border-crop-convergence.md](docs/20-border-crop-convergence.md) | 边框/背景单次收敛 |
-| [docs/21-capture-ux-stability.md](docs/21-capture-ux-stability.md) | 取景候选粘滞/显示去抖（P0.2 历史） |
-| [docs/fixtures/README.md](docs/fixtures/README.md) | 样张 OCR 夹具：怎么导、怎么生成、保真度说明 |
-| [prototype/index.html](prototype/index.html) | 可交互界面原型 |
-| [docs/reconstruct-r2-preview.html](docs/reconstruct-r2-preview.html) | 还原功能界面线框（8 屏） |
+完整文档分级（当前事实源 / 常读参考 / 历史归档）见
+[`docs/README.md`](docs/README.md)；本 README 不再重复维护文档清单。
+AI coding agent 从 [`AGENTS.md`](AGENTS.md) 进入。
 
 图：[分层](docs/diagrams/layers.svg) · [扫描管线](docs/diagrams/pipeline.svg) · [模块关系](docs/diagrams/modules.svg)
 
@@ -85,7 +60,7 @@ make doctor    # 环境自检
 
 ```
 Zhixia/          App · Features · Domain · Services · DesignSystem
-ZhixiaTests/     66 个测试文件 / 518 个 @Test（含端到端断言 + 真实样张 + 金标准语法页）
+ZhixiaTests/     69 个测试文件 / 547 个 @Test（含端到端断言 + 真实样张 + 金标准语法页；10 条既有债）
 docs/            接手手册 + 交接文档 + 产品 / 架构 / 选型 / 原理 / 路线图 / 还原专题
 spec/            SDD 周期工件（17 个周期：spec/plan/tasks/device-acceptance 四件套）
 Tools/           ocr-dump（造夹具）· pdf-ocr-dump（反解真机 OCR）

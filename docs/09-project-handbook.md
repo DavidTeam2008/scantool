@@ -4,10 +4,10 @@
 > 现在做到哪、卡在哪、下一步往哪走。
 > 需要下钻时，每节都给了对应代码路径和专题文档。
 >
-> 最后更新：**2026-10-28** · 当前代码 141 个主工程 Swift 文件 / 约 24.9k 行 / 全量
-> **518 用例 = 507 passed + 1 expected failure + 10 known full-suite failures**。
-> **当前主线是 P0.3 取景包络跟踪**：CF-T001~CF-T005 第一版已交付，真机视频 5/7
-> 验收待做（[22](22-capture-envelope-tracking.md) / [12 §0](12-handover.md)）。
+> 最后更新：**2026-10-29** · 当前代码 141 个主工程 Swift 文件 / 约 25.5k 行 / 全量
+> **547 用例；10 条既有债（5~10 条 flaky 命中，最近一次 536 passed + 10 failed + 1 expected）**。
+> **当前主线是 P0.3 取景包络跟踪**：CF-T002~T011a 已交付，真机验收记录待补
+> （[22](22-capture-envelope-tracking.md) / [12 §0](12-handover.md)）。
 > 本文的 §5/§6 是历史快照，当前状态以 [12](12-handover.md) + [22](22-capture-envelope-tracking.md)
 > + [TODO](../TODO.md) 为准。新同事第一读 [12 交接文档](12-handover.md)，AI agent 从
 > [AGENTS.md](../AGENTS.md) 进入。
@@ -40,7 +40,7 @@ scantool/
 │   ├── Domain/              纯逻辑：几何、模型、版面分析、表格、配图、阅读序
 │   ├── Services/            副作用：Camera / Image / Vision / OCR / Persistence / Reconstruct / PDF
 │   └── DesignSystem/        Tokens + 复用组件
-├── ZhixiaTests/             66 个测试文件 / 518 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页）
+├── ZhixiaTests/             69 个测试文件 / 547 个 @Test（含端到端断言 + 真实双栏样张 + 金标准语法页；10 条既有债）
 ├── docs/                    本文 + 专题文档（00~22；12 为交接文档单入口，22 为当前取景主线）
 ├── spec/                    SDD 周期工件（17 个周期，每周期 spec/plan/tasks/device-acceptance 四件套）
 ├── Tools/
@@ -583,10 +583,9 @@ highFidelity（高保真）** 一一映射内部 `.structured` / `.restored`，�
 
 ### 5.1 测试现状
 
-- **当前（2026-10-28）**：66 个测试文件 / 518 个 `@Test`，全量
-  **507 passed + 1 expected failure + 10 known full-suite failures**。
-  10 个已知失败：Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1；
-  新增 CF-T004/CF-T005 用例全绿，`Makefile` 基线 518/507。
+- **当前（2026-10-29）**：69 个测试文件 / 547 个 `@Test`；全量
+  **10 条既有债**（Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），
+  flaky 命中 5~10 条；`Makefile` 基线总数 547，CI 门禁用 `make test-ci`。
   下列 396/449 等是历史周期快照，保留作回归史参考，不是当前门禁。
   取景检测本轮（spec/live-edge-crop）新增套件：`DocumentFrameStyleTests`（实线整框样式
   纯数据断言：dash 恒空 / 两态差异 / idCard 守卫）+ `EdgeDetectionStrategyTests` 的

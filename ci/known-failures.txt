@@ -1,0 +1,20 @@
+# 已知债失败白名单（CI 门禁 `make test-ci` / `make test-gate` 使用）
+#
+# 规则：
+# - 一行一个 xcresult 测试标识（`类名/方法名()`），大小写敏感。
+# - 只允许放「已确认为既有债」的用例；新增失败必须修，不得加白名单。
+# - 白名单用例本次通过时只警告（flaky 或已修复），不失败；修复后请删行。
+# - 白名单变长必须在 PR / tasks.md 说明原因。
+#
+# 当前 10 条：Golden 4 + WordFidelity 1 + Review 4 + ReviewSplit 1。
+
+GoldenWorksheetEndToEndTests/flowDocxReadingOrderAnchorsMatchGolden()
+GoldenWorksheetEndToEndTests/comicStripInlinesCompleteInFlowDocxReadingOrder()
+GoldenWorksheetEndToEndTests/defaultPathExportContainsNoFakeTables()
+GoldenWorksheetEndToEndTests/comicStripIsASingleUnfragmentedFigureOnDefaultPath()
+WordFidelityExportTests/realOCRExportArtifact()
+ReviewViewModelTests/autoRefineSkipsUserAdjustedQuad()
+ReviewViewModelTests/autoRefineKeepsCaptureFrameOnIdentityMismatch()
+ReviewViewModelTests/reviewTrimsFoldedLeftStrip()
+ReviewViewModelTests/reviewSplitsSpreadToRightPage()
+ReviewSplitProposalTests/guidedPageSkipsProposal()

@@ -1,8 +1,8 @@
 # Spec: 取景包络跟踪（capture-envelope-tracking）
 
-**状态**：实施中（CF-T001~CF-T005 第一版 + 视频 8/9/10 回归修复已交付；
-CF-T010 取景域 WYSIWYG / CF-T011a 近距单页已实施，真机复测待做；CF-T010b/T011 未开始）
-**当前提交**：`b7ea065` + 视频 8/9 修复（未提交）
+**状态**：实施中（CF-T001~T005d 已交付；CF-T010 取景域 WYSIWYG / CF-T011a 近距单页
+已实施，T011a 由用户确认修复；T010 真机验收记录待补；CF-T010b/T011 未开始）
+**当前提交**：`7a546b4`（CF-T005b/c/d + T010 + T011a）
 **背景与方案**：[`docs/22-capture-envelope-tracking.md`](../../docs/22-capture-envelope-tracking.md)
 **前置**：`spec/frame-truth`（成片 = 呈现框）、`spec/guided-capture`（引导/取证）
 **后续任务**：[`tasks.md`](tasks.md) · 真机清单：[`device-acceptance.md`](device-acceptance.md)

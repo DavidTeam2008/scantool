@@ -1,6 +1,6 @@
 # Device Acceptance: 取景包络跟踪（capture-envelope-tracking）
 
-**前置**：`make device-build` 通过；真机已装当前 `b7ea065` 或更新构建
+**前置**：`make device-build` 通过；真机已装当前 `7a546b4` 或更新构建
 **主清单**：视频 5（彩色/黑白 × 左/右/整页）、视频 7（右页/左页/整页 + 屏幕外框）、
 视频 8（平铺书本、左页取景）、视频 9（红边练习册）、视频 10（背景墙 + 练习册，
 2026-10-28）、视频 11/12（取景域 WYSIWYG，2026-10-29）、视频 13/14
@@ -162,7 +162,7 @@ p95 ≤短边 0.5%；右/左页输出正确率 ≥90%；内容丢失 0；背景�
 
 ## 5. 回归门限
 
-- `make test`：**547 total**；本次 541 passed / 5 failed + 1 expected，失败仅限既有债（不得新增失败）；
+- `make test`：**547 total**；10 条既有债会 flaky 命中 5~10 条，失败不得超出既有清单；
   CF-T010/T011 落地后按新增用例更新基线（见 `tasks.md` 顶部）。
 - `make smoke`、`make device-build` 通过。
 - WPS realbase docx SHA-256 `80903b1d…8cf4153` 不变；0.906224 不回退。

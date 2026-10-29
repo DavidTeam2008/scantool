@@ -11,5 +11,12 @@ DerivedData/
 .harness2/evals/
 .harness2/library/
 
+# Python 运行产物（Tools/ 下有评测脚本）
+__pycache__/
+*.pyc
+
+# 团队规则检出（CI 用；本地 clone 放仓库外）
+.team-rules/
+
 # 真机录屏（体积大，本地保留；见 docs/12 §0.2 / AGENTS §6）
 docs/media/screenrecord/

@@ -1,0 +1,28 @@
+name: rules
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 团队规则仓库；私有仓需在 Secrets 配 TEAM_RULES_TOKEN（只读权限即可）。
+      - name: Checkout team rules
+        uses: actions/checkout@v4
+        with:
+          repository: davidtan2008/team-agent-template
+          path: .team-rules
+          token: ${{ secrets.TEAM_RULES_TOKEN || github.token }}
+
+      - name: Team baseline in sync
+        run: python3 .team-rules/scripts/sync_team_baseline.py --check AGENTS.md
+
+      - name: Docs links and index
+        run: python3 Tools/check-docs.py

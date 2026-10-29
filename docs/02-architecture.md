@@ -113,7 +113,7 @@ Zhixia/
     DocumentMaskQuad.swift        // 预埋：文档区域二次分割（暂无调用者）
     CaptureGeometry.swift · FOVLayout.swift
     OCRTextQuality.swift
-    ScanSession.swift
+    Models/CaptureLaunch.swift
     Errors/ZhixiaError.swift
   Services/
     ServiceProtocols.swift
@@ -139,7 +139,7 @@ Zhixia/
   DesignSystem/
   Localizable.xcstrings
   Info.plist · Assets.xcassets
-ZhixiaTests/           66 个测试文件 / 518 个 @Test
+ZhixiaTests/           69 个测试文件 / 547 个 @Test
   QuadSmootherTests · ImagePipelineTests · DocumentStoreTests
   CaptureViewModelTests · OCRViewModelTests · ReconstructTests
   CropConsistencyGateTests · CandidateStickyTests · CropGateAtShutterTests   // WYSIWYG
@@ -362,7 +362,7 @@ Library
 | OCR | 中文质量、双图择优 |
 | 还原 | 场景路由、阅读序、段落、配图空洞、DOCX 含 `w:tbl` / `word/media`；端到端 `ReconstructEndToEndTests` + 金标准 `GoldenWorksheetEndToEndTests`（真实 Vision 链路）；丢字哨兵 `InkTextReconcilerTests` |
 
-全量 518 用例 = 507 passed + 1 expected failure + 10 known failures（跑法与计数陷阱见
+全量 547 用例；10 条既有债会 flaky 命中（跑法与计数陷阱见
 [00 §7](00-getting-started.md#7-怎么测) 与 `Makefile`）。
 
 Preview：`PreviewSupport` 假相机 / 假识别器 / 内存 Store。

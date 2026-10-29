@@ -4,6 +4,10 @@
 > 适用范围：`/Users/tanwei/Documents/code/ios/scantool/`（Zhixia 工程）。
 > 阅读对象：本工程接手还原的工程师 + 产品 + 设计。
 > 更新：2026-09-07（基于现有实现与两张样张）
+>
+> **历史归档（2026-10-29 标注）**：R2 方案已由 [`08` v3 真机修复](08-reconstruct-v3-realworld-fix.md)
+> 与 [`spec/word-fidelity/`](../spec/word-fidelity/) 取代；当前还原链现状以
+> [`06`](06-document-reconstruction.md) + [`16` Word 保真](16-word-export-fidelity.md) 为准。
 
 ---
 

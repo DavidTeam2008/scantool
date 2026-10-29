@@ -1,6 +1,6 @@
 # Tasks: 取景包络跟踪（capture-envelope-tracking）
 
-**测试基线（2026-10-28）**：531 total / 520 passed / 1 expected / 10 known failures
+**测试基线（2026-10-29）**：547 total / 10 条 known failures（flaky）；CI 门禁 `make test-ci`
 （CF-T010/T011 实施后按新增用例更新 `Makefile` 基线；预计 +10~15 条）
 **构建/测试**：`make test` / `make test-only T=<Suite>` / `make smoke` / `make device-build`
 
@@ -65,7 +65,7 @@
     视频 11/12 同场景；确认照片 FOV == 视频 FOV（标记物法）；记录
     `cropQuad tag=envelope/target-*`；更新 `Makefile` 基线与证据目录
     `build/cf-t010/`。
-- [~] **CF-T011a 近距单页裁切门（2026-10-29，视频 14/13；代码已落，真机复测待做）**：
+- [x] **CF-T011a 近距单页裁切门（2026-10-29，视频 14/13；用户确认修复）**：
   - `isFrameClipped` 区分**单页 / 整摊**：整页意图下单页被裁 → 允许拍；
     整摊/整书被裁 → 仍置灰（视频 12）；左/右页目标页单页被裁 → 允许；
   - 左/右页目标缺失 → 允许拍包络回退（Review 拆分），不再因整摊贴边把
@@ -74,7 +74,7 @@
   - 提示与快门一致：`isCaptureReady && overlayIsLocked` → “已对准”；
   - 新增 4 条测试（整摊被裁仍拦 / 近距单页可拍且钳制 / 目标缺失回退 /
     目标页贴边可拍 / `isSinglePageForCapture` 单页-整摊判定）；
-    全量 **547 total**（T010 543/532 + 4）；本次 541 passed / 5 failed（均为既有债）。
+    全量 **547 total**（T010 543/532 + 4）；10 条既有债（5~10 条 flaky 命中）。
 
 - [ ] **CF-T010b 拍后逐边包含**：`refineQuads` 用逐边包含（+1% 容差）替代
   “面积 ≤1.10× + IoU ≥0.85”；不满足保留拍摄框并记

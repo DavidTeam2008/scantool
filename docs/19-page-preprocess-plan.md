@@ -1,6 +1,7 @@
 # 19 · 页面预处理与下一阶段优先级（2026-10-26）
 
-> 状态：**当前周期**。执行清单见 [`TODO.md`](../TODO.md) 与
+> 状态：**历史周期**（2026-10-27 P0.1 已收口、P0.2 已切到包络主线；当前 P0.3 见
+> [`22`](22-capture-envelope-tracking.md)）。执行清单保留在 [`TODO.md`](../TODO.md) 与
 > [`spec/page-preprocess/tasks.md`](../spec/page-preprocess/tasks.md)。
 > 2026-10-27 P0.1 边框/背景单次收敛已落基础版，见 [`docs/20`](20-border-crop-convergence.md)。
 > 上游：`docs/17`（Word 可编辑档迭代）、`docs/18`（h2oc 运行复盘）。

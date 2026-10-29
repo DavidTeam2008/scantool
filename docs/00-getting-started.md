@@ -8,7 +8,7 @@
 
 更新：2026-09-07（与当前 `Zhixia` 工程对齐）；2026-09-12 补上手册指引；
 2026-09-26 补 Makefile 用法、还原档位与测试套件对齐（wysiwyg-crop / wps-parity-layout 两周期后）；
-**2026-10-28 当前主线更新**：P0.3 取景包络跟踪，测试基线 518/507/1/10 known，
+**2026-10-29 当前主线更新**：P0.3 取景包络跟踪，测试基线 547 total（10 条既有债），
 详见 [12 交接文档](12-handover.md) 与 [22 取景包络](22-capture-envelope-tracking.md)。
 
 ---
@@ -80,7 +80,7 @@ Zhixia/
     ServiceProtocols.swift   全部能力协议
   DesignSystem/        Tokens + 组件
   Localizable.xcstrings
-ZhixiaTests/           66 个测试文件 / 518 个 @Test（含端到端 + 真实样张 + 金标准语法页；1 个 expected failure + 10 个已知全量失败）
+ZhixiaTests/           69 个测试文件 / 547 个 @Test（含端到端 + 真实样张 + 金标准语法页；10 条既有债）
 ```
 
 依赖方向：**Features → Domain / DesignSystem / Environment 协议**。禁止 Feature 里直接 `AVCaptureSession` / `CIFilter` / `VNRecognize…`（预览 Representable 除外）。
@@ -180,7 +180,7 @@ make doctor                      # 环境自检（Xcode / 模拟器 / Busy 提�
 > 📌 **计数陷阱**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 > failure`，不是 `passed`——按 `passed` 关键字搜日志会少数。以 `make test` 末尾自动
 > 打印的 xcresulttool 计数为准。当前基线：
-> `total=518 passed=507 failed=10 expectedFailures=1`；10 个失败是既有测试债
+> `total=547`；10 条既有债会 flaky 命中 5~10 条，passed 随命中数浮动；
 > （Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），不是本轮新回归。
 
 **手工裸跑**（与 Makefile 等价，模拟器名称/OS 按本机调整；默认
