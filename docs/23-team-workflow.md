@@ -26,17 +26,17 @@
    - Require status checks：`rules`
    - 不允许 bypass（含 admin）
    - 私有仓的分支保护取决于 GitHub 套餐；没有该能力时，先用 PR 模板 + 团队约定。
-3. **Settings → Secrets and variables → Actions**：`TEAM_RULES_TOKEN`
-   （对 `team-agent-template` 只读即可；公开仓可省略）。
+3. **Secrets**：模板仓已 public，CI 直接匿名 clone，**不需要** `TEAM_RULES_TOKEN`；
+   若将来把模板改回 private，再加只读 token。
 4. **Settings → Actions → General**：允许 Actions；fork PR 默认不传 secrets。
 5. 日常不直接 push `main`；hotfix 也走 PR。
 
 > **当前状态（2026-10-29）**：
-> - `scantool` 已转 **public**；分支保护已启用（PR + 1 approval + `rules` 检查），
->   `enforce_admins` 暂为 `false`，首个 `rules` 绿后改 `true`。
-> - `TEAM_RULES_TOKEN` 已在 Actions secrets 添加；当前 PAT 无 secrets 读权限，
->   无法用 API 复核，首次 CI 验证。
-> - 协作者邀请已发给 `davidtan2012`，**待对方接受**；接受后才会出现在协作者列表。
+> - 已迁到 org：`DavidTeam2008/scantool`、`DavidTeam2008/team-agent-template`（均 public）。
+> - 分支保护随仓库保留：PR + 1 approval + `rules`；最新 `rules` 含团队基线校验，已通过。
+>   `enforce_admins` 仍为 `false`，在 **Settings → Branches** 里改为 true 即完成收口。
+> - CI 匿名 clone 团队规则，不再依赖 token。
+> - `davidtan2012` 需先加入 org（People → Invite），再给仓库权限；旧仓库邀请已随转移失效。
 > - self-hosted runner 0 台；iOS CI 暂不需要。
 
 ## 3. 日常流程
