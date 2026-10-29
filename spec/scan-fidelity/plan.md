@@ -24,7 +24,7 @@
 ### Documentation (this feature)
 
 ```text
-/Users/tanwei/Documents/code/ios/scantool/spec/scan-fidelity/
+$HOME/Documents/code/ios/scantool/spec/scan-fidelity/
 ├── spec.md              # 已完成（Phase 1）
 ├── plan.md              # 本文件
 └── tasks.md             # Phase 3 产出
@@ -33,7 +33,7 @@
 ### Source Code (repository root)
 
 ```text
-/Users/tanwei/Documents/code/ios/scantool/
+$HOME/Documents/code/ios/scantool/
 ├── Zhixia/
 │   ├── Domain/
 │   │   ├── OnDeviceReadingOrder.swift        # [改] sameRow 判定重写 + segments 采集

@@ -31,6 +31,7 @@
 | [`11-wps-parity-research.md`](11-wps-parity-research.md) | WPS 扫描对标调研：docx 取证 / 差距分析 / 周期规划 |
 | [`16-word-export-fidelity.md`](16-word-export-fidelity.md) | Word 导出保真度：图片版档 / 保真度闸门 |
 | [`17-editable-tier-fidelity-iteration.md`](17-editable-tier-fidelity-iteration.md) | 可编辑 Word 档迭代（0.785 未达标，暂停） |
+| [`23-team-workflow.md`](23-team-workflow.md) | 团队协作：权限 / 分支保护 / PR / CI / 新成员 checklist |
 
 ## 3. 历史归档（只作背景，不要按其中的“下一步”执行）
 

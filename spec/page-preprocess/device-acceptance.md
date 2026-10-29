@@ -1,6 +1,6 @@
 # Device Acceptance: page-preprocess
 
-设备：iPhone 13（`00008110-000805902684801E`，iOS 27.0.1）
+设备：iPhone 13（`<device-udid>`，iOS 27.0.1）
 样张：`docs/media/IMG_7544.jpg`（2939×3961）+ 真机 rendered 页
 
 ## 1. 预处理前基线

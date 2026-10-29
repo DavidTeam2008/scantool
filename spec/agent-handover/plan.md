@@ -1,6 +1,6 @@
 # Implementation Plan: AI 工程师交接与项目 Agent 化（agent-handover）
 
-**Input**: Feature specification from `/Users/tanwei/Documents/code/ios/scantool/spec/agent-handover/spec.md`
+**Input**: Feature specification from `$HOME/Documents/code/ios/scantool/spec/agent-handover/spec.md`
 
 ## Summary
 
@@ -24,7 +24,7 @@
 ### Documentation (this feature)
 
 ```text
-/Users/tanwei/Documents/code/ios/scantool/spec/agent-handover/
+$HOME/Documents/code/ios/scantool/spec/agent-handover/
 ├── spec.md                              # 需求（已批准）
 ├── plan.md                              # 本文件
 ├── tasks.md                             # Phase 3 产出

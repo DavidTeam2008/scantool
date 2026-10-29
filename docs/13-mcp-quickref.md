@@ -101,7 +101,7 @@ npx -y mobilebuildmcp@latest tools                        # 全目录；<工作�
 - **Viewer 已关闭**（配置带 `--no-viewer`）：每个 `maestro mcp` 进程默认抢
   `127.0.0.1:10000`，多实例必崩一支（曾致 `opencode mcp list` 误报 failed）。想看
   Viewer embedded 界面就终端手动起 `maestro mcp`（不带参数），用完关，别和 MCP 并存。
-- `JAVA_HOME` 已钉 `/Users/tanwei/Documents/tools/jdk-24.jdk/Contents/Home`
+- `JAVA_HOME` 已钉 `$HOME/Documents/tools/jdk-24.jdk/Contents/Home`
   （JDK 未注册进 `/usr/libexec/java_home`，不钉则服务拉起时找不到 java）。
 - 关遥测（可选）：往 maestro env 加 `MAESTRO_CLI_NO_ANALYTICS=1`。
 

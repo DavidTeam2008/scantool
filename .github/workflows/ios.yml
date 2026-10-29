@@ -1,0 +1,25 @@
+name: ios
+
+# 手动触发；需要 self-hosted macOS runner（labels: self-hosted, macOS, ios）。
+# 托管 runner 通常没有 iOS 27 模拟器，因此不挂在 push 上。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, macOS, ios]
+    env:
+      DEVELOPER_DIR: ${{ vars.DEVELOPER_DIR || '/Applications/Xcode.app/Contents/Developer' }}
+      SIM_NAME: ${{ vars.SIM_NAME || 'iPhone 18 Pro' }}
+      SIM_OS: ${{ vars.SIM_OS || '27.0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Full tests (known-debt gate)
+        run: make test-ci
+
+      - name: Device build (unsigned)
+        run: make device-build

@@ -1,7 +1,7 @@
 # 纸匣 Zhixia · 「还原 → 导出 Word」R2 优化方案
 
 > 目标：让练习册、营养成分表这一类样张在「还原 → 导出 Word」上的产物质感，从当前的「重排文档」跨到「结构正确、版式稳定、配图齐全、表格真实的可编辑 Word」。
-> 适用范围：`/Users/tanwei/Documents/code/ios/scantool/`（Zhixia 工程）。
+> 适用范围：`$HOME/Documents/code/ios/scantool/`（Zhixia 工程）。
 > 阅读对象：本工程接手还原的工程师 + 产品 + 设计。
 > 更新：2026-09-07（基于现有实现与两张样张）
 >

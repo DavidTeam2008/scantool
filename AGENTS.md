@@ -42,6 +42,7 @@
 5. `docs/00-getting-started.md` —— 实操细节
 6. `docs/14` / `docs/15` —— 2026-10-21 历史复盘；需要背景时再读，不要按旧时间线继续调 sticky/smoother
 7. `docs/README.md` —— 文档分级索引（当前事实源 / 常读参考 / 历史归档），按任务下钻
+8. `docs/23-team-workflow.md` —— 团队协作：权限 / 分支保护 / PR / CI / 新成员 checklist
 
 改哪个模块前，先读对应专题：还原链 → `docs/06`/`07`/`08`；取景检测 → 对应 `spec/` 周期工件（见 §5）。
 

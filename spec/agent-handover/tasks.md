@@ -1,6 +1,6 @@
 # Tasks: AI 工程师交接与项目 Agent 化（agent-handover）
 
-**Input**: Design documents from `/Users/tanwei/Documents/code/ios/scantool/spec/agent-handover/`
+**Input**: Design documents from `$HOME/Documents/code/ios/scantool/spec/agent-handover/`
 **Prerequisites**: plan.md（已批准）、spec.md（已批准）
 **Verification Scope**: build-only（Phase 3 选择门已确认）
 

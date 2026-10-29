@@ -10,6 +10,7 @@
 2026-09-26 补 Makefile 用法、还原档位与测试套件对齐（wysiwyg-crop / wps-parity-layout 两周期后）；
 **2026-10-29 当前主线更新**：P0.3 取景包络跟踪，测试基线 547 total（10 条既有债），
 详见 [12 交接文档](12-handover.md) 与 [22 取景包络](22-capture-envelope-tracking.md)。
+团队协作（权限 / 分支保护 / PR / CI）见 [23 团队流程](23-team-workflow.md)。
 
 ---
 
