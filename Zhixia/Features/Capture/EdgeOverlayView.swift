@@ -9,6 +9,10 @@ struct EdgeOverlayView: View {
     var targetQuad: Quad? = nil
     /// tracker 正在 hold 上一帧包络：只画淡虚线残影，不画可拍摄的实线。
     var isHolding: Bool = false
+    /// 取景被画幅边缘裁切（CF-T010 / FR-012）：书/页没完整进框。此时主框
+    /// 画成**虚线 + 不压暗 + 无角括号**，明确“这不是可拍摄的实线框”；
+    /// 快门由 `CaptureViewModel.isCaptureReady` 同步置灰。
+    var isFrameClipped: Bool = false
     /// 运行时取景几何（T019 / FR-007）：视频/照片竖屏宽高比 —— 解析式映射的
     /// 唯一输入（`OverlaySpaceMap`：照片→视频 `FOVLayout` 逆换算 ⊕ 视频→屏幕
     /// aspectFill 放置，y-down 全链不翻转）。渲染真值不再依赖运行时探针。
@@ -109,26 +113,40 @@ struct EdgeOverlayView: View {
     /// 被超出屏幕的整摊包络裁掉。
     @ViewBuilder
     private func documentEdgeOverlay(primary: Quad, context: Quad?, in size: CGSize) -> some View {
-        Color.black.opacity(isLocked ? 0.45 : 0.25)
-            .reverseMask {
-                QuadShape(quad: primary).fill(Color.white)
+        if isFrameClipped {
+            // CF-T010 未就绪态：贴边被裁 → 只画虚线提示“这里本来会是框”，
+            // 不压暗、不画角括号、不出白色实线。用户看到的是“还没框住整页”，
+            // 而不是“已对准可以拍”。
+            if let context {
+                contextFrame(quad: context)
             }
-        if let context {
-            contextFrame(quad: context)
-        }
-        let armLength = min(size.width, size.height) * 0.03
-        CornerBracketsShape(quad: primary, armLength: armLength)
-            .stroke(
-                Color.black.opacity(0.35),
-                style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round)
-            )
-        CornerBracketsShape(quad: primary, armLength: armLength)
-            .stroke(
-                Color.white,
-                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
-            )
-        if let frameStyle = DocumentFrameStyle.resolve(isLocked: isLocked, mode: mode) {
-            frameStroke(quad: primary, style: frameStyle)
+            QuadShape(quad: primary)
+                .stroke(
+                    Color.white.opacity(0.55),
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [6, 6])
+                )
+        } else {
+            Color.black.opacity(isLocked ? 0.45 : 0.25)
+                .reverseMask {
+                    QuadShape(quad: primary).fill(Color.white)
+                }
+            if let context {
+                contextFrame(quad: context)
+            }
+            let armLength = min(size.width, size.height) * 0.03
+            CornerBracketsShape(quad: primary, armLength: armLength)
+                .stroke(
+                    Color.black.opacity(0.35),
+                    style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round)
+                )
+            CornerBracketsShape(quad: primary, armLength: armLength)
+                .stroke(
+                    Color.white,
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                )
+            if let frameStyle = DocumentFrameStyle.resolve(isLocked: isLocked, mode: mode) {
+                frameStroke(quad: primary, style: frameStyle)
+            }
         }
     }
 

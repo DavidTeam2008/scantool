@@ -185,6 +185,22 @@ extension Quad {
         return minimumMargin < edgeMargin
     }
 
+    /// 是否被画幅边缘裁切（CF-T010，spec FR-012）——任一边距画幅边界
+    /// < `margin` 即视为“书/页没有完整进框”。
+    ///
+    /// 与 `isSuspiciousForAutoCapture` 的区别：这里**只看贴边**，不看面积
+    /// （近满幅但四边留白足够的页面仍然可拍）；也不含“自动快门”语义。
+    /// 取景域 == 成片域后，这个判定第一次真正成立：修复前预览只显示帧宽
+    /// 61.6%，被裁的书在照片空间里仍离画幅边界很远，旧的贴边判定抓不到
+    /// （视频 11 t≈36 的整页假框就是这么来的——包络被钳到“可见域”，照片
+    /// 空间边距 0.192，看起来完全安全）。
+    ///
+    /// - Parameter margin: 贴边容差（归一化），默认 0.015（1.5%）。
+    func isClippedAtFrameEdge(margin: Double = 0.015) -> Bool {
+        let rect = boundingRect
+        return min(rect.minX, rect.minY, 1 - rect.maxX, 1 - rect.maxY) < margin
+    }
+
     /// 包含度（plan D5 / FR-003）：自身包围盒被 `other` 包围盒覆盖的比例
     /// （交集面积 ÷ 自身包围盒面积）。供候选「内部矩形降权」判定。
     /// 自身包围盒退化（宽或高为 0）或无交集时返回 0。

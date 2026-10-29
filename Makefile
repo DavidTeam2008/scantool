@@ -25,8 +25,8 @@ TEST_LOG    := $(BUILD_DIR)/last-test.log
 APP_PATH    := $(BUILD_DIR)/dd/Build/Products/Debug-iphonesimulator/Zhixia.app
 XCODEBUILD  := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -skipPackagePluginValidation -skipMacroValidation
 # 测试基线（**只增不减**）：新增测试后同步本值；计数低于本值 = 测试被删 → make 失败。
-BASELINE_TOTAL ?= 518
-BASELINE_PASSED ?= 507
+BASELINE_TOTAL ?= 547
+BASELINE_PASSED ?= 541
 BASELINE_EXPECTED_FAILURES ?= 1
 
 .PHONY: help test test-only smoke word-fidelity editable-fidelity device-build doctor
@@ -60,7 +60,7 @@ count:
 	    total=d.get('totalTestCount'); p=d.get('passedTests'); f=d.get('failedTests'); \
 	    e=d.get('expectedFailures'); s=d.get('skippedTests'); \
 	    print('total=%s  passed=%s  failed=%s  expectedFailures=%s  skipped=%s' % (total,p,f,e,s)); \
-	    print('基线解读：$(BASELINE_TOTAL) total；本次 $(BASELINE_PASSED) passed + $(BASELINE_EXPECTED_FAILURES) expected failure + 10 known full-suite failures（Golden 4 / WordFidelity 1 / Review 4 / ReviewSplit 1；Reconstruct 本轮未失败；见 TODO）')"
+	    print('基线解读：$(BASELINE_TOTAL) total；参考 $(BASELINE_PASSED) passed + $(BASELINE_EXPECTED_FAILURES) expected failure；既有测试债 10 条（Golden 4 / WordFidelity 1 / Review 4 / ReviewSplit 1，flaky 会通过；本次失败数见上；见 TODO）')"
 
 # 全量守卫：总数低于基线 = 既有测试被删 → 失败（局部测试用 count，不套此守卫）
 count-full: count

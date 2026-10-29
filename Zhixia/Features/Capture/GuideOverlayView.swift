@@ -18,11 +18,11 @@ struct GuideOverlayView: View {
     let geometry: CaptureGeometry
     /// 画布尺寸回调（**本视图 GeometryReader 的真实尺寸**）。
     ///
-    /// 为什么不用父层的 `onGeometryChange`：那个测量拿到的是**安全区尺寸**
-    /// （真机 402×778），而本视图在 `.ignoresSafeArea()` 下的渲染空间是
-    /// **全屏尺寸**（402×874）——两者不一致会让屏幕↔照片逆映射整体偏移
-    /// （真机症状：照片框 y 越界 → 引导框恒被判非法）。引导路径必须用
-    /// **渲染同一空间**的尺寸（spec/guided-capture D2 / SC-004）。
+    /// 为什么不用父层的 `onGeometryChange`：历史真机上父层量到的是安全区
+    /// 尺寸、而本视图在 `.ignoresSafeArea()` 下的渲染空间是全屏尺寸，两者
+    /// 不一致会让屏幕↔照片逆映射整体偏移（照片框 y 越界 → 引导框恒判非法）。
+    /// CF-T010 后本视图与预览同处 4:3 取景窗容器，`proxy.size` 就是取景窗
+    /// 尺寸；仍以**渲染同一空间**的尺寸为准（spec/guided-capture D2 / SC-004）。
     let onSizeChange: (CGSize) -> Void
     /// 拖动中回调（屏幕空间四边形）。
     let onDrag: (Quad) -> Void

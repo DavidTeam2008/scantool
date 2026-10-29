@@ -1,7 +1,11 @@
 # TODO · Zhixia
 
-> 更新时间：2026-10-28。当前主线：**P0.3 取景包络跟踪**（[`docs/22`](docs/22-capture-envelope-tracking.md)；
+> 更新时间：2026-10-29。当前主线：**P0.3 取景包络跟踪**（[`docs/22`](docs/22-capture-envelope-tracking.md)；
 > 四件套 [`spec/capture-envelope-tracking/`](spec/capture-envelope-tracking/)）。
+> **2026-10-29 新根因**：视频 11/12 证明预览层 aspectFill 只显示 4:3 帧的
+> **61.6% 宽**（两侧各裁 19.2%），检测/成片却用整帧——所以必须举高、框会用
+> 屏幕外几何、成片横向范围是屏幕的 1.62 倍（多出 62%）。**CF-T010（取景域 WYSIWYG）插到所有
+> 取景任务之前**，详见 `docs/22` “视频 11/12”节与 `spec` FR-012/013/014。
 > **交接入口：[`docs/12-handover.md`](docs/12-handover.md) §0**（当前状态 / 第一天怎么跑 / 下一步 / 不要做什么）。
 > P0.2 的粉封面热修已通过；实时“单页意图”在 2026-10-28 真机复核中仍未达目标，保留实现但不再沿该方向调参。
 > **page-preprocess P0.1 基础版已收口**：round1-4 单张真机成片验收通过；多条件样张、PP-T032 全流程和
@@ -38,12 +42,54 @@
   `outputIntent`；Review 首轮精修对左/右页意图在原图 1600px 矫正图上找书脊，
   高置信（≥0.5）直接落目标页并压入撤销栈，低置信只给预选提案。彩色页面 mask、
   内容安全门、透视/去背景仍未做；真机成片回归待补。
+- [x] **CF-T005b 视频 8 左页回归修复（2026-10-28）**：`PageDraft.quadRole`
+  （target/envelope）由快门快照写入，Review 不再用宽高比猜角色；新增
+  `SpreadSplitter.analyzeGutter` 亮缝模型（暗谷书脊失败后的第二模型），接入
+  实时 `PageIntentResolver`（含裁掉的整摊）与拍后 Review/手动拆分。新增 8 条
+  单测，全量 **526 / 515 / 1 expected / 10 failed**。证据
+  `build/cf-t007/video8/`；真机复测待做。
+- [x] **CF-T005c 视频 9 目标一致性（2026-10-28）**：设备日志确认
+  `reviewSplit proposalU=0.7594 source=gutter` 是右页栏间距误拆；亮缝搜索
+  限定 [0.30,0.70]（真实亮缝 u≈0.509）；新增 `acceptTarget`（包络包含 +
+  意图侧 + 宽高比 0.45~1.10 + 面积 ≥8%）；拆分目标面积门 15%→8%；
+  书脊暗谷宽度上限 20%；实时
+  `cropQuad tag=target/envelope` 变化日志。新增 4 条测试，全量
+  **531 / 520 / 1 expected / 10 failed**；证据 `build/device-logs/video9/`；
+  真机复测待做。
+- [~] **CF-T010 取景域 WYSIWYG（2026-10-29，最高优先级；代码已落，真机复测待做）**：预览容器 = 运行时
+  视频宽高比（4:3）；`.resizeAspect`；检测/包络/快门/裁切共用该域；
+  `visiblePhotoRect` 退化为全幅；整页意图“任一边贴帧边 → 未就绪”（不画实线、
+  快门置灰、提示后退）；左/右页目标必须完整；真机确认照片 FOV == 视频 FOV。
+  预期：同一本书入屏距离 ×0.62；成片不再比屏幕多；视频 11 的“举高”消失。
+  **已落**：`ViewfinderLayout` + 4:3 取景窗布局 + `.resizeAspect` +
+  `Quad.isClippedAtFrameEdge` + `CaptureViewModel.isFrameClipped`（整页/左右页
+  口径）+ 虚线未就绪态；新增 12 条测试；模拟器布局截图
+  `build/cf-t010/layout-sim.png`。真机 FOV 标记物验收待做。
+  证据 `build/cf-t005e/video11|video12/`；验收 `device-acceptance.md` §1.4。
+- [~] **CF-T011a 近距单页裁切门（2026-10-29，视频 14/13；代码已落，真机复测待做）**：
+  - 整页意图：包络被裁但**是单页**（`isSinglePageForCapture`，归一化宽高比
+    <1.3）→ 允许拍（视频 14：近距右页，虚线框准确但快门灰）；
+  - 整摊/整书被裁 → 仍置灰（视频 12）；左/右页目标页单页贴边 → 允许；
+  - 左/右页目标缺失 → 允许拍包络回退（Review 拆分），不再虚线/灰快门
+    抖动（视频 13）；
+  - 呈现框顶点越界时快门裁切框 `clamped()` 到 [0,1]；提示与快门一致；
+  - 新增 4 条测试；全量预期 **547 / 536**。证据 `build/cf-t011/`。
+- [ ] **CF-T010b 拍后逐边包含**：`refineQuads` 用逐边包含（+1% 容差）替代
+  “面积 ≤1.10× + IoU ≥0.85”；静帧不得把拍摄框外的内容扩回成片；新增
+  `ReviewRefineContainmentTests`。
+- [ ] **CF-T011 贴边单页（T010 真机复测后）**：左/右页意图、书脊侧边在帧边界
+  ±1.5%、其余三边可见 → 上/下边线与帧边界交点合成书脊侧边；1.5% 引导线 +
+  “贴边”徽标；整页禁用；成片不含对页。
 - [ ] **CF-T006 UI/快门**：蓝色细实线/置信度态；锁定后自动/手动快门；按下一帧
-  冻结包络；保留引导/手动框兜底。
-- [ ] **CF-T007 真机与 WPS 对照验收**：视频 5/7 复核（目标框可见、左页右角、
-  无 fullImage 误拍、左右页成片正确）；20 彩页 + 20 黑白 + 10 A4 + 10 曲面/折页；
-  框可见率、切换率、锁定延迟、输出页正确率、禁止内容入片率；WPS 0.906224 不回退。
-  清单见 `spec/capture-envelope-tracking/device-acceptance.md`。
+  冻结包络；保留引导/手动框兜底。（取景窗布局在 T010 里一并收口。）
+- [ ] **CF-T007 真机与 WPS 对照验收（T010 之后）**：视频 5/7 复核（目标框可见、
+  左页右角、无 fullImage 误拍、左右页成片正确）；**视频 8（2026-10-28）左页
+  失败已定位并修复代码（CF-T005b），复测待做**：左页右角应落在亮缝 u≈0.547，
+  成片不再含右页左栏；**视频 11/12（2026-10-29）先由 T010 修取景域**：自然
+  高度整本入屏、成片不超出屏幕、整页框不提前出现；20 彩页 + 20 黑白 + 10 A4 +
+  10 曲面/折页；框可见率、切换率、锁定延迟、输出页正确率、禁止内容入片率；
+  WPS 0.906224 不回退。清单见 `spec/capture-envelope-tracking/device-acceptance.md`
+  §1.4。
 - [ ] **CF-T008 光流/单应性传播**：每帧传播上一帧包络，低频观测融合；先离线回放
   视频 5/6，再接主路径；目标单帧跳变 p95 ≤短边 0.5%。
 - [ ] **CF-T009 观测增强（按需）**：先测传统 Vision 失败率；不足再评估端侧分割
@@ -163,8 +209,8 @@
 
 ## 验证与交付债
 
-- [x] 更新 `Makefile` 测试基线为全量实际值：**518 total / 507 passed / 1 expected failure**（2026-10-28 CF-T004/CF-T005 新增 `PageIntentResolver` 2、`CaptureEnvelopeViewModelTests` 2、`CaptureOverlayQuadsTests` 2、`ReviewSplitProposalTests` 3）。全量 flaky 失败 10 个，见下。
-- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**518 total / 507 passed / 1 expected / 10 failed**；10 个仍为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1。CF-T004/CF-T005 新增用例全绿；全量不绿是既有债务，不是本轮引入。
+- [x] 更新 `Makefile` 测试基线为全量实际值：**531 total / 520 passed / 1 expected failure**（2026-10-28 CF-T005b 新增 `SpreadSplitterGutterTests` 4、`PageIntentResolverTests` +1、`ReviewSplitProposalTests` +3；CF-T005c 再 +4）。全量 flaky 失败 10 个，见下。
+- [~] 重跑 `make test`（iPhone 18 Pro / iOS 27）：**543 total / 532 passed / 1 expected / 10 failed**（2026-10-29，CF-T010 后）；10 个仍为 Golden 4、`WordFidelityExportTests/realOCRExportArtifact()` 1、Review preview 4、`ReviewSplitProposalTests/guidedPageSkipsProposal()` 1。CF-T010 新增 12 条全绿；全量不绿是既有债务，不是本轮引入。
 - [ ] `WordFidelityExportTests` 整类顺序运行时 `realOCRExportArtifact` 出现 `structureTables=0`（单独跑通过）；按已知 iOS 27 模拟器 Vision 表格波动记录，不削弱断言。
 - [ ] P1 guard 残余假阴性：无表头、无边框的表格仍可能漏检；需要更强的版面/线条模型。
 - [ ] T004 真机/模拟器 OCR 表格回归在 iOS 26.4.1 的环境差异记录。

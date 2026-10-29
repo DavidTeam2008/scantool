@@ -374,20 +374,7 @@ final class ReviewViewModel {
             }
             let split: SplitOutcome
             if let intent = drafts[index].outputIntent, intent != .wholePage {
-                // CF-T005：拍摄时明确选了左/右页。拍到的若仍是整摊包络，
-                // 在**全分辨率原图**上按书脊拆出目标页；已经是目标页的
-                // 单页框不二次拆分（避免把左页硬拆成折条）。
-                if PageIntentResolver.isSpreadLike(drafts[index].quad) {
-                    split = applyOutputIntentSplit(index: index, data: data, intent: intent)
-                } else if intent == .rightPage {
-                    // 折页书的右页常见形态：单页框左缘仍带折起条。复用暗折条/
-                    // 亮折条模型，高置信才自动裁掉，否则只给预选提案。
-                    split = applyOutputIntentFoldSplit(index: index, data: data)
-                } else {
-                    var outcome = SplitOutcome()
-                    outcome.reason = "intentPage"
-                    split = outcome
-                }
+                split = splitForOutputIntent(index: index, data: data, intent: intent)
             } else {
                 split = makeSplitProposal(index: index, data: data)
             }
@@ -405,6 +392,49 @@ final class ReviewViewModel {
                 continuity: split.continuity,
                 splitApplied: split.applied
             )
+        }
+    }
+
+    /// CF-T005：左/右页输出意图的拍后拆分分派。
+    ///
+    /// **角色优先**（视频 8 回归修复）：快门拍的是目标页还是整摊包络，
+    /// 由拍摄时写入的 `PageDraft.quadRole` 决定，不再用宽高比猜——
+    /// 被屏幕裁掉的整摊包络可能只有 0.8 的 pixel aspect，和单页一样窄。
+    ///
+    /// - `.target`：已经是目标页；右页只做左折条清理，左页不二次拆；
+    /// - `.envelope`：目标页没解析出来，**必须尝试**书脊/亮缝拆分；
+    ///   找不到证据就保留包络并记录 `envelopeNoSplit`，绝不静默当目标页；
+    /// - `nil`（旧数据/非包络路径）：保留原来的宽高比推断，旧草稿行为不变。
+    private func splitForOutputIntent(
+        index: Int,
+        data: Data,
+        intent: CaptureIntent
+    ) -> SplitOutcome {
+        switch drafts[index].quadRole {
+        case .target:
+            if intent == .rightPage {
+                // 折页书右页常见形态：单页框左缘仍带折起条。复用暗折条/
+                // 亮折条模型，高置信才自动裁掉，否则只给预选提案。
+                return applyOutputIntentFoldSplit(index: index, data: data)
+            }
+            var outcome = SplitOutcome()
+            outcome.reason = "intentPage"
+            return outcome
+        case .envelope:
+            var outcome = applyOutputIntentSplit(index: index, data: data, intent: intent)
+            guard !outcome.found else { return outcome }
+            outcome.reason = "envelopeNoSplit:\(outcome.reason)"
+            return outcome
+        case nil:
+            if PageIntentResolver.isSpreadLike(drafts[index].quad) {
+                return applyOutputIntentSplit(index: index, data: data, intent: intent)
+            }
+            if intent == .rightPage {
+                return applyOutputIntentFoldSplit(index: index, data: data)
+            }
+            var outcome = SplitOutcome()
+            outcome.reason = "intentPage"
+            return outcome
         }
     }
 
@@ -442,28 +472,70 @@ final class ReviewViewModel {
         outcome.spineU = diagnosis.bestU
         outcome.prominence = diagnosis.prominence
         outcome.continuity = diagnosis.continuity
-        guard let spine = analysis.spine else {
-            outcome.reason = diagnosis.reason.isEmpty ? "noSpine" : diagnosis.reason
-            return outcome
+        if let spine = analysis.spine {
+            return applySpineSplit(
+                index: index,
+                quad: quad,
+                u: spine.u,
+                prominence: diagnosis.prominence,
+                continuity: diagnosis.continuity,
+                confidence: SplitProposalConfidence.spine(
+                    prominence: diagnosis.prominence,
+                    continuity: diagnosis.continuity
+                ),
+                intent: intent,
+                outcome: outcome
+            )
         }
-        let confidence = SplitProposalConfidence.spine(
-            prominence: diagnosis.prominence,
-            continuity: diagnosis.continuity
-        )
-        let target: Quad = intent == .leftPage
-            ? SpreadSplitter.split(quad, at: spine.u).left
-            : SpreadSplitter.split(quad, at: spine.u).right
+        // CF-T005：暗谷模型找不到时，补「亮缝」模型——白色内边距的书脊
+        // 在亮度上是一条比两侧更亮的空白带（视频 8：prominence≈0.02）。
+        if let gutter = SpreadSplitter.analyzeGutter(inRectified: rectified) {
+            outcome.reason = "gutter"
+            outcome.spineU = gutter.u
+            outcome.prominence = gutter.contrast
+            outcome.continuity = gutter.width
+            return applySpineSplit(
+                index: index,
+                quad: quad,
+                u: gutter.u,
+                prominence: gutter.contrast,
+                continuity: gutter.width,
+                confidence: gutter.confidence,
+                intent: intent,
+                source: .gutter,
+                outcome: outcome
+            )
+        }
+        outcome.reason = diagnosis.reason.isEmpty ? "noSpine" : diagnosis.reason
+        return outcome
+    }
+
+    /// 书脊/亮缝共用落地：生成提案；置信度 ≥ 阈值直接应用并压撤销栈。
+    private func applySpineSplit(
+        index: Int,
+        quad: Quad,
+        u: Double,
+        prominence: Double,
+        continuity: Double,
+        confidence: Double,
+        intent: CaptureIntent,
+        source: SplitProposal.Source = .spine,
+        outcome: SplitOutcome
+    ) -> SplitOutcome {
+        var outcome = outcome
+        let parts = SpreadSplitter.split(quad, at: u)
+        let target: Quad = intent == .leftPage ? parts.left : parts.right
         let proposal = SplitProposal(
-            u: spine.u,
-            source: .spine,
-            prominence: diagnosis.prominence,
-            continuity: diagnosis.continuity,
+            u: u,
+            source: source,
+            prominence: prominence,
+            continuity: continuity,
             confidence: confidence,
             quadBefore: quad,
             quadAfter: target,
             selection: intent == .leftPage ? .left : .right
         )
-        outcome.reason = "spine"
+        outcome.found = true
         if confidence >= SplitProposalConfidence.applyThreshold {
             drafts[index].quad = target
             drafts[index].userAdjustedQuad = true
@@ -475,10 +547,10 @@ final class ReviewViewModel {
             proposalsByPage[drafts[index].id] = proposal
         }
         ZhixiaLog.reviewSplit(
-            proposalU: spine.u,
-            source: SplitProposal.Source.spine.rawValue,
-            prominence: diagnosis.prominence,
-            continuity: diagnosis.continuity,
+            proposalU: u,
+            source: source.rawValue,
+            prominence: prominence,
+            continuity: continuity,
             confidence: confidence,
             selection: proposal.selection.rawValue,
             applied: outcome.applied
@@ -521,6 +593,7 @@ final class ReviewViewModel {
         outcome.trimU = trim.u
         outcome.trimDepth = trim.stripDepth
         outcome.reason = "leftFold"
+        outcome.found = true
         let proposal = SplitProposal(
             u: trim.u,
             source: .leftFold,
@@ -562,6 +635,8 @@ final class ReviewViewModel {
     private struct SplitOutcome {
         var aspect: Double = -1
         var reason = "none"
+        /// 是否找到了书脊/亮缝/折条证据（即使置信度不足只给提案也算）。
+        var found = false
         var trimU: Double = -1
         var trimDepth: Double = 0
         var spineU: Double = -1
@@ -613,24 +688,40 @@ final class ReviewViewModel {
         outcome.spineU = diagnosis.bestU
         outcome.prominence = diagnosis.prominence
         outcome.continuity = diagnosis.continuity
-        guard let spine = analysis.spine else {
-            outcome.reason = diagnosis.reason.isEmpty ? "noSpine" : diagnosis.reason
+        if let spine = analysis.spine {
+            outcome.reason = "spine"
+            let confidence = SplitProposalConfidence.spine(
+                prominence: diagnosis.prominence,
+                continuity: diagnosis.continuity
+            )
+            proposalsByPage[drafts[index].id] = SplitProposal(
+                u: spine.u,
+                source: .spine,
+                prominence: diagnosis.prominence,
+                continuity: diagnosis.continuity,
+                confidence: confidence,
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: spine.u).right
+            )
             return outcome
         }
-        outcome.reason = "spine"
-        let confidence = SplitProposalConfidence.spine(
-            prominence: diagnosis.prominence,
-            continuity: diagnosis.continuity
-        )
-        proposalsByPage[drafts[index].id] = SplitProposal(
-            u: spine.u,
-            source: .spine,
-            prominence: diagnosis.prominence,
-            continuity: diagnosis.continuity,
-            confidence: confidence,
-            quadBefore: quad,
-            quadAfter: SpreadSplitter.split(quad, at: spine.u).right
-        )
+        if let gutter = SpreadSplitter.analyzeGutter(inRectified: rectified) {
+            outcome.reason = "gutter"
+            outcome.spineU = gutter.u
+            outcome.prominence = gutter.contrast
+            outcome.continuity = gutter.width
+            proposalsByPage[drafts[index].id] = SplitProposal(
+                u: gutter.u,
+                source: .gutter,
+                prominence: gutter.contrast,
+                continuity: gutter.width,
+                confidence: gutter.confidence,
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: gutter.u).right
+            )
+            return outcome
+        }
+        outcome.reason = diagnosis.reason.isEmpty ? "noSpine" : diagnosis.reason
         return outcome
     }
 
@@ -650,19 +741,32 @@ final class ReviewViewModel {
             )
         }
         let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
-        guard let spine = analysis.spine else { return nil }
-        return SplitProposal(
-            u: spine.u,
-            source: .spine,
-            prominence: analysis.diagnosis.prominence,
-            continuity: analysis.diagnosis.continuity,
-            confidence: SplitProposalConfidence.spine(
+        if let spine = analysis.spine {
+            return SplitProposal(
+                u: spine.u,
+                source: .spine,
                 prominence: analysis.diagnosis.prominence,
-                continuity: analysis.diagnosis.continuity
-            ),
-            quadBefore: quad,
-            quadAfter: SpreadSplitter.split(quad, at: spine.u).right
-        )
+                continuity: analysis.diagnosis.continuity,
+                confidence: SplitProposalConfidence.spine(
+                    prominence: analysis.diagnosis.prominence,
+                    continuity: analysis.diagnosis.continuity
+                ),
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: spine.u).right
+            )
+        }
+        if let gutter = SpreadSplitter.analyzeGutter(inRectified: rectified) {
+            return SplitProposal(
+                u: gutter.u,
+                source: .gutter,
+                prominence: gutter.contrast,
+                continuity: gutter.width,
+                confidence: gutter.confidence,
+                quadBefore: quad,
+                quadAfter: SpreadSplitter.split(quad, at: gutter.u).right
+            )
+        }
+        return nil
     }
 
     /// 从原图数据加载直立 CIImage（EXIF 方向与渲染链一致）。

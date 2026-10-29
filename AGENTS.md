@@ -13,7 +13,7 @@
 |---|---|
 | 语言 / 最低部署 | Swift 6 · iOS 18.0+（结构化识别用 iOS 26 `RecognizeDocumentsRequest`） |
 | bundle id | `com.david.Zhixia` |
-| 测试基线 | **518 total / 507 passed / 1 expected / 10 known full-suite failures**（`ZhixiaTests/`；iPhone 18 Pro / iOS 27；总数只增不减） |
+| 测试基线 | **547 total / 541 passed / 5 failed（本次）+ 1 expected；既有测试债 10 条（flaky）**（`ZhixiaTests/`；iPhone 18 Pro / iOS 27；总数只增不减） |
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构 | App → Features(SwiftUI VM) → Domain(纯函数) → Services(actor 副作用)，依赖只向下 |
 | 构建 | `Zhixia.xcodeproj`，Xcode 26.x，scheme `Zhixia`，PBXFileSystemSynchronizedRootGroup（新文件免改 pbxproj） |
@@ -53,8 +53,8 @@
 **计数陷阱（必读）**：known issue 用例在 xcodebuild 日志里是 `recorded an expected
 failure`，**不是** `passed`——按 `passed` 关键字搜日志会少算 1 条。以 `make test`
 末尾自动打印的 xcresulttool 计数为准。当前全量预期：
-`total=518 passed=507 failed=10 expectedFailures=1`；其中 10 个是既有测试债
-（Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），不是新回归。
+`total=547 passed=541 failed=5 expectedFailures=1`（本次）；既有测试债共 10 条
+（Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），不是新回归；本次命中 5 条，其余 flaky 通过。
 
 **环境坑**（已固化进 Makefile，手工执行时别漏）：① `DEVELOPER_DIR` 必须指向本机
 Xcode；② 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`（macOS 26.x 宏沙箱失效，
@@ -64,9 +64,9 @@ Xcode；② 必须加 `OTHER_SWIFT_FLAGS="-disable-sandbox"`（macOS 26.x 宏沙
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动
    全部替身测试连锁崩。
-2. **既有测试断言零修改**——测试总数基线 518 只增不减；方向性翻转属唯一例外，须在周期
+2. **既有测试断言零修改**——测试总数基线 547 只增不减；方向性翻转属唯一例外，须在周期
    tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。全量 10 个失败是既有
-   测试债，不要为了让全量变绿去删测试/放宽断言。
+   测试债（本次命中 5 条，债务共 10 条），不要为了让全量变绿去删测试/放宽断言。
 3. **纯离线**——不引任何网络依赖、不加云调用；云通路须独立立项评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 在模拟器永远返回空，
    条码相关断言只能靠 `BarcodeDetecting` 协议注入替身 + 真机验收。
@@ -100,28 +100,58 @@ spec.md（需求+验收标准） → plan.md（技术决策 D1~Dn） → tasks.m
 > **注意**：`spec/feature.json` 已指向 `spec/capture-envelope-tracking/`；P0.3 的
 > 详细论证仍在 `docs/22`，任务勾选在 `TODO.md` 与 `spec/capture-envelope-tracking/tasks.md`。
 
-## 6. 当前状态指针（2026-10-28）
+## 6. 当前状态指针（2026-10-29）
 
 - **代码基线**：`b7ea065`「feat(capture): land output target and intent split」。
 - **当前主线**：P0.3 取景包络跟踪（[`docs/22`](docs/22-capture-envelope-tracking.md)）。
   - 已交付第一版：CF-T002 包络兜底、CF-T003 tracker、CF-T004 目标页显示、
     CF-T005 `outputIntent` + 1600px 拍后书脊/折页拆分。
+  - **CF-T005b（视频 8）**：`PageDraft.quadRole`（target/envelope）+
+    `SpreadSplitter.analyzeGutter` 亮缝模型；修复左页包络被裁后跳过拆分、
+    右页漏入成片。
+  - **CF-T005c（视频 9）**：亮缝搜索限 [0.30,0.70]；`acceptTarget` 目标
+    一致性（包络包含/意图侧/宽高比 0.45~1.10/面积 ≥6%）；书脊暗谷宽度
+    上限 20%；实时目标日志。
+  - **CF-T005d（视频 10）**：左右页并集包络（`pagePairEnvelope`，排除
+    “墙 + 书”大矩形）；池内页候选优先于整摊拆分；目标面积门 6%
+    （边缘裁切左页 0.071）。
+  - **CF-T010（视频 11/12，代码已落，真机复测待做）**：**取景域 ≠ 成片域**是新的根因——
+    预览 `.resizeAspectFill` 把 4:3 帧铺满 390×844 全屏，只显示 **61.6% 宽**
+    （两侧各 19.2%），检测/成片却用整帧。必须举高、框用屏幕外几何、
+    成片横向范围是屏幕的 1.62 倍（多出 62%）——都由此而来。
+    方案：4:3 取景窗 + `.resizeAspect`，检测/
+    成片/预览同域；整页意图“贴帧边即未就绪”；照片/视频 FOV 真机复核。
+    **真机复测通过前不要再调 `acceptTarget` 面积/宽高比或 tracker 阈值。**
+  - **CF-T011a（视频 14/13，代码已落，真机复测待做）**：`isSinglePageForCapture`
+    （归一化宽高比 <1.3）区分近距单页/整摊；整页单页贴画幅允许拍，整摊被裁
+    仍置灰；左/右页目标缺失允许拍包络回退；裁切框钳到 [0,1]。
   - 已移除 `Quad.fullImage` 兜底；屏幕外框/贴边 frame 在包络、拆分、快门链路统一拒绝。
   - 无当前帧包络或 tracker hold 时快门置灰；左/右页目标缺失时仍可手动拍包络，
     由 Review 拆分。
-- **测试**：全量 **518 total / 507 passed / 1 expected / 10 known failures**。
-  10 个已知失败：Golden 4、WordFidelity 1、Review preview 4、ReviewSplit 1；
-  新增 CF 用例全绿。`Makefile` 基线 518/507。
+- **测试**：全量 **547 total / 541 passed / 5 failed（本次）/ 1 expected**。
+  既有测试债 10 条：Golden 4、WordFidelity 1、Review preview 4、ReviewSplit 1；
+  本次命中 Golden 4 + WordFidelity 1，其余 5 条 flaky 通过；无新增失败。
+  `Makefile` 基线总数 547（T010 +12、T011a +4），2026-10-29 全量已确认。
+- **视频 8/9/10 修复（CF-T005b/c/d，工作区未提交）**：quadRole + 亮缝模型 +
+  目标一致性 + 页对包络；证据 `build/cf-t007/video8/`、
+  `build/device-logs/video9/`、`build/device-logs/video10/`；真机复测待做。
+  视频 11/12 取证在 `build/cf-t005e/video11/`、`build/cf-t005e/video12/`。
 - **WPS**：realbase 导出 docx SHA-256
   `80903b1d…8cf4153` 与 final/g1 基线 byte-identical，0.906224 不退；
   证据 `build/word-fidelity/realbase-cf45-20261028/`。
 - **下一步（按顺序）**：
-  1. **CF-T007 真机与 WPS 验收**：视频 5/7 + 20+20+10+10 场景，按 `docs/22` §六量化；
-     清单 `spec/capture-envelope-tracking/device-acceptance.md`；
-  2. **CF-T008 光流/单应性传播**（当前只有低频观测 + hold/平滑）；
-  3. **CF-T006 UI/快门收口**（置信度态、按下冻结、自动/手动快门）；
-  4. **CF-T009 观测增强**（按需，端侧 mask；只输出 mask/几何）；
-  5. 恢复暂停项 PP-T032、多样张回归、flaky 清理（用户解除暂停后再做）。
+  1. **CF-T010 取景域 WYSIWYG**：4:3 取景窗 + `.resizeAspect` + 完整性门；
+     真机复测视频 11/12（自然高度整本入屏、成片不超出屏幕、整页框不提前出现）；
+  2. **CF-T011a 近距单页**：复测视频 14（近距右页，快门可用）和视频 13
+     （左右页目标缺失时不再虚线/灰快门抖动）；
+  3. **CF-T010b 拍后逐边包含**：`refineQuads` 面积门 → 逐边包含；
+  4. **CF-T011 贴边合成**（T010/T011a 真机复测后）：书脊侧帧边合成 + 引导线；
+  5. **CF-T007 真机与 WPS 验收**：视频 5/7/8/9/10/11/12 + 20+20+10+10 场景，
+     按 `docs/22` §六量化；清单 `spec/capture-envelope-tracking/device-acceptance.md`；
+  6. **CF-T008 光流/单应性传播**（当前只有低频观测 + hold/平滑）；
+  7. **CF-T006 UI/快门收口**（置信度态、按下冻结、自动/手动快门；布局随 T010）；
+  8. **CF-T009 观测增强**（按需，端侧 mask；只输出 mask/几何）；
+  9. 恢复暂停项 PP-T032、多样张回归、flaky 清理（用户解除暂停后再做）。
 - **历史背景**：Case A/B + frame-truth + guided-capture 的完整记录见
   `docs/12` §2 与 `docs/15`；这些修复仍在代码里，但不要按旧路线继续调
   sticky/smoother 阈值。

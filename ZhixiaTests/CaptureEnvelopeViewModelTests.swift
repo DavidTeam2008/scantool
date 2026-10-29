@@ -34,6 +34,10 @@ struct CaptureEnvelopeViewModelTests {
         #expect(viewModel.drafts.last?.quad == envelope)
         #expect(viewModel.drafts.last?.quad != .fullImage)
         #expect(viewModel.drafts.last?.outputIntent == .rightPage, "拍摄意图应带到整理页")
+        #expect(
+            viewModel.drafts.last?.quadRole == .envelope,
+            "目标缺失时拍的是包络：Review 必须尝试拆分，不得用宽高比猜成目标页"
+        )
     }
 
     @Test("目标页可用时，快门使用目标页而不是整摊包络")
@@ -65,6 +69,7 @@ struct CaptureEnvelopeViewModelTests {
         await viewModel.capture()
         #expect(viewModel.drafts.last?.quad == rightPage)
         #expect(viewModel.drafts.last?.quad != envelope)
+        #expect(viewModel.drafts.last?.quadRole == .target, "目标页拍摄不再二次拆分")
     }
 
     @Test("左页目标：右角落在书脊上，仍作为快门目标")
@@ -101,6 +106,7 @@ struct CaptureEnvelopeViewModelTests {
         await viewModel.capture()
         #expect(viewModel.drafts.last?.quad == leftPage)
         #expect(viewModel.drafts.last?.outputIntent == .leftPage)
+        #expect(viewModel.drafts.last?.quadRole == .target)
     }
 
     @Test("屏幕整幅观测不得成为包络，也不得拍出 fullImage")
@@ -121,6 +127,163 @@ struct CaptureEnvelopeViewModelTests {
 
         await viewModel.capture()
         #expect(viewModel.drafts.isEmpty, "不得把整张照片当成页面落盘")
+    }
+
+    @Test("整页意图：整摊被画幅边裁切（书没完整进框）时未就绪、快门不得拍")
+    func clippedSpreadEnvelopeIsNotReady() async throws {
+        // 整摊宽高比 >0.95：书左右两边都出屏（视频 12 场景），必须后退；
+        // 单页近距（见 closeUpPageEnvelopeIsReady）不受此限制。
+        let clipped = Quad(
+            topLeft: CGPoint(x: 0.0, y: 0.20),
+            topRight: CGPoint(x: 1.0, y: 0.20),
+            bottomRight: CGPoint(x: 1.0, y: 0.62),
+            bottomLeft: CGPoint(x: 0.0, y: 0.62)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: clipped,
+            target: nil,
+            confidence: 0.9,
+            intentSatisfied: true
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        viewModel.setCaptureIntent(.wholePage)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.imageQuad != nil })
+
+        #expect(viewModel.isFrameClipped, "整摊两边贴边 → 书没完整进框")
+        #expect(!viewModel.isCaptureReady, "未就绪时快门不可用")
+        await viewModel.capture()
+        #expect(viewModel.drafts.isEmpty, "不得把残摊当整页拍下")
+    }
+
+    @Test("整页意图：近距单页（纸边贴画幅）允许拍，不被裁切门误伤")
+    func closeUpPageEnvelopeIsReady() async throws {
+        // 视频 14：用户贴近拍右页，单页包络下缘只距画幅 ~1%（裁掉的是
+        // 纸边白边，不是页面内容）。旧规则把整页意图一律置灰；修订后
+        // 单页（page-like）允许拍，整摊才拦。
+        let page = Quad(
+            topLeft: CGPoint(x: 0.10, y: 0.20),
+            topRight: CGPoint(x: 0.90, y: 0.20),
+            bottomRight: CGPoint(x: 0.90, y: 1.02),
+            bottomLeft: CGPoint(x: 0.10, y: 1.02)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: page,
+            target: nil,
+            confidence: 0.9,
+            intentSatisfied: true
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        viewModel.setCaptureIntent(.wholePage)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.imageQuad != nil })
+
+        #expect(!viewModel.isFrameClipped, "单页纸边贴画幅不算“整摊被裁”")
+        #expect(viewModel.isCaptureReady, "近距单页必须可拍")
+        await viewModel.capture()
+        let quad = try #require(viewModel.drafts.last?.quad)
+        #expect(abs(quad.bottomLeft.y - 1.0) < 1e-9, "画幅外顶点钳到 1.0")
+        #expect(abs(quad.bottomRight.y - 1.0) < 1e-9)
+    }
+
+    @Test("左/右页意图：目标页缺失时允许拍包络回退，不因整摊贴边而置灰")
+    func clippedSpreadFallbackIsReady() async throws {
+        // 视频 13：左页/右页目标短暂丢失时，旧规则因整摊贴边把整个取景
+        // 变成虚线+灰快门，与目标出现时的实线来回抖。修订后无目标仍可
+        // 拍包络，交给 Review 拆分。
+        let envelope = Quad(
+            topLeft: CGPoint(x: 0.0, y: 0.20),
+            topRight: CGPoint(x: 1.0, y: 0.20),
+            bottomRight: CGPoint(x: 1.0, y: 0.62),
+            bottomLeft: CGPoint(x: 0.0, y: 0.62)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: envelope,
+            target: nil,
+            confidence: 0.9,
+            intentSatisfied: false
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.imageQuad != nil })
+
+        #expect(!viewModel.isFrameClipped, "无目标页时按拍包络回退处理")
+        #expect(viewModel.isCaptureReady)
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == envelope)
+        #expect(viewModel.drafts.last?.quadRole == .envelope)
+    }
+
+    @Test("左/右页意图：目标页近距贴边（单页）仍可拍")
+    func clippedTargetPageIsReady() async throws {
+        let envelope = Quad(
+            topLeft: CGPoint(x: 0.0, y: 0.10),
+            topRight: CGPoint(x: 1.0, y: 0.10),
+            bottomRight: CGPoint(x: 1.0, y: 0.90),
+            bottomLeft: CGPoint(x: 0.0, y: 0.90)
+        )
+        let rightPage = Quad(
+            topLeft: CGPoint(x: 0.52, y: 0.15),
+            topRight: CGPoint(x: 1.0, y: 0.15),
+            bottomRight: CGPoint(x: 1.0, y: 0.85),
+            bottomLeft: CGPoint(x: 0.52, y: 0.85)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: envelope,
+            target: rightPage,
+            confidence: 0.9,
+            intentSatisfied: true
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.outputTargetQuad == rightPage })
+
+        #expect(!viewModel.isFrameClipped, "目标页是单页，近距贴边可拍")
+        #expect(viewModel.isCaptureReady)
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == rightPage)
+    }
+
+    @Test("左/右页意图：目标页完整时，整摊包络被画幅边裁掉仍可拍")
+    func completeTargetSurvivesClippedEnvelope() async throws {
+        // 整摊左右都贴边（对页出屏），但右页本身四边留白完整——这是
+        // 视频 12“只拍右页、左页在框外”的合法形态，不能因为包络被裁而拦拍。
+        let envelope = Quad(
+            topLeft: CGPoint(x: 0.0, y: 0.10),
+            topRight: CGPoint(x: 1.0, y: 0.10),
+            bottomRight: CGPoint(x: 1.0, y: 0.90),
+            bottomLeft: CGPoint(x: 0.0, y: 0.90)
+        )
+        let rightPage = Quad(
+            topLeft: CGPoint(x: 0.52, y: 0.15),
+            topRight: CGPoint(x: 0.96, y: 0.15),
+            bottomRight: CGPoint(x: 0.96, y: 0.85),
+            bottomLeft: CGPoint(x: 0.52, y: 0.85)
+        )
+        let camera = EnvelopeCamera()
+        let detector = EnvelopeDetector(observation: CaptureEnvelopeObservation(
+            envelope: envelope,
+            target: rightPage,
+            confidence: 0.9,
+            intentSatisfied: true
+        ))
+        let viewModel = makeViewModel(camera: camera, detector: detector)
+        await viewModel.start()
+        await camera.yieldFrame()
+        #expect(await waitUntil { viewModel.outputTargetQuad == rightPage })
+
+        #expect(!viewModel.isFrameClipped, "判定只看目标页，不看被裁的整摊")
+        #expect(viewModel.isCaptureReady)
+        await viewModel.capture()
+        #expect(viewModel.drafts.last?.quad == rightPage)
     }
 
     private func makeViewModel(

@@ -44,6 +44,22 @@ struct ReviewSplitProposalTests {
         return image.jpegData(compressionQuality: 0.9)!
     }
 
+    /// 合成「白内边距书脊」：两个文字块之间是一条亮空白带（视频 8 场景）。
+    private static func brightGutterJPEG() -> Data {
+        let size = CGSize(width: 400, height: 300)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(white: 0.94, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(white: 0.18, alpha: 1).setFill()
+            for y in stride(from: 16, to: 284, by: 14) {
+                context.fill(CGRect(x: 32, y: y, width: 156, height: 4))
+                context.fill(CGRect(x: 212, y: y, width: 156, height: 4))
+            }
+        }
+        return image.jpegData(compressionQuality: 0.9)!
+    }
+
     /// 合成无书脊的平坦纸面（输出意图回退安全网用：不得硬拆）。
     private static func flatJPEG() -> Data {
         let size = CGSize(width: 400, height: 300)
@@ -68,6 +84,7 @@ struct ReviewSplitProposalTests {
         quad: Quad,
         userAdjusted: Bool = false,
         outputIntent: CaptureIntent? = nil,
+        quadRole: PageQuadRole? = nil,
         extraPages: [PageDraft] = []
     ) async throws -> (ReviewViewModel, PageFileStore) {
         let root = FileManager.default.temporaryDirectory
@@ -84,7 +101,8 @@ struct ReviewSplitProposalTests {
                 quad: quad,
                 enhancement: .original,
                 userAdjustedQuad: userAdjusted,
-                outputIntent: outputIntent
+                outputIntent: outputIntent,
+                quadRole: quadRole
             )
         ] + extraPages
         let viewModel = ReviewViewModel(
@@ -170,6 +188,55 @@ struct ReviewSplitProposalTests {
             viewModel.undoSplit()
             #expect(viewModel.drafts.first?.quad == Self.spreadQuad)
         }
+    }
+
+    @Test("视频 8 回归：包络拍摄 + 左页意图，亮缝拆分落地左页")
+    func envelopeCaptureWithBrightGutterSplitsLeftPage() async throws {
+        let (viewModel, _) = try await makeViewModel(
+            jpeg: Self.brightGutterJPEG(),
+            quad: Self.spreadQuad,
+            outputIntent: .leftPage,
+            quadRole: .envelope
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.drafts.first?.userAdjustedQuad == true })
+
+        let applied = try #require(viewModel.drafts.first?.quad)
+        #expect(applied.center.x < Self.spreadQuad.center.x, "成片应是左页，不是整摊")
+        #expect(applied.topRight.x > 0.40 && applied.topRight.x < 0.60, "左页右缘应落在亮缝")
+        #expect(applied.area < Self.spreadQuad.area * 0.7)
+        #expect(viewModel.splitProposal == nil, "高置信亮缝应自动落地")
+        #expect(viewModel.canUndoSplit, "自动落地仍可撤销")
+    }
+
+    @Test("目标页拍摄 + 左页意图：不二次拆分")
+    func targetQuadSkipsSplitForLeftIntent() async throws {
+        let (viewModel, _) = try await makeViewModel(
+            jpeg: Self.brightGutterJPEG(),
+            quad: Self.spreadQuad,
+            outputIntent: .leftPage,
+            quadRole: .target
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.didRefineQuads })
+        #expect(viewModel.drafts.first?.quad == Self.spreadQuad, "目标页不得再被拆")
+        #expect(viewModel.drafts.first?.userAdjustedQuad == false)
+        #expect(viewModel.splitProposal == nil)
+    }
+
+    @Test("包络拍摄但没有亮缝/书脊证据：保留包络，不硬拆")
+    func envelopeWithoutEvidenceKeepsQuad() async throws {
+        let (viewModel, _) = try await makeViewModel(
+            jpeg: Self.flatJPEG(),
+            quad: Self.spreadQuad,
+            outputIntent: .leftPage,
+            quadRole: .envelope
+        )
+        viewModel.appear()
+        #expect(await waitUntil { viewModel.didRefineQuads })
+        #expect(viewModel.drafts.first?.quad == Self.spreadQuad)
+        #expect(viewModel.drafts.first?.userAdjustedQuad == false)
+        #expect(viewModel.splitProposal == nil)
     }
 
     @Test("CF-T005：没有书脊证据时不硬拆，保留整摊包络")

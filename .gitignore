@@ -10,3 +10,6 @@ DerivedData/
 .harness2/runs/
 .harness2/evals/
 .harness2/library/
+
+# 真机录屏（体积大，本地保留；见 docs/12 §0.2 / AGENTS §6）
+docs/media/screenrecord/

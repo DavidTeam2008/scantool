@@ -23,6 +23,8 @@ struct SplitProposal: Equatable, Sendable {
         case leftFold
         /// 中央书脊暗谷（摊开书）。
         case spine
+        /// 中央亮缝/文字间隙（白内边距、无阴影书脊——视频 8）。
+        case gutter
     }
 
     /// 用户选择。

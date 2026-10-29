@@ -77,7 +77,13 @@ final class AVCameraSession: CameraCapturing, @unchecked Sendable {
     func bindPreview(_ layer: AnyObject) {
         guard let preview = layer as? AVCaptureVideoPreviewLayer else { return }
         preview.session = session
-        preview.videoGravity = .resizeAspectFill
+        // CF-T010 / spec FR-012：取景域必须等于成片域。预览容器由
+        // `ViewfinderLayout` 按运行时视频宽高比布局，这里用 `.resizeAspect`
+        // 保证**任何**宽高比差异都以留边呈现，绝不再用 aspectFill 把
+        // 4:3 帧裁进 19.5:9 全屏（视频 11/12 根因：只显示 61.6% 帧宽）。
+        // 容器与视频同比例时 fit/fill 数值相同，既有 `OverlaySpaceMap`
+        // 映射与测试无需改动。
+        preview.videoGravity = .resizeAspect
         if let connection = preview.connection, connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
         }

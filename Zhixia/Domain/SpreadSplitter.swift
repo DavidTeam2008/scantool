@@ -31,6 +31,9 @@ enum SpreadSplitter {
     static let continuityThreshold: Double = 0.70
     /// 搜索区间（避开最外侧页边/印刷边框线；场景 2 的书脊可能接近左缘）。
     static let searchRange: ClosedRange<Double> = 0.12...0.88
+    /// 亮缝搜索范围：书脊/中缝在画面中部，排除每页内部的两栏间隙
+    /// （视频 9：右页栏间距被误当成书脊，proposalU=0.759）。
+    static let gutterSearchRange: ClosedRange<Double> = 0.30...0.70
     /// 谷宽下限（页宽占比）：书脊阴影带较宽（≥1.5%），印刷竖线/表格线
     /// 只有 1–2 个栅格列（≈0.6%）——这是区分「书脊」与「印刷线」的关键。
     static let minimumWidth: Double = 0.015
@@ -153,6 +156,12 @@ enum SpreadSplitter {
         diagnosis.valleyWidth = width
         guard width >= minimumWidth else {
             diagnosis.reason = "width"
+            return Analysis(spine: nil, diagnosis: diagnosis)
+        }
+        // 宽度上限：深色插图/照片可以很宽，书脊阴影带不会超过页宽的 20%。
+        // 没有上限时，照片所在的宽暗区会被当成书脊（视频 9 的右页插图）。
+        guard width <= 0.20 else {
+            diagnosis.reason = "widthMax"
             return Analysis(spine: nil, diagnosis: diagnosis)
         }
         return Analysis(
@@ -339,6 +348,109 @@ enum SpreadSplitter {
             u += 0.005
         }
         return nil
+    }
+
+    /// 亮缝（gutter）分割结果：两个内容块之间的**亮空白带**中心。
+    ///
+    /// 与 `Spine`（暗谷）互补：真实摊开书的中缝不一定是阴影暗带——白色
+    /// 内边距更常见，此时中缝在亮度上是**比两侧更亮的空白带**，`analyzeSpine`
+    /// 的谷深判据会直接落空（视频 8 的左页场景：prominence≈0.02）。
+    struct Gutter: Equatable, Sendable {
+        /// 空白带中心（归一化 u，0 = 左缘，1 = 右缘）——作为书脊分割线。
+        let u: Double
+        /// 空白带半高宽（页宽占比）。
+        let width: Double
+        /// 亮缝左侧参考列（±6% 邻域）的平均亮度。
+        let leftLuma: Double
+        /// 亮缝右侧参考列（±6% 邻域）的平均亮度。
+        let rightLuma: Double
+        /// 亮缝对比度（带内亮度 − 两侧较亮者），越大越可信。
+        let contrast: Double
+        /// 置信度（0~1）：带宽 + 对比度 + 居中程度。
+        let confidence: Double
+    }
+
+    /// 在**透视矫正后的矩形图**上找「亮缝」：页宽中部一条贯穿页高、
+    /// 比左右内容块更亮的空白带。
+    ///
+    /// 为什么不用墨量（暗像素比例）：暗谷/墨量都要在**原始分辨率**上数细
+    /// 文字，而 `Raster` 固定 160 列降采样会把细字与纸面平均掉；列**亮度
+    /// 均值**在降采样下保持稳定，白纸内边距的特征也最直接。
+    ///
+    /// 判据：
+    /// 1. 逐列取 y∈[0.12, 0.88] 的亮度均值；
+    /// 2. 在 u∈[0.30, 0.70]（`gutterSearchRange`）内找「比左右各 6% 邻域
+    ///    都亮」的局部峰；峰高（对比度）≥0.02；
+    /// 3. 以半高宽估空白带宽度，要求 ≥2%（避免印刷竖线/反光细线）；
+    /// 4. 置信度 = 0.40×带宽 + 0.45×对比度 + 0.15×居中；低于 0.5 的
+    ///    结果仍返回，调用方按「提示/预选」处理。
+    ///
+    /// 只返回候选，不写 quad；左右页目标由调用方 `split(_:at:)` 生成。
+    /// 单页两栏的栏间距也会形成亮缝——调用方必须用「拍的是包络还是目标页」
+    /// 的角色（`PageDraft.quadRole`）把这条路径限制在包络/整摊上。
+    static func analyzeGutter(inRectified image: CGImage) -> Gutter? {
+        guard image.width >= 200, image.height >= 200,
+              let raster = Raster(image: image)
+        else { return nil }
+        let columns = raster.columns
+        let rows = 48
+        func columnMean(_ column: Int) -> Double {
+            let u = (Double(column) + 0.5) / Double(columns)
+            var total = 0.0
+            for row in 0..<rows {
+                let v = 0.12 + 0.76 * (Double(row) + 0.5) / Double(rows)
+                total += raster.luminanceBilinear(atNormalized: CGPoint(x: u, y: v))
+            }
+            return total / Double(rows)
+        }
+        var means = [Double](repeating: 0, count: columns)
+        for column in 0..<columns { means[column] = columnMean(column) }
+        // 3 列平滑：单像素反光/噪点不应成为「局部峰」。
+        var smooth = means
+        for column in 0..<columns {
+            let left = means[max(0, column - 1)]
+            let right = means[min(columns - 1, column + 1)]
+            smooth[column] = (left + means[column] + right) / 3
+        }
+
+        let searchStart = max(1, Int(gutterSearchRange.lowerBound * Double(columns)))
+        let searchEnd = min(columns - 2, Int(gutterSearchRange.upperBound * Double(columns)))
+        var bestColumn = searchStart
+        var bestContrast = -Double.infinity
+        for column in searchStart...searchEnd {
+            let left = smooth[max(0, column - 10)]
+            let right = smooth[min(columns - 1, column + 10)]
+            let contrast = smooth[column] - max(left, right)
+            if contrast > bestContrast {
+                bestContrast = contrast
+                bestColumn = column
+            }
+        }
+        guard bestContrast >= 0.02 else { return nil }
+
+        let left = smooth[max(0, bestColumn - 10)]
+        let right = smooth[min(columns - 1, bestColumn + 10)]
+        let halfHeight = (smooth[bestColumn] + max(left, right)) / 2
+        var start = bestColumn
+        var end = bestColumn
+        while start > 0, smooth[start - 1] >= halfHeight { start -= 1 }
+        while end < columns - 1, smooth[end + 1] >= halfHeight { end += 1 }
+        let width = Double(end - start + 1) / Double(columns)
+        guard width >= 0.02, width <= 0.25 else { return nil }
+
+        let u = (Double(bestColumn) + 0.5) / Double(columns)
+        let widthScore = min(1, max(0, (width - 0.02) / 0.05))
+        let contrastScore = min(1, max(0, bestContrast / 0.08))
+        let positionScore = min(1, max(0, 1 - abs(u - 0.5) / 0.30))
+        let confidence = 0.40 * widthScore + 0.45 * contrastScore + 0.15 * positionScore
+        return Gutter(
+            u: u,
+            width: width,
+            leftLuma: left,
+            rightLuma: right,
+            contrast: bestContrast,
+            confidence: confidence
+        )
     }
 
     /// 右页纸面右缘（归一化 u）：从右往左找第一段「足够亮且暗像素少」的

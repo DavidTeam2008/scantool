@@ -19,6 +19,8 @@ enum PageIntentResolver {
         case pageCandidate
         case leftFoldTrim
         case spine
+        /// 亮缝/文字间隙（白内边距、无阴影书脊——视频 8）。
+        case gutter
     }
 
     struct Resolution: Equatable, Sendable {
@@ -33,8 +35,15 @@ enum PageIntentResolver {
     static let spreadAspectThreshold: Double = 0.95
     /// 单页候选的宽高比上限（超过它时不把该候选当作已经正确的单页）。
     static let pageAspectMax: Double = 0.98
+    /// 拆分目标的宽高比上限。照片是 3:4，竖版书页在**归一化**坐标里的
+    /// 宽高比可以接近 1.0（视频 9 左页 0.991）；这里只挡整摊（>1.2），
+    /// 不沿用页面候选的 0.98。
+    static let targetAspectMax: Double = 1.10
     /// 目标页最小面积，与 `DetectionStrategy.minArea` 同口径。
     static let minimumTargetArea: Double = 0.15
+    /// 意图拆分（书脊/亮缝）的目标页最小面积：小书/远距离/边缘裁切时
+    /// 一页只占画面 6%~12%（视频 10 左页 0.071、视频 9 左页 0.098）。
+    static let splitTargetMinimumArea: Double = 0.06
     /// 书脊置信度低于该值时仍可返回候选，但调用方可据此显示虚线/建议态。
     static let minimumConfidence: Double = 0.30
 
@@ -68,6 +77,21 @@ enum PageIntentResolver {
         return rect.width / max(rect.height, 0.0001) <= pageAspectMax
     }
 
+    /// 近距单页判定（CF-T011a）：用于“贴画幅边时是否允许拍单页”。
+    ///
+    /// **不要复用 `isSpreadLike`**：它用的是同一归一化宽高比，而 3:4 照片里
+    /// 一页竖版书页的归一化宽高比本来就 ≈1.0（视频 9 左页 0.991），
+    /// `spreadAspectThreshold=0.95` 会把单页也判成整摊。整摊是**两页并排**，
+    /// 归一化宽高比通常 ≥1.5（视频 13 实测 ≈2.1、视频 12 裁切整摊 ≈2.3）。
+    /// 因此近距单页用独立阈值 1.30：<1.30 视为单页，≥1.30 视为整摊/整书。
+    static let singlePageAspectMax: Double = 1.30
+
+    static func isSinglePageForCapture(_ quad: Quad) -> Bool {
+        guard !quad.isDegenerate, quad.area >= minimumTargetArea else { return false }
+        let rect = quad.boundingRect
+        return rect.width / max(rect.height, 0.0001) < singlePageAspectMax
+    }
+
     /// 解析目标页。`selection` 是当前逐帧择优，`candidates` 是同一帧的
     /// 候选池（可包含整书分割、左右页矩形等）。
     ///
@@ -82,24 +106,101 @@ enum PageIntentResolver {
     ) -> Resolution? {
         guard intent != .wholePage else { return nil }
         let pool = uniqueQuads(([selection].compactMap { $0 } + candidates))
+        let envelopeQuad = envelope(selection: selection, candidates: candidates)
+        func accept(_ resolution: Resolution) -> Resolution? {
+            acceptTarget(resolution, envelope: envelopeQuad, intent: intent)
+        }
 
         // ① 当前择优已经是符合意图的单页：优先使用；右页额外尝试去掉
         //    左缘折页/左页窄条（视频 3 的典型成片问题）。
         if let selection, isPageLike(selection), matchesSide(selection, intent: intent) {
             if intent == .rightPage,
-               let trimmed = trimLeftFold(selection, image: image, ciContext: ciContext) {
-                return trimmed
+               let trimmed = trimLeftFold(selection, image: image, ciContext: ciContext),
+               let accepted = accept(trimmed) {
+                return accepted
             }
-            return Resolution(quad: selection, source: .pageCandidate, confidence: 0.90)
+            if let accepted = accept(Resolution(
+                quad: selection,
+                source: .pageCandidate,
+                confidence: 0.90
+            )) {
+                return accepted
+            }
+        }
+
+        // ①b 池里已有符合意图的单页候选：优先于整摊拆分。
+        //    视频 10：整摊包络把背景墙也包进来（top≈0.05，书页 top≈0.34），
+        //    拆包络得到的目标会带墙；池里的右页/左页矩形本身是干净的，
+        //    应当先信它。面积门用目标门的 8%（左页小到 0.087），宽高比用
+        //    目标上限 1.10 挡掉整摊；`acceptTarget` 再做包络/意图侧校验。
+        let targetPages = pool
+            .filter { !$0.isDegenerate && $0.area >= 0.06 }
+            .filter { !isSpreadLike($0) }
+            .filter { matchesSide($0, intent: intent) }
+            .filter {
+                let rect = $0.boundingRect
+                let aspect = rect.width / max(rect.height, 0.0001)
+                return aspect >= 0.45 && aspect <= targetAspectMax
+            }
+            .sorted { $0.score() > $1.score() }
+        for page in targetPages {
+            // 页候选必须“够一整页”：以包络的一半为期望面积（整摊）或整页
+            // （单页）。视频 10 左页候选只有 0.071，是页内左栏，不是整页；
+            // 这种窄条要留给整摊拆分（②c），否则左页右栏会被切掉。
+            if let envelopeQuad,
+               page.meanVertexDistance(to: envelopeQuad) > 0.01 {
+                let expected = isSpreadLike(envelopeQuad)
+                    ? envelopeQuad.area / 2
+                    : envelopeQuad.area
+                guard expected > 0, page.area >= expected * 0.85 else { continue }
+            }
+            if let accepted = accept(Resolution(
+                quad: page,
+                source: .pageCandidate,
+                confidence: 0.85
+            )) {
+                return accepted
+            }
         }
 
         // ② 整书外框：在矫正图上找书脊，拆出目标页。按面积从大到小尝试，
         //    避免把页面里的大表格外框当成整书（`isSpreadLike` 已先过滤）。
         let spreads = pool.filter(isSpreadLike).sorted { $0.area > $1.area }
         for spread in spreads {
-            if let split = splitSpread(spread, intent: intent, image: image, ciContext: ciContext) {
-                return split
+            if let split = splitSpread(spread, intent: intent, image: image, ciContext: ciContext),
+               let accepted = accept(split) {
+                return accepted
             }
+        }
+
+        // ②b 被屏幕裁掉的整摊：宽高比还在整摊档，但面积/宽度不够
+        // `isSpreadLike`（预览只有 9:16，摊开书右页常被裁到屏幕外）。
+        // 目标页一侧完整可见时，亮缝模型仍能拆出它（视频 8 的左页）。
+        if let envelopeQuad,
+           isClippedSpread(envelopeQuad, intent: intent),
+           let split = splitClippedSpread(
+               envelopeQuad,
+               intent: intent,
+               image: image,
+               ciContext: ciContext
+           ),
+           let accepted = accept(split) {
+            return accepted
+        }
+
+        // ②c 用页对包络本身拆分：② 的 spreads 来自候选池，页对包络是
+        //    构造出来的，不在池里；它才是视频 10 的书。没有“够一整页”的
+        //    页候选时（左页被裁成 0.071），在这里按书脊/亮缝拆。
+        if let envelopeQuad,
+           isSpreadLike(envelopeQuad),
+           let split = splitSpread(
+               envelopeQuad,
+               intent: intent,
+               image: image,
+               ciContext: ciContext
+           ),
+           let accepted = accept(split) {
+            return accepted
         }
 
         // ③ 没有整书、当前目标也不是选中的单页：池里找符合侧别的单页
@@ -108,12 +209,19 @@ enum PageIntentResolver {
             .filter(isPageLike)
             .filter { matchesSide($0, intent: intent) }
             .sorted { $0.score() > $1.score() }
-        if let page = pages.first {
+        for page in pages {
             if intent == .rightPage,
-               let trimmed = trimLeftFold(page, image: image, ciContext: ciContext) {
-                return trimmed
+               let trimmed = trimLeftFold(page, image: image, ciContext: ciContext),
+               let accepted = accept(trimmed) {
+                return accepted
             }
-            return Resolution(quad: page, source: .pageCandidate, confidence: 0.80)
+            if let accepted = accept(Resolution(
+                quad: page,
+                source: .pageCandidate,
+                confidence: 0.80
+            )) {
+                return accepted
+            }
         }
 
         // ④ 只有一张单页且没有整书候选：A4/单页场景。左右页意图都允许
@@ -122,10 +230,51 @@ enum PageIntentResolver {
            let onlyPage = pool
                .filter(isPageLike)
                .filter({ matchesSide($0, intent: intent) })
-               .max(by: { $0.area < $1.area }) {
-            return Resolution(quad: onlyPage, source: .pageCandidate, confidence: 0.70)
+               .max(by: { $0.area < $1.area }),
+           let accepted = accept(Resolution(
+               quad: onlyPage,
+               source: .pageCandidate,
+               confidence: 0.70
+           )) {
+            return accepted
         }
         return nil
+    }
+
+    /// 目标页与包络的一致性校验（视频 9：右页栏间距/画面边缘的假目标）。
+    ///
+    /// - 目标就是包络（单页/A4）：直接接受；
+    /// - 目标必须在包络内（2% 贴边容差），否则是画面边缘/桌面矩形；
+    /// - 目标必须落在意图侧（右页在包络中心右侧、左页在左侧），
+    ///   否则是“右页意图却给了左页/页内栏”；
+    /// - 目标宽高比 0.45~0.98：窄竖条是页内文字栏/照片栏，不是书页。
+    private static func acceptTarget(
+        _ resolution: Resolution,
+        envelope: Quad?,
+        intent: CaptureIntent
+    ) -> Resolution? {
+        guard let envelope else { return nil }
+        let target = resolution.quad
+        guard !target.isDegenerate else { return nil }
+        if target.meanVertexDistance(to: envelope) <= 0.01 {
+            return resolution
+        }
+        let rect = target.boundingRect
+        let aspect = rect.width / max(rect.height, 0.0001)
+        guard target.area >= 0.06, aspect >= 0.45, aspect <= targetAspectMax else {
+            return nil
+        }
+        let envelopeRect = envelope.boundingRect.insetBy(dx: -0.02, dy: -0.02)
+        guard envelopeRect.contains(rect) else { return nil }
+        switch intent {
+        case .leftPage:
+            guard target.center.x < envelope.center.x else { return nil }
+        case .rightPage:
+            guard target.center.x > envelope.center.x else { return nil }
+        case .wholePage:
+            return nil
+        }
+        return resolution
     }
 
     /// 右页从左缘折痕处裁掉折页/左页窄条（`SpreadSplitter.leftFoldTrim`）。
@@ -164,17 +313,92 @@ enum PageIntentResolver {
         guard isSpreadLike(spread),
               let rectified = rectifiedImage(spread, image: image, ciContext: ciContext)
         else { return nil }
-        let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
-        guard let spine = analysis.spine else { return nil }
-        let parts = SpreadSplitter.split(spread, at: spine.u)
-        let target = intent == .leftPage ? parts.left : parts.right
-        guard isValidTarget(target, within: spread) else { return nil }
-        let confidence = SplitProposalConfidence.spine(
-            prominence: analysis.diagnosis.prominence,
-            continuity: analysis.diagnosis.continuity
+        if let split = splitRectified(
+            spread,
+            intent: intent,
+            rectified: rectified,
+            minTargetArea: Self.splitTargetMinimumArea
+        ) {
+            return split
+        }
+        return nil
+    }
+
+    /// 被屏幕裁掉的整摊：宽高比 ≥ 整摊阈值，但面积/宽度不够
+    /// `isSpreadLike`（典型：预览 9:16，摊开书右页被裁到屏幕外）。
+    ///
+    /// 中心偏移是判据：左页意图下包络中心偏右（右页在画面外），右页意图
+    /// 下偏左；居中的单页（中心≈0.5）不会走这条路径。
+    static func isClippedSpread(_ quad: Quad, intent: CaptureIntent) -> Bool {
+        guard intent != .wholePage, !quad.isDegenerate, !isScreenEdgeFrame(quad) else {
+            return false
+        }
+        let rect = quad.boundingRect
+        guard rect.width >= 0.35, rect.height >= 0.32, quad.area >= 0.14 else {
+            return false
+        }
+        let aspect = rect.width / max(rect.height, 0.0001)
+        guard aspect >= spreadAspectThreshold else { return false }
+        switch intent {
+        case .leftPage:
+            return rect.midX >= 0.55
+        case .rightPage:
+            return rect.midX <= 0.45
+        case .wholePage:
+            return false
+        }
+    }
+
+    /// 裁掉的整摊：先按暗谷书脊拆，失败再按亮缝拆；目标页面积门放宽到
+    /// 8%（包络本身可能只占画面 15%~20%，一半页只有 8%~10%）。
+    static func splitClippedSpread(
+        _ envelope: Quad,
+        intent: CaptureIntent,
+        image: CGImage,
+        ciContext: CIContext
+    ) -> Resolution? {
+        guard let rectified = rectifiedImage(envelope, image: image, ciContext: ciContext)
+        else { return nil }
+        return splitRectified(
+            envelope,
+            intent: intent,
+            rectified: rectified,
+            minTargetArea: 0.08
         )
-        guard confidence >= minimumConfidence else { return nil }
-        return Resolution(quad: target, source: .spine, confidence: confidence)
+    }
+
+    /// 书脊（暗谷）→ 亮缝（白内边距）两级拆分；找不到返回 nil。
+    private static func splitRectified(
+        _ source: Quad,
+        intent: CaptureIntent,
+        rectified: CGImage,
+        minTargetArea: Double
+    ) -> Resolution? {
+        let analysis = SpreadSplitter.analyzeSpine(inRectified: rectified)
+        if let spine = analysis.spine {
+            let confidence = SplitProposalConfidence.spine(
+                prominence: analysis.diagnosis.prominence,
+                continuity: analysis.diagnosis.continuity
+            )
+            if confidence >= minimumConfidence,
+               let target = target(from: source, at: spine.u, intent: intent),
+               isValidTarget(target, within: source, minArea: minTargetArea) {
+                return Resolution(quad: target, source: .spine, confidence: confidence)
+            }
+        }
+        if let gutter = SpreadSplitter.analyzeGutter(inRectified: rectified),
+           gutter.confidence >= SplitProposalConfidence.applyThreshold,
+           let target = target(from: source, at: gutter.u, intent: intent),
+           isValidTarget(target, within: source, minArea: minTargetArea) {
+            return Resolution(quad: target, source: .gutter, confidence: gutter.confidence)
+        }
+        return nil
+    }
+
+    private static func target(from source: Quad, at u: Double, intent: CaptureIntent) -> Quad? {
+        guard intent != .wholePage else { return nil }
+        let parts = SpreadSplitter.split(source, at: u)
+        return intent == .leftPage ? parts.left : parts.right
     }
 
     /// CF-T002：选择实时显示用的“书/整摊包络”。
@@ -191,6 +415,23 @@ enum PageIntentResolver {
             .filter { !isScreenEdgeFrame($0) }
         let spreads = pool.filter(isSpreadLike).sorted { $0.area > $1.area }
         if let spread = spreads.first { return spread }
+
+        // 视频 10：检测器给出左页/右页两个干净矩形，但没有整摊；同时有一个
+        // 把背景墙包进来的大矩形（≈0.93 宽高比，单看也“像一页”）。两页的
+        // 并集才是书；先拼页对，避免包络选到“墙 + 书”的大矩形。
+        if let pair = pagePairEnvelope(in: pool) { return pair }
+
+        // 单页：优先“像一页”的宽高比（0.45~0.85）。接近正方形的大矩形
+        // 更像场景/桌面，不是书页。
+        let pageAspects = pool
+            .filter(isPageLike)
+            .filter {
+                let rect = $0.boundingRect
+                let aspect = rect.width / max(rect.height, 0.0001)
+                return aspect >= 0.45 && aspect <= 0.85
+            }
+            .sorted { $0.area > $1.area }
+        if let page = pageAspects.first { return page }
 
         let pages = pool.filter(isPageLike).sorted { $0.area > $1.area }
         if let page = pages.first { return page }
@@ -210,12 +451,68 @@ enum PageIntentResolver {
     private static func isValidTarget(
         _ target: Quad,
         within source: Quad,
-        maxAreaRatio: Double = 0.85
+        maxAreaRatio: Double = 0.85,
+        minArea: Double = minimumTargetArea,
+        minAspect: Double = 0.45,
+        maxAspect: Double = targetAspectMax
     ) -> Bool {
-        !target.isDegenerate
-            && target.area >= minimumTargetArea
-            && target.area < source.area * maxAreaRatio
-            && isPageLike(target)
+        guard !target.isDegenerate, target.area >= minArea else { return false }
+        let rect = target.boundingRect
+        let aspect = rect.width / max(rect.height, 0.0001)
+        // 下界 0.45：单页/书页的归一化宽高比不会这么窄；再窄的“目标”
+        // 是页内文字栏/照片栏（视频 9 的右页栏间距误拆成竖条）。
+        return target.area < source.area * maxAreaRatio
+            && aspect >= minAspect
+            && aspect <= maxAspect
+    }
+
+    /// 左右两页的并集包络（视频 10）：检测器常分别给出左页/右页矩形，
+    /// 但整摊不可靠；两页相邻、y 区间重叠、并集达到整摊宽高比时，
+    /// 用左页左缘 + 右页右缘组成一个倾斜的整摊四边形。
+    ///
+    /// 只接受“像一页”的候选（宽高比 0.40~1.05、宽 ≥12%、面积 ≥8%）。
+    /// 3:4 照片里竖版页的**归一化**宽高比≈1.0（视频 10 右页 1.002），
+    /// 不能用 0.90 的页面值；接近正方形的大场景矩形（0.93）在页对里
+    /// 会因“两页相邻 + 并集像整摊”被排除。
+    static func pagePairEnvelope(in pool: [Quad]) -> Quad? {
+        let pages = pool.filter { quad in
+            guard !quad.isDegenerate, quad.area >= 0.06 else { return false }
+            let rect = quad.boundingRect
+            guard rect.width >= 0.12 else { return false }
+            let aspect = rect.width / max(rect.height, 0.0001)
+            return aspect >= 0.40 && aspect <= 1.05
+        }
+        guard pages.count >= 2 else { return nil }
+        var best: (quad: Quad, area: Double)?
+        for i in pages.indices {
+            for j in pages.indices where j > i {
+                let a = pages[i]
+                let b = pages[j]
+                let (left, right) = a.center.x <= b.center.x ? (a, b) : (b, a)
+                let leftRect = left.boundingRect
+                let rightRect = right.boundingRect
+                let gap = rightRect.minX - leftRect.maxX
+                guard gap >= -0.08, gap <= 0.15 else { continue }
+                let overlap = min(leftRect.maxY, rightRect.maxY)
+                    - max(leftRect.minY, rightRect.minY)
+                guard overlap >= min(leftRect.height, rightRect.height) * 0.5 else {
+                    continue
+                }
+                let union = Quad(
+                    topLeft: left.topLeft,
+                    topRight: right.topRight,
+                    bottomRight: right.bottomRight,
+                    bottomLeft: left.bottomLeft
+                )
+                let rect = union.boundingRect
+                let aspect = rect.width / max(rect.height, 0.0001)
+                guard aspect >= spreadAspectThreshold, aspect <= 2.6 else { continue }
+                if best == nil || union.area > best!.area {
+                    best = (union, union.area)
+                }
+            }
+        }
+        return best?.quad
     }
 
     private static func isPlausibleEnvelopeShape(_ quad: Quad) -> Bool {

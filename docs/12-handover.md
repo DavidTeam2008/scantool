@@ -5,16 +5,18 @@
 > AI agent 请从 [`AGENTS.md`](../AGENTS.md) 进入（铁律与命令速查）；人读细节下钻
 > [`09 接手手册`](09-project-handbook.md)。
 >
-> **更新：2026-10-28 · 代码基线：`b7ea065`「CF-T004/CF-T005 输出目标与拍后意图拆分」**
+> **更新：2026-10-29 · 代码基线：`b7ea065` + CF-T005b/c/d（工作区未提交）**
 > 当前主线：**P0.3 取景包络跟踪**（[`docs/22`](22-capture-envelope-tracking.md)）。
-> CF-T001~CF-T005 第一版已交付；真机视频 5/7 验收待做。
-> 测试基线：**518 total / 507 passed / 1 expected / 10 known full-suite failures**。
+> 2026-10-29 视频 11/12 定位到新的 P0 根因：**取景域 ≠ 成片域**——预览只显示
+> 4:3 帧的 61.6% 宽，检测/成片用整帧。CF-T010（4:3 取景窗 + 完整性门）插到
+> 所有取景任务之前；CF-T001~T005d 已交付，真机复测待做。
+> 测试基线：**547 total / 541 passed / 5 failed（本次）+ 1 expected；既有测试债 10 条（flaky）**。
 > 与当前 P0.3 冲突时，以本摘要 + `docs/22` + [`TODO.md`](../TODO.md) 为准；
 > §2 的 Case A/B、guided-capture 等是历史背景，不要按旧路线继续调 sticky/smoother。
 
 ---
 
-## 0. 2026-10-28 交接摘要（先读）
+## 0. 2026-10-29 交接摘要（先读）
 
 ### 0.1 现在做到哪
 
@@ -28,8 +30,28 @@
   - 左/右页目标作为实线主框，整摊包络降为淡虚线上下文；
   - `PageDraft.outputIntent`；Review 在原图 1600px 矫正图上按书脊/折页高置信自动
     拆分，低置信只给预选提案。
-- **真机验收未做**：视频 5（彩色/黑白、左/右/整页）和视频 7（右页/左页/整页、
-  屏幕边框误拍）需要按 §0.3 复测。
+  - **CF-T005b（视频 8）**：`PageDraft.quadRole`（target/envelope）+
+    `SpreadSplitter.analyzeGutter` 亮缝模型；左页包络被预览裁掉时不再把整摊
+    当目标页、跳过拆分；实时裁掉的整摊也能给出左页目标。
+  - **CF-T005c（视频 9）**：亮缝搜索限中线 [0.30,0.70]；`acceptTarget`
+    目标一致性（包络内/意图侧/宽高比/面积）；实时目标/包络日志。
+  - **CF-T005d（视频 10）**：左右页并集包络（排除“墙 + 书”大矩形）；
+    池内页候选优先于整摊拆分；目标面积门 6%。
+  - **CF-T010（视频 11/12，2026-10-29 新根因，代码已落、真机复测待做）**：**取景域 ≠ 成片域**。
+    预览 `.resizeAspectFill` 把 4:3 帧铺满 390×844 全屏，只显示 **61.6% 宽**
+    （两侧各 19.2%）；检测/成片却用整帧，于是必须举高、框用屏幕外几何、
+    成片横向范围是屏幕的 1.62 倍（多出 62%）。方案：4:3 取景窗 + `.resizeAspect` + 完整性门；
+    **已落**：`ViewfinderLayout` + 4:3 取景窗 + `isClippedAtFrameEdge` 完整性门 +
+    `frameClipped` 日志；新增 12 条测试；布局截图 `build/cf-t010/layout-sim.png`。
+    **真机复测通过前不要再调目标面积/宽高比或 tracker 阈值。**
+  - **CF-T011a（视频 14/13，2026-10-29 代码已落、真机复测待做）**：近距单页
+    被“贴边即未就绪”误伤（视频 14 虚线框准确但快门灰）。`isSinglePageForCapture`
+    （归一化宽高比 <1.3）区分单页/整摊；整页单页贴画幅允许拍、整摊被裁仍置灰；
+    左/右页目标缺失允许拍包络回退（视频 13 实线/虚线抖）；裁切框钳到 [0,1]。
+- **真机验收未做**：视频 5/7/8/9/10 的目标框与成片；**视频 11/12/13/14 由
+  CF-T010/T011a 修取景域与近距单页**（自然高度整本入屏、成片不超出屏幕、
+  整页框不提前出现、近距单页快门可用），按 §0.3 与 `device-acceptance.md`
+  §1.4 复测。
 - **已知测试债**：全量有 **10 个既有失败**（Golden 4、WordFidelity 1、Review preview 4、
   ReviewSplit/guidedPageSkipsProposal 1）。它们不是本轮引入；新增的 CF 用例全绿。
   细节见 §4.2。**不要为了让全量变绿去削弱断言**，先按测试治理单独处理。
@@ -42,7 +64,7 @@
 ```bash
 cd /path/to/ios/scantool
 make doctor          # Xcode / 模拟器 / Busy 自检
-make test            # 全量；预期 518 total / 507 passed / 1 expected / 10 known failures
+make test            # 全量；预期 547 total，本次 541 passed / 5 failed（均为既有债）
 make test-only T=ReviewSplitProposalTests
 make smoke           # 模拟器装机 + 启动存活
 make device-build    # 真机目标编译（免签名）
@@ -75,23 +97,40 @@ make device-build    # 真机目标编译（免签名）
 
 ### 0.3 下一步做什么（按优先级）
 
-1. **CF-T007 真机与 WPS 验收（最高优先级，先验收再继续调参）**
-   - 视频 5：彩色/黑白 × 左/右/整页，确认目标框可见、成片页正确、背景残留可接受；
-   - 视频 7：00:10–00:24 右页目标可见；00:27–00:36 左页目标右上/右下角在书脊上；
-     00:50 无可信页面时保持搜索态（不应再出现假框）；00:55 屏幕外框不再被拍下；
-     01:15–01:25 左页输出最终落到左页；
+1. **CF-T010 取景域 WYSIWYG（最高优先级，代码已落、真机复测待做）**
+   - 视频 11/12 证明预览只显示 4:3 帧的 61.6% 宽，检测/成片用整帧；
+   - 4:3 取景窗 + `.resizeAspect`；检测/成片/预览同域；`visiblePhotoRect`
+     退化为全幅；
+   - 整页意图：**整摊**贴帧边 → 未就绪（单页近距见第 2 条）；
+   - 真机确认照片 FOV == 视频 FOV（取景窗四边贴标记物）；
+   - 复测：自然高度整本入屏、成片不超出屏幕、整页框不提前出现。
+2. **CF-T011a 近距单页（代码已落、真机复测待做）**
+   - 视频 14：整页近距右页，虚线框准确但快门灰 → 单页贴画幅允许拍；
+   - 视频 13：左/右页目标短暂缺失时实线/虚线抖 → 目标缺失允许拍包络回退；
+   - 整摊被裁仍置灰；裁切框钳到 [0,1]；提示与快门一致。
+3. **CF-T010b 拍后逐边包含**：`refineQuads` 面积门 → 逐边包含（+1% 容差），
+   静帧不得把拍摄框外内容扩回成片。
+4. **CF-T011 贴边合成**（T010/T011a 真机复测后）：左/右页意图、书脊侧边贴帧
+   边界 ±1.5% 时合成目标；1.5% 引导线 + 徽标；整页禁用；成片不含对页。
+5. **CF-T007 真机与 WPS 验收**
+   - 先复测 T010 的视频 11/12 场景；再跑视频 5/7/8/9/10；
+   - 视频 8：左页右角应落在亮缝 u≈0.547，成片不再含右页左栏；
+     证据 `build/cf-t007/video8/`；
+   - 视频 9：右/左实线框必须落在整页、在包络内、在意图侧；
+     设备日志 `build/device-logs/video9/`；
+   - 视频 10：包络不再含墙/脚，`target-rightPage` 不再给左页；
    - 20 彩页 + 20 黑白 + 10 A4 + 10 曲面/折页；按 `docs/22` §六量化；
    - 记录：框可见率、切换次数、锁定延迟、输出页正确率、禁止内容入片率、修正次数；
    - 清单：`spec/capture-envelope-tracking/device-acceptance.md`。失败先留现场日志/录屏。
-2. **CF-T008 光流/单应性传播**：当前 tracker 是低频观测 + hold/平滑/候选切换确认，
+6. **CF-T008 光流/单应性传播**：当前 tracker 是低频观测 + hold/平滑/候选切换确认，
    跟手性仍未达 WPS；先做离线回放，再接主路径。
-3. **CF-T006 UI/快门收口**：置信度态、锁定后自动/手动快门、按下瞬间冻结包络、
-   引导/手动框兜底。
-4. **CF-T009 观测增强（按需）**：先测传统 Vision 失败率；不足再评估端侧分割 mask
+7. **CF-T006 UI/快门收口**：置信度态、锁定后自动/手动快门、按下瞬间冻结包络、
+   引导/手动框兜底（取景窗布局随 T010 收口）。
+8. **CF-T009 观测增强（按需）**：先测传统 Vision 失败率；不足再评估端侧分割 mask
    （离线、ANE），只输出 mask/几何，禁止 LLM/VLM 生成文档像素。
-5. **恢复暂停项**：PP-T032 全流程、多条件样张回归、flaky 清理（用户已同意暂停，
+9. **恢复暂停项**：PP-T032 全流程、多条件样张回归、flaky 清理（用户已同意暂停，
    不要在本轮擅自开工）。
-6. **P0.3 之后**：再评审是否引入端侧分割模型 / 其他恢复路线。
+10. **P0.3 之后**：再评审是否引入端侧分割模型 / 其他恢复路线。
 
 ### 0.4 不要做什么
 
@@ -117,7 +156,7 @@ make device-build    # 真机目标编译（免签名）
 | 网络依赖 | **零**（纯离线；TextIn 云解析是 stub，`parse` 直接 throw） |
 | 架构分层 | App → Features（SwiftUI MVVM）→ Domain（纯函数）→ Services（actor 副作用），依赖只向下 |
 | 代码规模 | 141 个主工程 Swift 文件 / 66 个测试文件；主工程约 24.9k 行 |
-| 质量现状 | **518 用例 = 507 passed + 1 expected failure + 10 known full-suite failures**（Swift Testing；2026-10-28 实测；测试总数基线只增不减） |
+| 质量现状 | **531 用例 = 520 passed + 1 expected failure + 10 known full-suite failures**（Swift Testing；2026-10-28 实测；测试总数基线只增不减） |
 | 当前主线 | P0.3 取景包络跟踪（`docs/22`）；CF-T001~CF-T005 第一版已交付，CF-T007 真机/WPS 验收待做 |
 
 ### 1.1 SDD 周期一览（截至 2026-10-21 的 15 个周期；P0.3 见 §0）
@@ -140,8 +179,8 @@ make device-build    # 真机目标编译（免签名）
 | 14 | `guided-capture`（**Phase 0~2 已交付**，真机验收待做） | 引导取景：用户框定右页 + 画布真值 + 取证/回放 + Review 拆分确认 | **Phase 0**：trace 环形缓冲 / 全候选落盘（全部 viable + top 8）/ 诊断包导出 / 回放基线；**Phase 1**：引导模式与意图、屏幕↔照片逆映射、引导框 UI（可拖）、自动对位 + 松手吸附、引导拍摄分支（成片 = 框）、框生命周期；**Phase 2**：拆分从「静默应用」改为「提案 + 用户确认 + 可撤销」；自动路径零改动 | 417→436（真机计数待 T030） | `spec/guided-capture/`（历史；先读 `docs/15`） |
 | 15 | `word-fidelity`（**Phase 0 已交付**，Phase 1 迭代中） | Word 导出保真度：图片版档 + 裁切不丢页 + 保真度闸门 | 静帧页面判定（认不出页面就不裁）、图片版导出（整页图铺页，零文本框/零 mask）、默认档翻转为**高保真=图片版**（旧「高保真」=可编辑版面还原，rawValue 迁移到 `layoutEditable`）、`make word-fidelity` 闸门（SSIM 门限 0.90，实测 0.914/0.919）；**可编辑档 0.785 未达标 → 迭代见 [`docs/17`](17-editable-tier-fidelity-iteration.md)** | 444→449 | `spec/word-fidelity/`（评估见 [`docs/16`](16-word-export-fidelity.md)） |
 
-> 基线说明：表中“377→386”等是各周期交付时的计数；**2026-10-28 当前总基线是
-> 518 total / 507 passed / 1 expected / 10 known failures（见 §0.1 / §4.2）**。
+> 基线说明：表中“377→386”等是各周期交付时的计数；**2026-10-29 当前总基线是
+> 547 total / 541 passed / 5 failed（本次）+ 1 expected；既有测试债 10 条（见 §0.1 / §4.2）**。
 > 表中 449 是 2026-10-21 的历史快照，不要拿它当当前门禁。
 
 ---
@@ -214,6 +253,10 @@ make device-build    # 真机目标编译（免签名）
   L1 取证（§4），日志判读口径见该文。
 
 ### 2.2 🟠 P0 · Case B：摊开书实线框持续跳动、手动拍含左页大半（粘滞 v2 已交付，真机复测待做）
+
+> **2026-10-29 更新**：视频 11/12 证明还有一个更底层的原因——取景域只有
+> 4:3 帧宽的 61.6%（见 §0.1 CF-T010）。先修取景域，再判断 Case B 的粘滞是否仍需调；
+> 不要在 T010 之前继续按本节的 sticky/smoother 路线调参。
 
 - **现象**：摊开书从中线取景拍右页，实线框在右页与整书两候选间持续跳动、永不锁定；
   手动拍成片含左页大半（复测用户逐字：「case B，实线框一直再跳，手动拍，左边很大部分都近图片」；
@@ -336,7 +379,7 @@ make smoke     # 模拟器装机（build + install + launch + 存活检查）
 make device-build   # 真机目标编译（generic/platform=iOS，免签名）
 ```
 
-- **当前计数**：`total=518 passed=507 failed=10 expectedFailures=1`。10 个失败是
+- **当前计数**：`total=547 passed=541 failed=5 expectedFailures=1`（本次）。既有测试债 10 条，本次命中 5 条；
   既有债务（Golden 4 / WordFidelity 1 / Review preview 4 / ReviewSplit 1），
   不是本轮 CF 改动引入；新增 CF 用例全绿。
 - **默认 destination**：`iPhone 18 Pro` / iOS 27.0（见 `Makefile` 顶部）。若本机
@@ -348,12 +391,12 @@ make device-build   # 真机目标编译（generic/platform=iOS，免签名）
 - **计数陷阱**：known issue 用例日志是 `recorded an expected failure`，不是 `passed`——
   按 `passed` 搜日志会少算 1 条；以 `make test` 末尾 xcresulttool 计数为准。
 - **不要用全量绿作为本轮完成标准**：先看新增/相关定向套件，再看全量计数是否仍为
-  518/507/1/10；若总数变化，更新 `Makefile` 基线并在提交说明写清。
+  547 total；本次 541/5/1。若总数变化，更新 `Makefile` 基线并在提交说明写清。
 
 ### 4.3 铁律（违反任何一条都会破坏既有资产）
 
 1. **`Services/ServiceProtocols.swift` 协议签名不变**——全部依赖经协议注入，签名一动全部替身测试连锁崩。
-2. **既有测试断言零修改**——总数基线 518 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
+2. **既有测试断言零修改**——总数基线 547 只增不减；方向性翻转属唯一例外，须在周期 tasks.md 逐条记录（先例：`ReconstructTierTests` 默认档翻转）。
 3. **纯离线**——不引任何网络依赖、不加云调用；云通路是独立路线图，须单独立项评审。
 4. **模拟器条码恒 0 是假绿**——`VNDetectBarcodesRequest` 模拟器永远返回空；条码断言只能靠 `BarcodeDetecting` 协议注入替身 + 真机验收。
 5. **`withKnownIssue` ≠ failed ≠ passed**——见 4.2 计数陷阱。
@@ -438,6 +481,8 @@ spec/feature.json → 指向新周期目录（spec/<name>/）
 
 - **当前 `b7ea065`**「feat(capture): land output target and intent split」——
   CF-T004 目标页显示 + CF-T005 `outputIntent`/高分辨率拍后拆分；测试 518/507/1/10。
+- **工作区（未提交）CF-T005b**：视频 8 左页回归修复（quadRole + 亮缝模型）；
+  测试 531/520/1/10。
 - `eddb04d`「feat(capture): add envelope observation and stable tracker」——CF-T002/CF-T003
   第一版（包络观测 + tracker）。
 - `f4aaba7`「docs(capture): evaluate WPS framing and plan envelope tracking」——

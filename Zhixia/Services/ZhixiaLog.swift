@@ -292,6 +292,16 @@ enum ZhixiaLog {
         capture.notice("cropQuad tag=\(tag, privacy: .public) corners=[\(values, privacy: .public)]")
     }
 
+    /// 取景完整性（CF-T010 / FR-012）：书/页是否被画幅边缘裁切。
+    /// 只在翻转时写一行，真机验收与 `cropQuad tag=target-*` 对读：
+    /// `frameClipped=1` 时应看到虚线主框、快门置灰，日志里不应再有
+    /// “拍下的是残页”的 `cropQuad tag=displayed`。
+    static func frameClipped(_ clipped: Bool, intent: String) {
+        capture.notice(
+            "frameClipped=\(clipped ? 1 : 0, privacy: .public) intent=\(intent, privacy: .public)"
+        )
+    }
+
     /// 候选来源遥测（spec/frame-truth FR-008）：live 每帧一行——上一周期的
     /// 两轮复盘最大的盲区就是「池里有没有页面、门控是否触发」只能靠猜。
     /// 面积均为视频 FOV 归一化空间；`preStickySelectionArea` 是粘滞前择优。

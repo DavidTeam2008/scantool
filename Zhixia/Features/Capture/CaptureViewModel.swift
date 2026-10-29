@@ -36,6 +36,13 @@ final class CaptureViewModel {
     private var envelopeTracker = CaptureEnvelopeTracker()
     /// 当前左/右页输出目标（照片空间）；nil = 只能拍包络，拍后由 Review 拆分。
     private(set) var outputTargetQuad: Quad?
+    /// 视频 9 诊断：上一次记录的实时目标/包络（照片空间）。只在明显变化时
+    /// 写日志，用来回答“真机这一帧的目标框来自哪、错在页内栏还是画面边缘”。
+    private var lastLoggedLiveTarget: Quad?
+    private var lastLoggedLiveEnvelope: Quad?
+    /// 上一次记录的取景完整性（CF-T010）——只在翻转时写日志，验收对读
+    /// `frameClipped=0/1`，不参与行为分支。
+    private var lastLoggedFrameClipped: Bool?
     /// 包络来自上一观测的 hold（不是新帧），自动快门/锁定提示必须保守。
     private(set) var envelopeIsHolding = false
     private(set) var envelopeIntentSatisfied = false
@@ -77,6 +84,17 @@ final class CaptureViewModel {
     ///（视频→照片，`FOVLayout`）与 overlay 解析式映射（照片→屏幕，
     /// `OverlaySpaceMap`）共用这一份度量——单一真值源，透出供视图消费。
     private(set) var geometry: CaptureGeometry = .identity
+
+    /// 取景窗宽高比（CF-T010 / FR-012）：视图按它布局取景窗，使
+    /// 「取景域 == 视频帧域」。几何未就绪（`.identity` 的 1.0）时用 4:3
+    /// 占位，避免进屏瞬间从方形跳到 4:3；真机首帧前 `currentGeometry()`
+    /// 已用照片估计 0.75 兜底，这个分支通常只覆盖启动前的一两帧。
+    var viewfinderAspect: Double {
+        let aspect = geometry.videoAspect
+        guard aspect.isFinite, aspect > 0.4, aspect < 1.2 else { return 0.75 }
+        if abs(aspect - 1) < 0.001 { return 0.75 }
+        return aspect
+    }
     /// 取景视图尺寸（spec/scan-enhance：预览可见域钳制）。由视图
     /// `onGeometryChange` 写入；`.zero` = 尚未测量（不钳制，既有语义）。
     ///
@@ -139,6 +157,9 @@ final class CaptureViewModel {
         // 仍尊重用户意图，自动拍另由 suspicious 门禁拦截。
         if case .locked = phase {
             guard directive != .closer else { return false }
+            // CF-T010：被画幅边缘裁切（书/页没完整进框）时不承诺可拍摄的
+            // 白色锁定框；框仍以虚线的“未就绪”态显示，快门同时置灰。
+            guard !isFrameClipped else { return false }
             // CF-T004：页面意图还没有解析出目标页时，包络锁定不等于“可以
             // 出片”；保持跟踪态视觉，避免白线承诺一个整摊输出。
             if usesEnvelopePath, captureIntent != .wholePage, outputTargetQuad == nil {
@@ -149,16 +170,56 @@ final class CaptureViewModel {
         return false
     }
 
+    /// 当前取景是否被画幅边缘裁切（CF-T010 / FR-012）。
+    ///
+    /// - 整页意图：包络任一边贴画幅边 → 书没完整入框，未就绪；
+    /// - 左/右页意图：有目标页时看**目标页**（整摊包络可被对页裁掉，只要
+    ///   目标页完整就仍可拍）；没有目标页时看包络（要拍整摊交给 Review 拆分，
+    ///   整摊必须完整）。
+    ///
+    /// 取景域 == 成片域（CF-T010）后，照片空间 [0,1] 就是屏幕所见画幅；
+    /// 修复前预览只显示其中 61.6%，这个判定会被顶点钳制“骗过”，因此旧版
+    /// 从未真正拦住“书没全进屏幕”的整页假框。
+    var isFrameClipped: Bool {
+        clipped(envelope: imageQuad, target: outputTargetQuad)
+    }
+
+    /// 取景未就绪判定（CF-T011a，视频 14 修订）。
+    ///
+    /// 视频 14：用户贴近书本、整页意图只框住**右页**（单页包络）时，包络下缘
+    /// 距画幅只剩 ~1%，旧规则把它当“被裁”置灰。但这是用户最主要的单页近距
+    /// 拍摄场景，且裁掉的只是纸边白边——应当允许拍“屏幕所见的这一页”。
+    ///
+    /// 规则：
+    /// - **整页意图**：包络被裁且是**单页**（`isSinglePageForCapture`，归一化
+    ///   宽高比 <1.3）→ 允许；整摊/整书被裁 → 仍置灰（拆页需要完整整摊，
+    ///   视频 12 场景）。
+    /// - **左/右页意图**：有目标页且目标是单页 → 允许（目标页近距贴边是
+    ///   常态；裁掉的只是页边）；目标缺失时允许拍包络交给 Review 拆分——
+    ///   视频 13 的 target 短暂缺失不应把整个取景变成不可拍。
+    private func clipped(envelope: Quad?, target: Quad?) -> Bool {
+        guard usesEnvelopePath else { return false }
+        if captureIntent == .wholePage {
+            guard let envelope, envelope.isClippedAtFrameEdge() else { return false }
+            return !PageIntentResolver.isSinglePageForCapture(envelope)
+        }
+        // 左/右页：没有目标页 = 拍包络回退（Review 拆分），不因包络被裁而拦拍。
+        guard let target, target.isClippedAtFrameEdge() else { return false }
+        return !PageIntentResolver.isSinglePageForCapture(target)
+    }
+
     /// 当前是否真的可以按下快门（CF-T002 / CF-T004）。
     ///
     /// 自动文档路径只有“当前帧观测到可信包络”时可拍：tracker 的 hold 只是
     /// 显示残影，不能把上一帧的框当成这一帧的裁切真值；搜索态（无包络）
-    /// 同样不可拍，绝不再回退 `.fullImage`。
+    /// 同样不可拍，绝不再回退 `.fullImage`。CF-T010：书/页没完整进框
+    ///（贴画幅边）时也不可拍——取景域已是成片域，此时按下只会拍出残页。
     var isCaptureReady: Bool {
         guard mode == .document, captureMode == .auto else { return true }
         guard envelopeDetector != nil else { return imageQuad != nil }
         guard let envelope = imageQuad, !envelopeIsHolding else { return false }
-        return !PageIntentResolver.isScreenEdgeFrame(envelope)
+        guard !PageIntentResolver.isScreenEdgeFrame(envelope) else { return false }
+        return !isFrameClipped
     }
 
     /// 自动文档路径是否走包络观测（真实检测器）。
@@ -631,7 +692,17 @@ final class CaptureViewModel {
             guard let envelope, !envelopeIsHolding,
                   !PageIntentResolver.isScreenEdgeFrame(envelope)
             else { return }
+            // CF-T010：书/页没完整进框（贴画幅边）时不得拍。UI 快门已按
+            // `isCaptureReady` 置灰，这里再挡一次程序化/竞态调用——取景域
+            // 已等于成片域，此时按下只会把残页当整页拍下。
+            guard !isFrameClipped else { return }
         }
+        // CF-T005：记录快门用的是目标页还是整摊包络——Review 不再用宽高比
+        // 猜角色（视频 8 的包络被屏幕裁掉后和单页一样窄，猜错会跳过拆分）。
+        // 必须在 `phase = .capturing` 前快照，与 `displayed` 同一时刻。
+        let usedOutputTarget = envelopePath
+            && captureIntent != .wholePage
+            && outputTargetQuad != nil
         let displayed: Quad?
         if envelopePath {
             displayed = captureIntent == .wholePage
@@ -679,9 +750,13 @@ final class CaptureViewModel {
                     iou: -1,
                     acceptedStill: false
                 )
-                ZhixiaLog.cropQuad(tag: "displayed", quad: displayed)
+                // CF-T011：近距单页允许“包络/目标贴边”后，呈现框可能有一两个
+                // 顶点在画幅外（贴边引导线之内）。成片必须落在照片域内：裁切框
+                // 钳到 [0,1]；被钳掉的是屏幕外那一小条纸边，不是页面内容。
+                let captureQuad = displayed.clamped()
+                ZhixiaLog.cropQuad(tag: "displayed", quad: captureQuad)
                 ZhixiaLog.cropQuad(tag: "still", quad: nil)
-                quad = displayed
+                quad = captureQuad
             } else {
                 // 搜索态（无呈现框/无效框）：静帧自由检测照旧（wysiwyg-crop
                 // FR-004 语义保留）；门禁 displayed=nil 直通静帧结果。
@@ -715,6 +790,14 @@ final class CaptureViewModel {
                 // 是目标页，则该字段不会触发二次拆分。
                 outputIntent: envelopePath && captureIntent != .wholePage
                     ? captureIntent
+                    : nil,
+                // CF-T005：Review 用这个角色决定“必须尝试拆分”还是“已经是
+                // 目标页”。整页意图的 quad 就是包络，但 outputIntent 为 nil，
+                // Review 不会走拆分分支；这里仍记 envelope 供诊断。
+                quadRole: envelopePath
+                    ? (captureIntent == .wholePage
+                        ? .envelope
+                        : (usedOutputTarget ? .target : .envelope))
                     : nil
             )
             if let replacePageID, let index = drafts.firstIndex(where: { $0.id == replacePageID }) {
@@ -1136,6 +1219,12 @@ final class CaptureViewModel {
         envelopeIsHolding = state.isHolding
         envelopeIntentSatisfied = state.intentSatisfied
         outputTargetQuad = displayTarget(from: state)
+        logLiveQuads(envelope: state.envelope, target: outputTargetQuad)
+        let clipped = clipped(envelope: state.envelope, target: outputTargetQuad)
+        if clipped != lastLoggedFrameClipped {
+            lastLoggedFrameClipped = clipped
+            ZhixiaLog.frameClipped(clipped, intent: captureIntent.rawValue)
+        }
 
         if let envelope = state.envelope {
             imageQuad = envelope
@@ -1179,6 +1268,29 @@ final class CaptureViewModel {
             didAutoCaptureThisLock = true
             await capture()
         }
+    }
+
+    /// 视频 9 诊断：目标/包络明显变化时记录四角（tag=target / envelope）。
+    ///
+    /// 只用于真机验收对读：`target` 是否在包络内、是否在意图侧、是否被
+    /// 页内文字栏拆成竖条。变化阈值 1% 顶点位移，避免逐帧刷屏。
+    private func logLiveQuads(envelope: Quad?, target: Quad?) {
+        func changed(_ new: Quad?, _ old: Quad?) -> Bool {
+            guard let new else { return old != nil }
+            guard let old else { return true }
+            return new.meanVertexDistance(to: old) > 0.01
+        }
+        guard changed(target, lastLoggedLiveTarget)
+            || changed(envelope, lastLoggedLiveEnvelope)
+        else { return }
+        if let target {
+            ZhixiaLog.cropQuad(tag: "target-\(captureIntent.rawValue)", quad: target)
+        }
+        if let envelope {
+            ZhixiaLog.cropQuad(tag: "envelope", quad: envelope)
+        }
+        lastLoggedLiveTarget = target
+        lastLoggedLiveEnvelope = envelope
     }
 
     /// CF-T004：从 tracker 状态取出**显示用目标页**。
