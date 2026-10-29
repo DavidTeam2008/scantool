@@ -6,7 +6,7 @@
 ## 0. 团队基线（由 team-agent-template 同步，勿手改）
 
 > 项目级规则，默认继承团队 `AGENTS.md`；团队规则全文：
-> https://github.com/davidtan2008/team-agent-template/blob/main/AGENTS.md
+> https://github.com/DavidTeam2008/team-agent-template/blob/main/AGENTS.md
 > 本块由 `sync_team_baseline.py` 生成；改团队规则后重新同步，CI 会校验。
 > 团队基线是副本，不是项目级覆盖；冲突以团队文件为准。
 

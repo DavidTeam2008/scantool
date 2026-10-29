@@ -90,23 +90,26 @@
 迁移成本：本地 remote、`rules.yml` 的 `repository:` 一行、`TEAM_RULES_TOKEN`、
 分支保护；GitHub 会保留 history 并给旧地址做 redirect。
 
-## 8. 迁 org（已决定：多仓前直接做）
+## 8. 迁 org（2026-10-29 已完成）
 
+> 现状：`DavidTeam2008/scantool`（public）、`DavidTeam2008/team-agent-template`（public）。
+> 模板转 public 后 CI 不再需要 `TEAM_RULES_TOKEN`，直接匿名 clone。
 > Team 按人计费；如果只有 public 仓，org Free 已含 public 仓分支保护。
 > Team 主要买 private 仓保护、团队权限与审计。
 
-前置：org 已创建并开通 Team；你是 owner；两个仓 admin。
+前置：org 已创建（Free 即可；public 仓分支保护免费）；你是 owner；两个仓 admin。
 
-1. 创建 org + 选择 Team：`https://github.com/organizations/plan`。
+1. 创建 org：`https://github.com/organizations/plan`。
 2. 建 team（如 `ios`）并加成员；`davidtan2012` 接受邀请后再加入。
 3. 转移两个仓：Settings → General → Transfer ownership，或
-   `gh api -X POST repos/davidtan2008/scantool/transfer -f new_owner=<org>`。
+   `gh api -X POST repos/<old-owner>/scantool/transfer -f new_owner=<org>`。
 4. 更新本地 remote：`git remote set-url origin git@github.com:<org>/scantool.git`。
-5. 改 `.github/workflows/rules.yml` 的 `repository:` 为 `<org>/team-agent-template`。
-6. **重新添加 `TEAM_RULES_TOKEN`**：仓库转移**不会**带走 secrets。
+5. 改 `.github/workflows/rules.yml` 的团队规则 clone URL 为 `<org>/team-agent-template`。
+6. **若模板仍 private**：重新添加 `TEAM_RULES_TOKEN`（转移不带走 secrets）；
+   当前模板已 public，CI 直接匿名 clone，不需要 token。
 7. 转移后复核分支保护；未保留就重新应用。
 8. 更新文档里的 URL：`AGENTS.md` §0、本文件、`references/`。
 9. 验证：`rules` / `docs` / `test-ci`。
-10. 旧的 pending 邀请在转移后可能失效，需在 org 重发。
+10. 旧的 pending 邀请在转移后可能失效；把成员加进 org 后重发仓库权限。
 
 未触发前：**现有仓库 + collaborators 足够，不建 CODEOWNERS**。
